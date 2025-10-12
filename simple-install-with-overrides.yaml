@@ -1,0 +1,12 @@
+# Simple DSL with Overrides Example
+dsc.install:
+  packages:
+    - git
+    - nodejs
+    - name: custom-app
+      executable: msiexec
+      path: "C:\Installers\CustomApp.msi"
+      args: "/quiet /norestart"
+    - name: docker
+      method: chocolatey  # Override default preference
+    - golang

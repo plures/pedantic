@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://aka.ms/dsc/schemas/v3/bundled/config/document.vscode.json
+$schema: https://aka.ms/dsc/schemas/v3/bundled/config/document.json    # <- required
+resources:
+- name: OS must be 23H2
+  type: Microsoft.Windows/Registry
+  properties:
+    _exist:   true                               # just assert the value exists
+    keyPath:  HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion
+    valueName: DisplayVersion
+    valueData:                                   # <-- NOT “data”
+      String: '23H2'

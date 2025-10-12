@@ -1,0 +1,76 @@
+{
+  "name": "statesmith-dsc",
+  "displayName": "StateSmith DSC",
+  "description": "StateSmith: DSC authoring, visualization, and AI-assisted configuration (Simple DSL + SudoLang).",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": ">=1.90.0"
+  },
+  "publisher": "statesmith",
+  "license": "MIT",
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml"
+  ],
+  "main": "dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "statesmith.generateConfig",
+        "title": "StateSmith: Generate DSC from DSL",
+        "category": "StateSmith"
+      },
+      {
+        "command": "statesmith.openGraph",
+        "title": "StateSmith: Open Resource Graph",
+        "category": "StateSmith"
+      },
+      {
+        "command": "statesmith.openAiPanel",
+        "title": "StateSmith: Open AI Assistant",
+        "category": "StateSmith"
+      },
+      {
+        "command": "statesmith.debugParse",
+        "title": "StateSmith: Debug Parse Current Document",
+        "category": "StateSmith"
+      }
+    ],
+    "configuration": {
+      "title": "StateSmith",
+      "properties": {
+        "statesmith.telemetry.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable anonymous telemetry (preview)."
+        },
+        "statesmith.bridge.pwshPath": {
+          "type": "string",
+          "default": "pwsh",
+          "description": "Path to PowerShell executable for DSC bridge."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "package": "npm run compile",
+    "lint": "echo '(lint placeholder)'",
+    "build": "npm run compile",
+    "test": "npm run test:build && node --test dist-test/test",
+    "test:build": "tsc -p tsconfig.test.json"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0",
+    "vsce": "^2.15.0",
+    "vscode": "^1.1.37"
+  },
+  "dependencies": {
+    "chevrotain": "^10.5.0",
+    "yaml": "^2.5.0"
+  }
+}

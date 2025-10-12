@@ -1,0 +1,9 @@
+# Simple DSL Example - Install Packages
+# This is the clean, minimal syntax you described
+dsc.install:
+  packages:
+    - git
+    - nodejs  
+    - docker
+    - golang
+    - vscode

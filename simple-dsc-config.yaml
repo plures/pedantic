@@ -1,0 +1,52 @@
+# Simple DSC Configuration - Installation Preferences
+version: 1.0.0
+preferences:
+  # Installation method priority order
+  windows:
+    - winget      # Try WinGet first
+    - chocolatey  # Then Chocolatey  
+    - msi         # Then MSI files
+    - exe         # Finally EXE installers
+  
+  linux:
+    - apt         # Debian/Ubuntu
+    - yum         # RedHat/CentOS
+    - dnf         # Fedora
+    - snap        # Universal packages
+  
+  # Default package sources
+  winget:
+    source: winget
+    accept_agreements: true
+    scope: machine
+  
+  chocolatey:
+    source: chocolatey
+    confirm: false
+  
+  # Common package mappings (simple name -> actual package ID)
+  packages:
+    git: 
+      winget: Git.Git
+      chocolatey: git
+      apt: git
+    
+    nodejs:
+      winget: OpenJS.NodeJS
+      chocolatey: nodejs
+      apt: nodejs
+      
+    docker:
+      winget: Docker.DockerDesktop
+      chocolatey: docker-desktop
+      apt: docker.io
+      
+    golang:
+      winget: GoLang.Go
+      chocolatey: golang
+      apt: golang-go
+      
+    vscode:
+      winget: Microsoft.VisualStudioCode
+      chocolatey: vscode
+      apt: code

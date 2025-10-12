@@ -1,0 +1,14 @@
+{
+  "LastUpdateCheck": "2025-09-22T17:04:54.8628021-07:00",
+  "CurrentVersion": "3.1.0",
+  "AvailableVersions": {
+    "3.1.0-Windows": {
+      "Version": "3.1.0",
+      "AssetName": "DSC-3.1.0-x86_64-pc-windows-msvc.zip",
+      "Platform": "Windows",
+      "DownloadUrl": "https://github.com/PowerShell/DSC/releases/download/v3.1.0/DSC-3.1.0-x86_64-pc-windows-msvc.zip",
+      "PublishedAt": "2025-06-18T13:12:50Z",
+      "LocalPath": "C:\\Projects\\DialtoneInfrastructureManagementScripts-1\\src\\DSC\\Installers\\DSC-3.1.0-Windows.zip"
+    }
+  }
+}

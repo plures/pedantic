@@ -1,0 +1,64 @@
+$schema: "https://aka.ms/dsc/schemas/v3/config/document.json"
+metadata:
+  name: "Generated from Simple DSL: simple-install.yaml"
+resources:
+  - name: install_git
+    type: Microsoft.DSC.Transitional/RunCommandOnSet
+    properties:
+      executable: winget
+      arguments:
+        - 'install'
+        - '--id'
+        - 'Git.Git'
+        - '--source'
+        - 'winget'
+        - '--accept-package-agreements'
+        - '--accept-source-agreements'
+  - name: install_nodejs
+    type: Microsoft.DSC.Transitional/RunCommandOnSet
+    properties:
+      executable: winget
+      arguments:
+        - 'install'
+        - '--id'
+        - 'OpenJS.NodeJS'
+        - '--source'
+        - 'winget'
+        - '--accept-package-agreements'
+        - '--accept-source-agreements'
+  - name: install_docker
+    type: Microsoft.DSC.Transitional/RunCommandOnSet
+    properties:
+      executable: winget
+      arguments:
+        - 'install'
+        - '--id'
+        - 'Docker.DockerDesktop'
+        - '--source'
+        - 'winget'
+        - '--accept-package-agreements'
+        - '--accept-source-agreements'
+  - name: install_golang
+    type: Microsoft.DSC.Transitional/RunCommandOnSet
+    properties:
+      executable: winget
+      arguments:
+        - 'install'
+        - '--id'
+        - 'GoLang.Go'
+        - '--source'
+        - 'winget'
+        - '--accept-package-agreements'
+        - '--accept-source-agreements'
+  - name: install_vscode
+    type: Microsoft.DSC.Transitional/RunCommandOnSet
+    properties:
+      executable: winget
+      arguments:
+        - 'install'
+        - '--id'
+        - 'Microsoft.VisualStudioCode'
+        - '--source'
+        - 'winget'
+        - '--accept-package-agreements'
+        - '--accept-source-agreements'

@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PowerShell
+        uses: PowerShell/PowerShell@v1
+        with:
+          version: '7.4.x'
+
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          if (Test-Path './PSScriptAnalyzerSettings.psd1') {
+            Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1 -ReportSummary -Severity Warning,Error
+          } else {
+            Invoke-ScriptAnalyzer -Path . -Recurse -ReportSummary -Severity Warning,Error
+          }
+
+      - name: Run Pester
+        shell: pwsh
+        run: |
+          Invoke-Pester -Path 'tests' -Output Detailed -CI
+
+      - name: Package module (zip)
+        shell: pwsh
+        run: |
+          $out = Join-Path $PWD 'dist'
+          if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
+          $ver = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
+          $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+          $folder = 'StateSmith.DSC'
+          $src = @(
+            'StateSmith.DSC.psd1',
+            'StateSmith.DSC.psm1',
+            'StateSmith.DSC.Reverse.psm1',
+            'Resources',
+            'Installers',
+            'SimpleDSC.psd1',
+            'Simple.DSC.psm1',
+            'Simple.DSC.Basic.psm1',
+            'Simple-DSC-README.md'
+          ) | Where-Object { Test-Path $_ }
+          $temp = Join-Path $env:TEMP $folder
+          if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
+          New-Item -ItemType Directory -Path $temp | Out-Null
+          Copy-Item -Recurse -Force -Path $src -Destination $temp
+          Compress-Archive -Path (Join-Path $temp '*') -DestinationPath (Join-Path $out "$folder-$ver-$stamp.zip") -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-dist
+          path: dist/*.zip

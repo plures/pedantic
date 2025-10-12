@@ -1,0 +1,122 @@
+{
+  "$schema": "https://raw.githubusercontent.com/PowerShell/DSC/main/schemas/2024/04/bundled/resource/manifest.json",
+  "type": "SimpleDSC/PackageInstaller",
+  "version": "1.0.0",
+  "description": "Simplified package management for multiple platforms and package managers",
+  "tags": [
+    "package",
+    "install",
+    "winget", 
+    "chocolatey",
+    "apt",
+    "yum"
+  ],
+  "get": {
+    "executable": "pwsh",
+    "args": [
+      "-NoLogo",
+      "-NonInteractive", 
+      "-NoProfile",
+      "-File",
+      "SimpleDSC.PackageInstaller.ps1",
+      "-Operation",
+      "get"
+    ]
+  },
+  "set": {
+    "executable": "pwsh",
+    "args": [
+      "-NoLogo", 
+      "-NonInteractive",
+      "-NoProfile",
+      "-File",
+      "SimpleDSC.PackageInstaller.ps1", 
+      "-Operation",
+      "set",
+      "-InputJson"
+    ],
+    "input": "stdin"
+  },
+  "test": {
+    "executable": "pwsh",
+    "args": [
+      "-NoLogo",
+      "-NonInteractive", 
+      "-NoProfile", 
+      "-File",
+      "SimpleDSC.PackageInstaller.ps1",
+      "-Operation", 
+      "test",
+      "-InputJson"
+    ],
+    "input": "stdin"
+  },
+  "schema": {
+    "embedded": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "SimpleDSC PackageInstaller",
+      "description": "Configuration for simplified package management",
+      "type": "object",
+      "required": [
+        "name",
+        "packages"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Resource Name",
+          "description": "Unique identifier for this resource instance"
+        },
+        "packages": {
+          "type": "array",
+          "title": "Packages",
+          "description": "Array of package names to install",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "method": {
+          "type": "string",
+          "title": "Installation Method",
+          "description": "Package manager to use",
+          "enum": [
+            "auto",
+            "winget", 
+            "chocolatey",
+            "msi",
+            "apt",
+            "yum"
+          ],
+          "default": "auto"
+        },
+        "ensure": {
+          "type": "string",
+          "title": "Ensure State",
+          "description": "Whether packages should be present or absent",
+          "enum": [
+            "Present",
+            "Absent"
+          ],
+          "default": "Present"
+        },
+        "acceptLicense": {
+          "type": "boolean",
+          "title": "Accept License",
+          "description": "Automatically accept license agreements",
+          "default": true
+        },
+        "scope": {
+          "type": "string", 
+          "title": "Installation Scope",
+          "description": "Install for user or machine (where applicable)",
+          "enum": [
+            "user",
+            "machine"
+          ],
+          "default": "machine"
+        }
+      }
+    }
+  }
+}

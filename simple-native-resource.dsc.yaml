@@ -1,0 +1,21 @@
+# Example DSC Configuration using the custom SimpleDSC.PackageInstaller resource
+# This demonstrates the native DSC approach vs the converter approach
+
+$schema: "https://aka.ms/dsc/schemas/v3/config/document.json"
+metadata:
+  name: "Development Environment Setup - Custom Resource"
+  description: "Install development tools using SimpleDSC custom resource"
+resources:
+  - name: dev-tools
+    type: SimpleDSC/PackageInstaller
+    properties:
+      packages:
+        - git
+        - nodejs
+        - docker
+        - golang
+        - vscode
+      method: auto
+      ensure: Present
+      acceptLicense: true
+      scope: machine
