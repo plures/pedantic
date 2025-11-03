@@ -1,0 +1,91 @@
+{
+  "$schema": "https://github.com/plures/ADP/blob/main/schema/config.schema.json",
+  "version": "1.0",
+  "project": {
+    "name": "StateSmith DSC",
+    "type": "hybrid",
+    "description": "DSC helper module with VS Code extension",
+    "repository": "https://github.com/plures/pedantic"
+  },
+  "components": {
+    "powershell": {
+      "enabled": true,
+      "rootPath": "./",
+      "modules": [
+        "StateSmith.DSC.psm1",
+        "StateSmith.DSC.Reverse.psm1",
+        "Simple.DSC.psm1"
+      ],
+      "testPath": "./tests",
+      "buildScript": "./Build-Package.ps1"
+    },
+    "vscode-extension": {
+      "enabled": true,
+      "rootPath": "./extension",
+      "packageJson": "./extension/package.json",
+      "srcPath": "./extension/src",
+      "testPath": "./extension/test"
+    }
+  },
+  "automation": {
+    "ci": {
+      "enabled": true,
+      "platforms": ["windows-latest"],
+      "integrations": {
+        "github-actions": true
+      }
+    },
+    "linting": {
+      "enabled": true,
+      "tools": {
+        "psscriptanalyzer": {
+          "enabled": true,
+          "settingsFile": "./PSScriptAnalyzerSettings.psd1"
+        },
+        "eslint": {
+          "enabled": false,
+          "configFile": "./extension/.eslintrc.json"
+        }
+      }
+    },
+    "testing": {
+      "enabled": true,
+      "frameworks": {
+        "pester": {
+          "enabled": true,
+          "testPath": "./tests"
+        },
+        "node-test": {
+          "enabled": true,
+          "testPath": "./extension/test"
+        }
+      }
+    },
+    "documentation": {
+      "auto-generate": true,
+      "formats": ["markdown"],
+      "outputPath": "./docs"
+    }
+  },
+  "quality": {
+    "codeReview": {
+      "enabled": true,
+      "autoAssign": true
+    },
+    "securityScanning": {
+      "enabled": true,
+      "tools": ["dependabot"]
+    }
+  },
+  "workflow": {
+    "branchProtection": true,
+    "requireReviews": 1,
+    "requireTests": true,
+    "requireLinting": true
+  },
+  "notes": [
+    "This configuration is a template for ADP integration.",
+    "Actual ADP functionality requires the ADP submodule to be initialized.",
+    "See ADP-INTEGRATION.md for setup instructions."
+  ]
+}
