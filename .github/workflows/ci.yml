@@ -11,6 +11,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'  # Initialize ADP submodule if present
+
+      - name: Initialize ADP (if available)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          if (Test-Path '.adp/scripts/init.ps1') {
+            Write-Host "ADP found, initializing..."
+            ./.adp/scripts/init.ps1
+          } elseif (Test-Path '.adp-placeholder') {
+            Write-Host "ADP placeholder found. ADP integration is pending."
+            Write-Host "See ADP-INTEGRATION.md for setup instructions."
+          } else {
+            Write-Host "ADP not configured."
+          }
 
       - name: Setup PowerShell
         uses: PowerShell/PowerShell@v1
