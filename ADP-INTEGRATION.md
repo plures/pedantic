@@ -32,27 +32,14 @@ git submodule update --init --recursive
 
 ### Step 2: Configure ADP
 
-Create or update `.adp/config.json` with project-specific settings:
+ADP will use the `adp-config.json` file in the repository root. This file has been pre-configured
+with project-specific settings. You can customize it further if needed:
 
 ```json
 {
   "project": "StateSmith DSC",
   "type": "hybrid",
-  "components": {
-    "powershell": {
-      "enabled": true,
-      "path": "./"
-    },
-    "vscode-extension": {
-      "enabled": true,
-      "path": "./extension"
-    }
-  },
-  "automation": {
-    "ci": true,
-    "linting": true,
-    "testing": true
-  }
+  ...
 }
 ```
 

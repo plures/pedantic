@@ -5,7 +5,8 @@
     "name": "StateSmith DSC",
     "type": "hybrid",
     "description": "DSC helper module with VS Code extension",
-    "repository": "https://github.com/plures/pedantic"
+    "repository": "https://github.com/plures/pedantic",
+    "notes": "This is the pedantic repository which contains the StateSmith project"
   },
   "components": {
     "powershell": {

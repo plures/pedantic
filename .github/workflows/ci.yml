@@ -11,8 +11,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'  # Initialize ADP submodule if present
+
+      - name: Initialize ADP Submodule (if configured)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # Only initialize submodules if .gitmodules exists and contains ADP
+          if (Test-Path '.gitmodules') {
+            $hasAdp = Get-Content '.gitmodules' -Raw | Select-String '\.adp'
+            if ($hasAdp) {
+              Write-Host "ADP submodule found in .gitmodules, initializing..."
+              git submodule update --init --recursive
+            }
+          }
 
       - name: Initialize ADP (if available)
         shell: pwsh

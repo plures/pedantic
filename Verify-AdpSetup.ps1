@@ -31,7 +31,7 @@ function Test-AdpStatus {
             Write-Host "[✓] ADP initialization script found" -ForegroundColor Green
             $adpVersion = "Unknown"
             if (Test-Path '.adp/version.txt') {
-                $adpVersion = Get-Content '.adp/version.txt' -Raw
+                $adpVersion = (Get-Content '.adp/version.txt' -Raw).Trim()
             }
             Write-Host "    ADP Version: $adpVersion" -ForegroundColor Gray
         } else {
