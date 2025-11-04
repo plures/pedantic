@@ -42,7 +42,7 @@ jobs:
       - name: Setup PowerShell
         uses: PowerShell/PowerShell@v1
         with:
-          version: '7.4.x'
+          pwsh-version: 'latest'
 
       - name: Install Pester
         shell: pwsh
@@ -98,3 +98,4 @@ jobs:
         with:
           name: module-dist
           path: dist/*.zip
+
