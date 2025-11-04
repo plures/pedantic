@@ -39,11 +39,6 @@ jobs:
             Write-Host "ADP not configured."
           }
 
-      - name: Setup PowerShell
-        uses: PowerShell/PowerShell@v1
-        with:
-          pwsh-version: 'latest'
-
       - name: Install Pester
         shell: pwsh
         run: |
@@ -98,4 +93,5 @@ jobs:
         with:
           name: module-dist
           path: dist/*.zip
+
 
