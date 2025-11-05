@@ -12,10 +12,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup PowerShell
-        uses: PowerShell/PowerShell@v1
-        with:
-          version: '7.4.x'
+      - name: Initialize ADP Submodule (if configured)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # Only initialize submodules if .gitmodules exists and contains ADP
+          if (Test-Path '.gitmodules') {
+            $hasAdp = Get-Content '.gitmodules' -Raw | Select-String '\.adp'
+            if ($hasAdp) {
+              Write-Host "ADP submodule found in .gitmodules, initializing..."
+              git submodule update --init --recursive
+            }
+          }
+
+      - name: Initialize ADP (if available)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          if (Test-Path '.adp/scripts/init.ps1') {
+            Write-Host "ADP found, initializing..."
+            ./.adp/scripts/init.ps1
+          } elseif (Test-Path '.adp-placeholder') {
+            Write-Host "ADP placeholder found. ADP integration is pending."
+            Write-Host "See ADP-INTEGRATION.md for setup instructions."
+          } else {
+            Write-Host "ADP not configured."
+          }
 
       - name: Install Pester
         shell: pwsh
@@ -71,3 +93,5 @@ jobs:
         with:
           name: module-dist
           path: dist/*.zip
+
+

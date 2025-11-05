@@ -4,6 +4,10 @@ DSC helper module for the StateSmith project.
 
 This module provides user-friendly DSC v3 operations with parameter autocomplete support. It automatically handles remote execution without requiring manual setup on remote machines. The module targets PowerShell 7 and includes features like resource mapping, installer/resource caching, and platform-specific DSC version management.
 
+## Development Process
+
+This project uses ADP (Automated Development Process) to streamline development workflows. See [ADP-INTEGRATION.md](ADP-INTEGRATION.md) for setup instructions.
+
 ## Features
 
 - PowerShell 7 compatible
@@ -11,6 +15,7 @@ This module provides user-friendly DSC v3 operations with parameter autocomplete
 - Resource mapping and platform-aware DSC version management
 - Installer and resource caching
 - Unix-like `head` and `tail` helpers for PowerShell pipelines
+- ADP-assisted development workflow (pending integration)
 
 ## Parameters
 

@@ -1,0 +1,10 @@
+# ADP Git Submodule Configuration
+# 
+# To complete ADP integration, rename this file to .gitmodules and run:
+# git submodule add https://github.com/plures/ADP.git .adp
+# git submodule update --init --recursive
+
+[submodule ".adp"]
+path = .adp
+url = https://github.com/plures/ADP.git
+branch = main

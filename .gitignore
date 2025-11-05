@@ -1,0 +1,39 @@
+# Build artifacts
+dist/
+*.zip
+
+# Test results
+testResults.xml
+
+# Node modules
+node_modules/
+
+# PowerShell
+*.ps1xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# ADP local configuration and cache
+# (ADP core files should be tracked as submodule)
+.adp/local/
+.adp/cache/
+.adp/.local/
+.adp/*.log
+
+# Keep the placeholder until ADP is installed
+!.adp-placeholder/
