@@ -224,7 +224,7 @@ You can control which resources are cataloged:
 
 ```powershell
 # Create scheduled task for regular cataloging
-$action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-Command `"Import-Module StateSmith.DSC.Reverse; New-DscSystemCatalog -ComputerName 'SERVER01' -CatalogName 'DailyCatalog'`""
+$action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-Command `"Import-Module Pedantic.Reverse; New-DscSystemCatalog -ComputerName 'SERVER01' -CatalogName 'DailyCatalog'`""
 $trigger = New-ScheduledTaskTrigger -Daily -At 2:00AM
 Register-ScheduledTask -TaskName "DSC-DailyCatalog" -Action $action -Trigger $trigger
 ```

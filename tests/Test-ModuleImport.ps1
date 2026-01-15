@@ -11,7 +11,7 @@ Remove-Module StateSmith.DSC -Force -ErrorAction SilentlyContinue
 
 # Try importing the meta-module (this should work)
 try {
-  Import-Module StateSmith.DSC -Force
+  Import-Module Pedantic -Force
   Write-Host "✓ Successfully imported StateSmith.DSC" -ForegroundColor Green
     
   # Check if functions are available

@@ -1,7 +1,7 @@
 # Test script to verify DSC cache call depth overflow fix
 # This script tests the cache initialization functions to ensure they handle errors gracefully
 
-Import-Module "$PSScriptRoot\StateSmith.DSC.psm1" -Force
+Import-Module "$PSScriptRoot\Pedantic.psm1" -Force
 
 Write-Host "Testing DSC cache initialization fix..." -ForegroundColor Green
 

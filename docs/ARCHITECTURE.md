@@ -1,6 +1,6 @@
-# StateSmith Extension Architecture (Initial Draft)
+# Pedantic Extension Architecture (Initial Draft)
 
-This document captures the high-level architecture for transforming StateSmith into a VS Code–centric platform with multi-DSL authoring, AI assistance (MCP), and visualizations.
+This document captures the high-level architecture for transforming Pedantic into a VS Code–centric platform with multi-DSL authoring, AI assistance (MCP), and visualizations.
 
 ## Layered Overview
 

@@ -74,7 +74,7 @@ ConvertFrom-SimpleDsc -SimpleDslPath .\simple-install.yaml -OutputPath .\output.
 ### 3. Run the DSC Configuration
 
 ```powershell
-Import-Module .\projects\dsc\StateSmith.DSC.psm1
+Import-Module .\projects\dsc\Pedantic.DSC.psm1
 Set-DscConfiguration -DscPath .\output.dsc.yaml
 ```
 

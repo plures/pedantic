@@ -1,7 +1,7 @@
 # Test script to verify improved DSC resource detection
 # This script tests the new resource detection logic that should correctly identify available resources
 
-Import-Module StateSmith.DSC -Force
+Import-Module Pedantic -Force
 
 Write-Host "Testing improved DSC resource detection..." -ForegroundColor Yellow
 

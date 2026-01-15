@@ -1,8 +1,10 @@
 # Rebranding Plan and Naming Evaluation
 
-Selected new name: StateSmith
+> **STATUS: COMPLETED** - The project has been unified under the name "Pedantic" to match the repository name. This document is kept for historical reference.
 
-This document evaluates the current repository name ("Pedantic") and outlines a comprehensive plan to rebrand all assets if a new name is chosen.
+Previously selected name: StateSmith (not implemented)
+
+This document evaluates the repository naming and outlines the plan that was considered but ultimately reversed - the project is now named "Pedantic" to match the repository.
 
 ## Name evaluation: "Pedantic"
 

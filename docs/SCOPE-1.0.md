@@ -1,4 +1,4 @@
-# StateSmith 1.0 Scope & Acceptance (Freeze Draft)
+# Pedantic 1.0 Scope & Acceptance (Freeze Draft)
 
 > Purpose: Establish a frozen, minimal yet valuable 1.0 release definition focused on authoritative authoring, validation, and visualization — intentionally deferring advanced AI orchestration and deep engine re‑writes.
 

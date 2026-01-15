@@ -15,7 +15,7 @@ Write-Host "This approach copies the module to the remote machine and enables fu
 Write-Host ""
 
 Write-Host "Step 1: Copy the module to the remote machine" -ForegroundColor Cyan
-Write-Host "Copy-Item -Path 'C:\path\to\StateSmith.DSC.psm1' -Destination '\\SERVER01\C$\Temp\StateSmith.DSC.psm1'" -ForegroundColor Gray
+Write-Host "Copy-Item -Path 'C:\path\to\Pedantic.psm1' -Destination '\\SERVER01\C$\Temp\Pedantic.psm1'" -ForegroundColor Gray
 Write-Host ""
 
 Write-Host "Step 2: Connect to the remote machine" -ForegroundColor Cyan
@@ -23,7 +23,7 @@ Write-Host "Enter-PSSession -ComputerName 'SERVER01'" -ForegroundColor Gray
 Write-Host ""
 
 Write-Host "Step 3: Import the module on the remote machine" -ForegroundColor Cyan
-Write-Host "Import-Module 'C:\Temp\StateSmith.DSC.psm1'" -ForegroundColor Gray
+Write-Host "Import-Module 'C:\Temp\Pedantic.psm1'" -ForegroundColor Gray
 Write-Host ""
 
 Write-Host "Step 4: Use with full autocomplete!" -ForegroundColor Cyan
@@ -47,7 +47,7 @@ Write-Host "New-Item -Path '\\SERVER01\C$\Program Files\WindowsPowerShell\Module
 Write-Host ""
 
 Write-Host "Step 2: Copy module files" -ForegroundColor Cyan
-Write-Host "Copy-Item -Path 'C:\path\to\StateSmith.DSC.psm1' -Destination '\\SERVER01\C$\Program Files\WindowsPowerShell\Modules\StateSmith.DSC\StateSmith.DSC.psm1'" -ForegroundColor Gray
+Write-Host "Copy-Item -Path 'C:\path\to\Pedantic.psm1' -Destination '\\SERVER01\C$\Program Files\WindowsPowerShell\Modules\StateSmith.DSC\Pedantic.psm1'" -ForegroundColor Gray
 Write-Host "Copy-Item -Path 'C:\path\to\StateSmith.DSC.psd1' -Destination '\\SERVER01\C$\Program Files\WindowsPowerShell\Modules\StateSmith.DSC\StateSmith.DSC.psd1'" -ForegroundColor Gray
 Write-Host ""
 
@@ -62,7 +62,7 @@ Write-Host ""
 
 Write-Host '$remoteScript = {' -ForegroundColor Gray
 Write-Host '    # Import module for autocomplete support' -ForegroundColor Gray
-Write-Host '    Import-Module "C:\Temp\StateSmith.DSC.psm1"' -ForegroundColor Gray
+Write-Host '    Import-Module "C:\Temp\Pedantic.psm1"' -ForegroundColor Gray
 Write-Host '    ' -ForegroundColor Gray
 Write-Host '    # Now you can use autocomplete in your script' -ForegroundColor Gray
 Write-Host '    Test-DscCompliance -DscPath "C:\Configs\WebServer.yaml"' -ForegroundColor Gray
@@ -79,7 +79,7 @@ Write-Host "Enter-PSSession -ComputerName 'SERVER01'" -ForegroundColor Gray
 Write-Host ""
 
 Write-Host "Step 2: Import the module" -ForegroundColor Cyan
-Write-Host "Import-Module 'C:\Temp\StateSmith.DSC.psm1'" -ForegroundColor Gray
+Write-Host "Import-Module 'C:\Temp\Pedantic.psm1'" -ForegroundColor Gray
 Write-Host ""
 
 Write-Host "Step 3: Use with full autocomplete interactively" -ForegroundColor Cyan
@@ -113,7 +113,7 @@ Write-Host ""
 Write-Host "If autocomplete doesn't work:" -ForegroundColor Cyan
 Write-Host "1. Verify the module is imported: Get-Module StateSmith.DSC" -ForegroundColor Gray
 Write-Host "2. Check module path: Get-Module StateSmith.DSC | Select-Object Path" -ForegroundColor Gray
-Write-Host "3. Re-import if needed: Import-Module 'C:\Temp\StateSmith.DSC.psm1' -Force" -ForegroundColor Gray
+Write-Host "3. Re-import if needed: Import-Module 'C:\Temp\Pedantic.psm1' -Force" -ForegroundColor Gray
 Write-Host ""
 
 Write-Host "## Benefits of Using the Module on Remote Machines" -ForegroundColor Yellow

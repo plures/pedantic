@@ -16,7 +16,7 @@ Write-Host "✓ Simple.DSC module loaded" -ForegroundColor Green
 # Test 3: Load the complex module
 Write-Host ""
 Write-Host "Test 3: Loading complex module..." -ForegroundColor Yellow
-Import-Module ".\StateSmith.DSC.psm1" -Force
+Import-Module ".\Pedantic.psm1" -Force
 Write-Host "✓ StateSmith.DSC module loaded" -ForegroundColor Green
 
 # Check all functions

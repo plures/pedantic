@@ -1,7 +1,7 @@
 # Test script for DSC Reverse functionality
 # Demonstrates cataloging, history tracking, diff analysis, and restoration capabilities
 
-Import-Module .\StateSmith.DSC.Reverse.psm1 -Force
+Import-Module .\Pedantic.Reverse.psm1 -Force
 
 Write-Host "=== DSC Reverse Feature Test ===" -ForegroundColor Yellow
 Write-Host "This script demonstrates the DSC Reverse functionality" -ForegroundColor Cyan

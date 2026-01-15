@@ -10,7 +10,7 @@ if (Get-Module -Name "StateSmith.DSC" -ErrorAction SilentlyContinue) {
 # Import module (this should trigger automatic initialization)
 Write-Host "`nImporting StateSmith.DSC module..." -ForegroundColor Yellow
 try {
-    Import-Module "$PSScriptRoot\StateSmith.DSC.psm1" -Force
+    Import-Module "$PSScriptRoot\Pedantic.psm1" -Force
     Write-Host "✓ Module imported successfully" -ForegroundColor Green
 } catch {
     Write-Host "✗ Module import failed: $($_.Exception.Message)" -ForegroundColor Red

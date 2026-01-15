@@ -3,7 +3,7 @@ Write-Host "Testing StateSmith.DSC module autocomplete..." -ForegroundColor Gree
 
 # Import module
 Remove-Module StateSmith.DSC -Force -ErrorAction SilentlyContinue
-Import-Module ".\StateSmith.DSC.psm1" -Force
+Import-Module ".\Pedantic.psm1" -Force
 Write-Host "✓ Module imported" -ForegroundColor Green
 
 # Test functions

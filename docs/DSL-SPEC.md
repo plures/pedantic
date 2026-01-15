@@ -1,6 +1,6 @@
-# StateSmith DSL Specification (v0.1 Draft)
+# Pedantic DSL Specification (v0.1 Draft)
 
-This specification defines two authoring dialects that produce a unified canonical AST consumed by the StateSmith toolchain and execution bridge.
+This specification defines two authoring dialects that produce a unified canonical AST consumed by the Pedantic toolchain and execution bridge.
 
 ## 1. Scope & Goals
 

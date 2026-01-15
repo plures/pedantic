@@ -1,4 +1,4 @@
-﻿# StateSmith Roadmap (Revised): VS Code Extension + MCP + AI + Multi-DSL
+﻿# Pedantic Roadmap (Revised): VS Code Extension + MCP + AI + Multi-DSL
 
 This revised roadmap pivots the project from “PowerShell module first” to a **VS Code extension ecosystem** with:
 
@@ -62,7 +62,7 @@ If required: finalize comment-based help, minimal CHANGELOG, license. Freeze fur
 
 ### Phase 1 – Monorepo & Scaffolding
 * Workspaces: `extension/`, `language-server/`, `dsl-core/`, `dsl-sudo/`, `webview-ui/`, `engine-bridge/`, `ai-mcp/`, `shared/`.
-* Basic extension activation + command: “StateSmith: Generate Configuration (PowerShell)” piping through existing `ConvertFrom-SimpleDsc`.
+* Basic extension activation + command: “Pedantic: Generate Configuration (PowerShell)” piping through existing `ConvertFrom-SimpleDsc`.
 * Webview placeholder + static asset pipeline (Vite + Svelte 5).
 * Initial CI: build + minimal extension integration test (open sample workspace).
 
@@ -209,7 +209,7 @@ Performance Budgets (Phase 7):
 Legend: [ ] pending, [~] in progress, [x] done
 
 ### Foundation & Scaffolding
-* [x] Rebrand to StateSmith (PowerShell core)
+* [x] Rebrand to Pedantic (PowerShell core)
 * [ ] Monorepo scaffolding (packages, build scripts)
 * [ ] Extension activation + basic command
 * [ ] PowerShell bridge contract (JSON schema v1)
