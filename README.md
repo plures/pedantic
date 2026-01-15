@@ -1,68 +1,84 @@
-# Pedantic • DSC Helper Module
+# Pedantic • A DSC Ecosystem Hub
 
-DSC helper module for the Pedantic project.
+**The Ansible Galaxy for Desired State Configuration**
 
-This project is transitioning from a PowerShell-centric DSC helper module to a **VS Code extension ecosystem** with dual DSL support (Simple YAML + SudoLang), AI-assisted configuration, and rich visualization capabilities.
+Pedantic is an evolving ecosystem for discovering, sharing, and managing DSC (Desired State Configuration) resources and configurations. Like Ansible Galaxy provides a central hub for Ansible roles and collections, Pedantic aims to become the go-to platform for the DSC community.
 
-## Project Status (January 2026)
+## Vision
 
-**Current Phase:** Foundational parsers complete, LSP integration is critical path  
-**Completion:** ~15-20% toward 1.0 release  
-**Next Milestone:** MVP (3-4 weeks)
-This project uses ADP (Automated Development Process) to streamline development workflows. See [docs/ADP-INTEGRATION.md](docs/ADP-INTEGRATION.md) for setup instructions.
+We're building a comprehensive DSC ecosystem that combines:
+- **Resource Discovery & Sharing** - A community hub for DSC configurations and resources
+- **Powerful Tooling** - Modern development tools for authoring and managing DSC
+- **Cross-Platform Support** - Works on Windows, macOS, and Linux with PowerShell 7+
+- **Integration** - Seamless integration with the [Plures](https://github.com/plures) ecosystem of development tools
 
-📊 **[See Complete Roadmap Analysis →](NEXT-STEPS.md)**
+## What Works Today
 
-### What's Working
-- ✅ PowerShell module (production-ready)
-- ✅ VS Code extension scaffold  
-- ✅ Dual DSL parsers (Simple + SudoLang)
-- ✅ Resource graph visualization (basic)
-- ✅ Test framework with passing tests
+### ✅ PowerShell Module (Production-Ready)
 
-### What's Next
-- 🔴 **LSP Integration** ← Critical path (start here)
-- 🟡 Testing infrastructure (golden corpus)
-- 🟡 PowerShell bridge connection
-- 🟢 UI polish (ECharts, formatter, code actions)
+The Pedantic PowerShell module is fully functional and ready to use in production environments:
+
+- **Remote DSC Operations** - Execute DSC on remote machines without manual setup
+- **Smart Resource Management** - Automatic resource mapping and caching
+- **Platform-Aware** - Detects and manages DSC versions across Windows, macOS, and Linux
+- **Installer Caching** - Downloads and caches DSC installers for offline use
+- **Resource Discovery** - Maps classic DSC resources to PowerShell Gallery modules
+- **PowerShell 7+ Compatible** - Modern PowerShell Core support
+
+### 🚧 In Development
+
+- **VS Code Extension** - Rich editing experience with dual DSL support
+- **Resource Graph Visualization** - Visual dependency mapping
+- **AI-Assisted Configuration** - Intelligent DSC authoring
+- **Community Hub** - Central repository for sharing DSC configurations
+
+## Roadmap
+
+### Current Phase: Foundation (Q1 2026)
+Building the core infrastructure and establishing the PowerShell module as the foundation.
+
+### Near-Term Goals (Q2-Q3 2026)
+- Launch community hub for DSC resource sharing
+- Complete VS Code extension with LSP integration
+- Establish integration points with Plures ecosystem projects:
+  - [PluresDB](https://github.com/plures/pluresdb) - Decentralized resource catalog
+  - [RuneBook](https://github.com/plures/runebook) - Interactive DSC workflow development
+  - [Praxis](https://github.com/plures/praxis) - Full-stack framework integration
+
+### Long-Term Vision (2026-2027)
+- Become the primary DSC resource discovery platform
+- Support for community contributions and ratings
+- Advanced AI-powered configuration generation
+- Enterprise-grade resource management
 
 **Detailed Plans:**
-- [MVP Plan (3-4 weeks)](MVP-PLAN.md)
-- [1.0 Release Plan (7-8 weeks)](RELEASE-1.0-PLAN.md)
-- [Full Roadmap (6-7 months)](FULL-ROADMAP-PLAN.md)
-- [Implementation Analysis](ROADMAP-ANALYSIS.md)
+- [MVP Plan](MVP-PLAN.md) - Next phase development
+- [1.0 Release Plan](RELEASE-1.0-PLAN.md) - Production release targets
+- [Full Roadmap](FULL-ROADMAP-PLAN.md) - Complete vision
+- [Next Steps](NEXT-STEPS.md) - Current priorities
 
 ---
 
-## PowerShell Module Features
+## Getting Started
 
-- PowerShell 7 compatible
-- Remote DSC operations without manual remote setup
-- Resource mapping and platform-aware DSC version management
-- Installer and resource caching
-- Unix-like `head` and `tail` helpers for PowerShell pipelines
-- ADP-assisted development workflow (pending integration)
-
-## Parameters
-
-None.
-
-## Notes
-
-- Includes helper functions for managing DSC installers and resources
-- Supports both local and remote DSC operations
-- Provides lightweight text utilities (`Get-Head`, `Get-Tail`)
-
-## Quick Start
+### Installation
 
 ```powershell
-Import-Module Pedantic
-# Use the module to manage DSC resources and configurations
+# Clone the repository
+git clone https://github.com/plures/pedantic.git
+cd pedantic
+
+# Import the module
+Import-Module ./Pedantic.psd1
 ```
 
-## Examples
+### Quick Start Examples
 
-Get the first 5 lines of a file:
+The PowerShell module provides powerful DSC management capabilities today:
+
+#### Example 1: Text Utilities
+
+Get the first or last lines of command output:
 
 ```powershell
 Get-Content file.txt | Get-Head -Count 5
@@ -74,47 +90,39 @@ Get the last 5 lines of a file:
 Get-Content file.txt | Get-Tail -Count 5
 ```
 
-Initialize installer cache:
+#### Example 2: Resource Management
+
+Initialize the DSC resource cache and ensure required resources are available:
 
 ```powershell
+# Initialize the installer cache
 Initialize-InstallerCache
-```
 
-Get the latest DSC version for Windows:
-
-```powershell
+# Get platform-specific DSC version
 Get-LatestDscVersion -Platform "Windows"
-```
 
-Download a specific DSC resource:
-
-```powershell
+# Download a specific DSC resource
 Download-DscResource -ResourceType "Microsoft.Windows/Registry" -Version "1.0.0" -Source "PowerShellGallery"
-```
 
-Ensure required DSC resources are available:
-
-```powershell
+# Ensure multiple resources are available (downloads if needed)
 Ensure-DscResourcesAvailable -ResourceTypes @("Microsoft.Windows/Registry", "Microsoft.Windows/File") -Force
 ```
 
----
+#### Example 3: Install Go (Golang) with DSC v3
 
-If you need additional examples or command help, run `Get-Help <CommandName> -Full` after importing the module.
+This example demonstrates using DSC v3 with the transitional `RunCommandOnSet` resource to install Go on Windows:
 
-## Example: Install Go (Golang) on Windows with DSC v3
-
-This example uses the transitional DSC v3 resource `Microsoft/DSC/Transitional/RunCommandOnSet` to run an idempotent PowerShell command that installs Go only if it isn't already present. The Pedantic module ensures the required resource is cached and runs the configuration.
-
-1. Ensure required DSC resource is available locally (downloads/caches if needed):
+1. **Ensure the required DSC resource is cached:**
 
 ```powershell
 $resources = @("Microsoft/DSC/Transitional/RunCommandOnSet")
 $ensure = Ensure-DscResourcesAvailable -ResourceTypes $resources -Force
-if (-not $ensure.AllAvailable) { throw "Required DSC resources are not available: $($ensure.Missing -join ', ')" }
+if (-not $ensure.AllAvailable) { 
+    throw "Required DSC resources are not available: $($ensure.Missing -join ', ')" 
+}
 ```
 
-1. Create a DSC v3 YAML that installs Go if missing (save as `go-install.dsc.yaml`):
+2. **Create a DSC v3 YAML configuration** (save as `go-install.dsc.yaml`):
 
 ```yaml
 # Minimal DSC v3 document using a transitional resource to run a PowerShell command on Set
@@ -132,8 +140,9 @@ resources:
             Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing;
             Start-Process msiexec.exe -ArgumentList '/i', $msi, '/qn', '/norestart' -Wait;
           }"
+```
 
-1. Apply the configuration locally with Pedantic:
+3. **Apply the configuration locally:**
 
 ```powershell
 Import-Module Pedantic
@@ -142,7 +151,7 @@ Import-Module Pedantic
 Set-DscConfiguration -DscPath ./go-install.dsc.yaml -WhatIf:$false
 ```
 
-Remote example (run on another computer) using integrated remoting and auto resource install:
+4. **Remote execution** (optional):
 
 ```powershell
 Set-DscConfiguration -DscPath ./go-install.dsc.yaml `
@@ -151,24 +160,27 @@ Set-DscConfiguration -DscPath ./go-install.dsc.yaml `
   -ForceUpdateCache
 ```
 
-Notes:
+**Notes:**
+- The MSI installer updates PATH automatically; open a new shell for `go` to be available
+- Update `$version` to the desired Go release
+- For offline environments, pre-stage the MSI and replace the download URL with a local path
 
-- The MSI installer updates PATH automatically; open a new shell for `go` to be available.
-- Update `$version` to the desired Go release. For offline environments, pre-stage the MSI and replace the download with a local path.
+---
 
-### Alternative: Install Go with the Winget DSC resource (if available)
+## Advanced Usage
 
-If your environment exposes a Winget DSC resource (commonly `Microsoft.WinGet/Package`), you can install Go declaratively without a custom command.
+### Using Winget DSC Resource (Alternative)
 
-1. Check for the Winget DSC resource:
+If your environment has the Winget DSC resource available, you can use a declarative approach:
+
+1. **Check for the Winget DSC resource:**
 
 ```powershell
 $resource = "Microsoft.WinGet.DSC"
-Update-DscResourceCache -SpecificResource $resource 
-
+Update-DscResourceCache -SpecificResource $resource
 ```
 
-1. Create `go-install-winget.dsc.yaml`:
+2. **Create a Winget-based configuration** (`go-install-winget.dsc.yaml`):
 
 ```yaml
 description: Install Go (Golang) using Winget DSC resource if present
@@ -183,14 +195,70 @@ resources:
       # Version: "1.22.5"
 ```
 
-1. Apply the configuration:
+3. **Apply the configuration:**
 
 ```powershell
 Import-Module Pedantic
 Set-DscConfiguration -DscPath ./go-install-winget.dsc.yaml
 ```
 
-Notes:
+**Notes:**
+- Winget requires Windows 11/Server 2022 with Desktop Experience and the App Installer
+- For offline or restricted environments, use the transitional approach shown in Example 3
 
-- Winget may require Windows 11/Server 2022 with Desktop Experience and the App Installer/Store delivery channel enabled.
-- In offline or locked-down environments without Winget, use the transitional example above or your internal package source.
+---
+
+## Module Reference
+
+For detailed command documentation, use PowerShell's built-in help system:
+
+```powershell
+# Get help for a specific command
+Get-Help Set-DscConfiguration -Full
+
+# List all available commands
+Get-Command -Module Pedantic
+```
+
+## Integration with Plures Ecosystem
+
+Pedantic is part of the [Plures](https://github.com/plures) ecosystem, designed to work seamlessly with:
+
+- **[PluresDB](https://github.com/plures/pluresdb)** - Decentralized graph database for sharing DSC resources
+- **[RuneBook](https://github.com/plures/runebook)** - Interactive canvas environment for building DSC workflows
+- **[Praxis](https://github.com/plures/praxis)** - Full-stack application framework with DSC integration
+
+These integrations will enable:
+- Decentralized resource discovery and sharing
+- Visual DSC workflow development
+- Seamless application deployment with DSC
+
+## Contributing
+
+We welcome contributions! Whether you're:
+- Sharing DSC configurations and resources
+- Improving the PowerShell module
+- Building integrations with other tools
+- Enhancing documentation
+
+See our [Contributing Guide](CONTRIBUTING.md) (coming soon) for details.
+
+## Community & Support
+
+- **GitHub Issues** - Bug reports and feature requests
+- **Discussions** - Questions and community support
+- **Plures Organization** - Explore related projects at [github.com/plures](https://github.com/plures)
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Roadmap Documents
+
+For detailed information about our plans and progress:
+
+- **[NEXT-STEPS.md](NEXT-STEPS.md)** - Current priorities and immediate next steps
+- **[MVP-PLAN.md](MVP-PLAN.md)** - Next phase development plan
+- **[RELEASE-1.0-PLAN.md](RELEASE-1.0-PLAN.md)** - Production release targets
+- **[FULL-ROADMAP-PLAN.md](FULL-ROADMAP-PLAN.md)** - Complete long-term vision
+- **[ROADMAP-ANALYSIS.md](ROADMAP-ANALYSIS.md)** - Detailed status analysis

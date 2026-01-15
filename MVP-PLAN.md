@@ -1,6 +1,6 @@
-# StateSmith MVP Execution Plan
-**Target:** Ship a functional extension that improves DSL authoring experience  
-**Timeline:** 3-4 weeks  
+# Pedantic MVP Execution Plan
+**Target:** Ship functional VS Code extension for improved DSC authoring  
+**Timeline:** Q1 2026  
 **Effort:** 11-17 developer days
 
 ---

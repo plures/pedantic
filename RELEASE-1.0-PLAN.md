@@ -1,6 +1,6 @@
-# StateSmith 1.0 Release Plan
-**Goal:** Professional, stable extension ready for marketplace launch  
-**Timeline:** MVP + 4 weeks polish/testing = 7-8 weeks total  
+# Pedantic 1.0 Release Plan
+**Goal:** Professional, stable VS Code extension ready for marketplace launch  
+**Timeline:** Q2 2026 (MVP + polish/testing)  
 **Dependencies:** MVP shipped and validated by beta testers
 
 ---
