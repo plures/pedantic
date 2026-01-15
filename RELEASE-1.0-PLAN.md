@@ -1,6 +1,6 @@
-# StateSmith 1.0 Release Plan
-**Goal:** Professional, stable extension ready for marketplace launch  
-**Timeline:** MVP + 4 weeks polish/testing = 7-8 weeks total  
+# Pedantic 1.0 Release Plan
+**Goal:** Professional, stable VS Code extension ready for marketplace launch  
+**Timeline:** Q2 2026 (MVP + polish/testing)  
 **Dependencies:** MVP shipped and validated by beta testers
 
 ---
@@ -289,10 +289,10 @@ shasum -a 256 "${OUTPUT}"
 **6.4 Metadata (package.json)**
 ```json
 {
-  "displayName": "StateSmith DSC",
-  "description": "Authoring, visualization, and validation for Desired State Configuration (DSC) with dual DSL support.",
+  "displayName": "Pedantic DSC",
+  "description": "DSC ecosystem hub - authoring, visualization, and community sharing of DSC resources with dual DSL support.",
   "version": "0.1.0",
-  "publisher": "statesmith",
+  "publisher": "plures",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -336,11 +336,11 @@ shasum -a 256 "${OUTPUT}"
 
 **Beta Test Guide:**
 ```markdown
-# StateSmith Beta Testing Guide
+# Pedantic Beta Testing Guide
 
 ## Setup
 1. Download VSIX: [link]
-2. Install: `code --install-extension statesmith-dsc-0.1.0.vsix`
+2. Install: `code --install-extension pedantic-dsc-0.1.0.vsix`
 3. Reload VS Code
 
 ## Test Scenarios
@@ -351,12 +351,12 @@ shasum -a 256 "${OUTPUT}"
    - Verify diagnostics appear
 
 2. **View Resource Graph**
-   - Run command: "StateSmith: Open Resource Graph"
+   - Run command: "Pedantic: Open Resource Graph"
    - Verify graph renders
    - Click node → should reveal source
 
 3. **Generate DSC YAML**
-   - Run command: "StateSmith: Generate DSC from DSL"
+   - Run command: "Pedantic: Generate DSC from DSL"
    - Verify output appears
 
 ## Feedback
@@ -462,14 +462,13 @@ Please report:
 
 **Release Notes Template:**
 ```markdown
-# StateSmith DSC 1.0.0
+# Pedantic DSC 1.0.0
 
-We're excited to announce the first stable release of StateSmith DSC!
+We're excited to announce the first stable release of Pedantic DSC!
 
-## What is StateSmith?
+## What is Pedantic?
 
-StateSmith is a VS Code extension for authoring Desired State Configuration
-(DSC) files using two intuitive DSL syntaxes: Simple YAML and SudoLang.
+Pedantic is the Ansible Galaxy for DSC - a central ecosystem hub for discovering, sharing, and managing Desired State Configuration (DSC) resources. The VS Code extension provides modern authoring tools with dual DSL support (Simple YAML and SudoLang).
 
 ## Key Features
 
