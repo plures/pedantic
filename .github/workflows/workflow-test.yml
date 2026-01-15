@@ -98,10 +98,10 @@ jobs:
           $out = Join-Path $env:TEMP 'test-package'
           if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
           
-          $ver = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
-          $folder = 'StateSmith.DSC'
+          $ver = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
+          $folder = 'Pedantic'
           
-          $src = @('StateSmith.DSC.psd1', 'StateSmith.DSC.psm1') | Where-Object { Test-Path $_ }
+          $src = @('Pedantic.psd1', 'Pedantic.psm1') | Where-Object { Test-Path $_ }
           
           $temp = Join-Path $env:TEMP $folder
           if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
@@ -153,7 +153,7 @@ jobs:
         run: |
           Write-Host "Testing version validation logic..."
           
-          $manifestVersion = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
+          $manifestVersion = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
           
           if ($manifestVersion -notmatch '^\d+\.\d+\.\d+$') {
             throw "Invalid version format in manifest: $manifestVersion"

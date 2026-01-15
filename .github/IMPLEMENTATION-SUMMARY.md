@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document summarizes the comprehensive CI/CD infrastructure implemented for the StateSmith DSC module project.
+This document summarizes the comprehensive CI/CD infrastructure implemented for the Pedantic module project.
 
 ## What Was Implemented
 
@@ -253,7 +253,7 @@ This implementation represents a **production-ready, professional CI/CD pipeline
 6. **Predicts and mitigates** common pain points
 7. **Applies industry best practices** from across the industry and GitHub organizations
 
-The pipeline is ready for immediate use and provides a solid foundation for the StateSmith DSC module project's continued development and growth.
+The pipeline is ready for immediate use and provides a solid foundation for the Pedantic module project's continued development and growth.
 
 ---
 

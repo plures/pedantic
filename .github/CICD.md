@@ -504,7 +504,7 @@ Solution:
 ```
 Solution:
 1. Verify all required files exist
-2. Check module manifest is valid: Test-ModuleManifest ./StateSmith.DSC.psd1
+2. Check module manifest is valid: Test-ModuleManifest ./Pedantic.psd1
 3. Ensure no file path length issues (Windows limitation)
 4. Check temp directory has sufficient space
 ```

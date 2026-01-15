@@ -42,7 +42,7 @@ jobs:
           }
           
           # Check if version in manifest matches
-          $manifestVersion = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
+          $manifestVersion = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
           if ($manifestVersion -ne $version) {
             throw "Version mismatch: Manifest=$manifestVersion, Release=$version"
           }
@@ -115,8 +115,8 @@ jobs:
           $out = Join-Path $PWD 'release'
           if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
           
-          $version = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
-          $moduleName = 'StateSmith.DSC'
+          $version = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
+          $moduleName = 'Pedantic'
           
           # Create release package directory structure
           $releaseDir = Join-Path $out $moduleName
@@ -125,16 +125,15 @@ jobs:
           
           # Copy module files
           $filesToCopy = @(
-            'StateSmith.DSC.psd1',
-            'StateSmith.DSC.psm1',
-            'StateSmith.DSC.Reverse.psm1',
+            'Pedantic.psd1',
+            'Pedantic.psm1',
+            'Pedantic.Reverse.psm1',
             'Resources',
-            'Installers',
             'SimpleDSC.psd1',
             'Simple.DSC.psm1',
             'Simple.DSC.Basic.psm1',
             'README.md',
-            'Simple-DSC-README.md',
+            'docs',
             'LICENSE'
           )
           
@@ -222,7 +221,7 @@ jobs:
             return
           }
           
-          $modulePath = Join-Path $PWD 'release' 'StateSmith.DSC'
+          $modulePath = Join-Path $PWD 'release' 'Pedantic'
           
           if (-not (Test-Path $modulePath)) {
             throw "Module path not found: $modulePath"

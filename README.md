@@ -1,10 +1,10 @@
-# StateSmith • DSC Helper Module
+# Pedantic • DSC Helper Module
 
 [![Build & Test](https://github.com/plures/pedantic/actions/workflows/build-test.yml/badge.svg)](https://github.com/plures/pedantic/actions/workflows/build-test.yml)
 [![Security](https://github.com/plures/pedantic/actions/workflows/security.yml/badge.svg)](https://github.com/plures/pedantic/actions/workflows/security.yml)
 [![Workflow Tests](https://github.com/plures/pedantic/actions/workflows/workflow-test.yml/badge.svg)](https://github.com/plures/pedantic/actions/workflows/workflow-test.yml)
 
-DSC helper module for the StateSmith project.
+DSC helper module for the Pedantic project.
 
 This module provides user-friendly DSC v3 operations with parameter autocomplete support. It automatically handles remote execution without requiring manual setup on remote machines. The module targets PowerShell 7 and includes features like resource mapping, installer/resource caching, and platform-specific DSC version management.
 
@@ -47,7 +47,7 @@ None.
 ## Quick Start
 
 ```powershell
-Import-Module StateSmith.DSC
+Import-Module Pedantic
 # Use the module to manage DSC resources and configurations
 ```
 
@@ -95,7 +95,7 @@ If you need additional examples or command help, run `Get-Help <CommandName> -Fu
 
 ## Example: Install Go (Golang) on Windows with DSC v3
 
-This example uses the transitional DSC v3 resource `Microsoft/DSC/Transitional/RunCommandOnSet` to run an idempotent PowerShell command that installs Go only if it isn't already present. The StateSmith.DSC module ensures the required resource is cached and runs the configuration.
+This example uses the transitional DSC v3 resource `Microsoft/DSC/Transitional/RunCommandOnSet` to run an idempotent PowerShell command that installs Go only if it isn't already present. The Pedantic module ensures the required resource is cached and runs the configuration.
 
 1. Ensure required DSC resource is available locally (downloads/caches if needed):
 
@@ -124,10 +124,10 @@ resources:
             Start-Process msiexec.exe -ArgumentList '/i', $msi, '/qn', '/norestart' -Wait;
           }"
 
-1. Apply the configuration locally with StateSmith.DSC:
+1. Apply the configuration locally with Pedantic:
 
 ```powershell
-Import-Module StateSmith.DSC
+Import-Module Pedantic
 
 # Run the Set operation (remove -WhatIf to execute for real)
 Set-DscConfiguration -DscPath ./go-install.dsc.yaml -WhatIf:$false
@@ -177,7 +177,7 @@ resources:
 1. Apply the configuration:
 
 ```powershell
-Import-Module StateSmith.DSC
+Import-Module Pedantic
 Set-DscConfiguration -DscPath ./go-install-winget.dsc.yaml
 ```
 

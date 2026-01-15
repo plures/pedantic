@@ -1,6 +1,6 @@
 # GitHub Workflows
 
-This directory contains the CI/CD workflows for the StateSmith DSC module.
+This directory contains the CI/CD workflows for the Pedantic module.
 
 ## Active Workflows
 
