@@ -76,7 +76,7 @@ jobs:
             'Pedantic.psm1',
             'Pedantic.Reverse.psm1',
             'Resources',
-            'Installers',
+            
             'SimpleDSC.psd1',
             'Simple.DSC.psm1',
             'Simple.DSC.Basic.psm1',
