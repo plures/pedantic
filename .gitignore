@@ -4,6 +4,13 @@ dist/
 
 # Test results
 testResults.xml
+tests/testResults.xml
+
+# Installer and resource caches (should not be in repo)
+Installers/*.zip
+Installers/*.json
+Resources/*/
+!Resources/SimpleDSC.PackageInstaller/
 
 # Node modules
 node_modules/
