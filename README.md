@@ -2,13 +2,39 @@
 
 DSC helper module for the Pedantic project.
 
-This module provides user-friendly DSC v3 operations with parameter autocomplete support. It automatically handles remote execution without requiring manual setup on remote machines. The module targets PowerShell 7 and includes features like resource mapping, installer/resource caching, and platform-specific DSC version management.
+This project is transitioning from a PowerShell-centric DSC helper module to a **VS Code extension ecosystem** with dual DSL support (Simple YAML + SudoLang), AI-assisted configuration, and rich visualization capabilities.
 
-## Development Process
+## Project Status (January 2026)
 
+**Current Phase:** Foundational parsers complete, LSP integration is critical path  
+**Completion:** ~15-20% toward 1.0 release  
+**Next Milestone:** MVP (3-4 weeks)
 This project uses ADP (Automated Development Process) to streamline development workflows. See [docs/ADP-INTEGRATION.md](docs/ADP-INTEGRATION.md) for setup instructions.
 
-## Features
+📊 **[See Complete Roadmap Analysis →](NEXT-STEPS.md)**
+
+### What's Working
+- ✅ PowerShell module (production-ready)
+- ✅ VS Code extension scaffold  
+- ✅ Dual DSL parsers (Simple + SudoLang)
+- ✅ Resource graph visualization (basic)
+- ✅ Test framework with passing tests
+
+### What's Next
+- 🔴 **LSP Integration** ← Critical path (start here)
+- 🟡 Testing infrastructure (golden corpus)
+- 🟡 PowerShell bridge connection
+- 🟢 UI polish (ECharts, formatter, code actions)
+
+**Detailed Plans:**
+- [MVP Plan (3-4 weeks)](MVP-PLAN.md)
+- [1.0 Release Plan (7-8 weeks)](RELEASE-1.0-PLAN.md)
+- [Full Roadmap (6-7 months)](FULL-ROADMAP-PLAN.md)
+- [Implementation Analysis](ROADMAP-ANALYSIS.md)
+
+---
+
+## PowerShell Module Features
 
 - PowerShell 7 compatible
 - Remote DSC operations without manual remote setup
