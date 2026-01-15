@@ -1,0 +1,151 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    # Run weekly on Mondays at 6 AM UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  codeql-analysis:
+    name: CodeQL Analysis
+    runs-on: windows-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: 'javascript'
+          queries: security-extended,security-and-quality
+          config: |
+            paths:
+              - extension
+            paths-ignore:
+              - '**/node_modules/**'
+              - '**/test/**'
+              - '**/tests/**'
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript"
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          deny-licenses: GPL-2.0, GPL-3.0
+          comment-summary-in-pr: on-failure
+
+  powershell-security-scan:
+    name: PowerShell Security Best Practices
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Run security-focused PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Write-Host "Running security-focused PSScriptAnalyzer scan..."
+          
+          $securityRules = @(
+            'PSAvoidUsingPlainTextForPassword',
+            'PSAvoidUsingConvertToSecureStringWithPlainText',
+            'PSUsePSCredentialType',
+            'PSAvoidUsingWMICmdlet',
+            'PSAvoidUsingInvokeExpression',
+            'PSAvoidGlobalVars'
+          )
+          
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse -IncludeRule $securityRules
+          
+          if ($results) {
+            Write-Host "`nSecurity Issues Found:"
+            $results | Format-Table -Property Severity, RuleName, ScriptName, Line, Message -AutoSize
+            
+            $criticalCount = ($results | Where-Object { $_.Severity -eq 'Error' }).Count
+            if ($criticalCount -gt 0) {
+              throw "Found $criticalCount critical security issue(s)."
+            }
+            
+            Write-Warning "Found $($results.Count) security warning(s). Please review."
+          } else {
+            Write-Host "No security issues found."
+          }
+
+  secret-scanning:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  npm-audit:
+    name: NPM Security Audit
+    runs-on: ubuntu-latest
+    if: hashFiles('extension/package.json') != ''
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Run npm audit
+        working-directory: extension
+        run: |
+          npm audit --production --audit-level=moderate || true
+          npm audit --production --audit-level=moderate --json > npm-audit.json || true
+
+      - name: Upload npm audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npm-audit-results
+          path: extension/npm-audit.json
+          retention-days: 30

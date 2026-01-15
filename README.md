@@ -1,5 +1,9 @@
 # StateSmith • DSC Helper Module
 
+[![Build & Test](https://github.com/plures/pedantic/actions/workflows/build-test.yml/badge.svg)](https://github.com/plures/pedantic/actions/workflows/build-test.yml)
+[![Security](https://github.com/plures/pedantic/actions/workflows/security.yml/badge.svg)](https://github.com/plures/pedantic/actions/workflows/security.yml)
+[![Workflow Tests](https://github.com/plures/pedantic/actions/workflows/workflow-test.yml/badge.svg)](https://github.com/plures/pedantic/actions/workflows/workflow-test.yml)
+
 DSC helper module for the StateSmith project.
 
 This module provides user-friendly DSC v3 operations with parameter autocomplete support. It automatically handles remote execution without requiring manual setup on remote machines. The module targets PowerShell 7 and includes features like resource mapping, installer/resource caching, and platform-specific DSC version management.
@@ -7,6 +11,19 @@ This module provides user-friendly DSC v3 operations with parameter autocomplete
 ## Development Process
 
 This project uses ADP (Automated Development Process) to streamline development workflows. See [ADP-INTEGRATION.md](ADP-INTEGRATION.md) for setup instructions.
+
+### CI/CD Pipeline
+
+We implement comprehensive CI/CD automation with:
+- ✅ **Automated Testing**: Matrix testing across Windows versions and PowerShell 7.2/7.4
+- 🔒 **Security Scanning**: CodeQL, dependency review, secret scanning, PowerShell security rules
+- 📦 **Automated Releases**: Tag-triggered releases with changelog generation
+- 🤖 **Dependency Management**: Weekly Dependabot updates for all ecosystems
+- 🧪 **Self-Testing CI/CD**: The pipeline tests itself to prevent configuration drift
+
+**Documentation:**
+- 📚 [Complete CI/CD Documentation](.github/CICD.md)
+- ⚡ [Quick Reference Guide](.github/CICD-QUICKREF.md)
 
 ## Features
 

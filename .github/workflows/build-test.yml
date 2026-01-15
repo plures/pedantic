@@ -1,0 +1,187 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    name: Build & Test (PS ${{ matrix.ps-version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-2019]
+        ps-version: ['7.2', '7.4']
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup PowerShell ${{ matrix.ps-version }}
+        uses: actions/setup-powershell@v1
+        if: runner.os != 'Windows'
+        with:
+          pwsh-version: ${{ matrix.ps-version }}
+
+      - name: Initialize ADP Submodule (if configured)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          if (Test-Path '.gitmodules') {
+            $hasAdp = Get-Content '.gitmodules' -Raw | Select-String '\.adp'
+            if ($hasAdp) {
+              Write-Host "ADP submodule found in .gitmodules, initializing..."
+              git submodule update --init --recursive
+            }
+          }
+
+      - name: Initialize ADP (if available)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          if (Test-Path '.adp/scripts/init.ps1') {
+            Write-Host "ADP found, initializing..."
+            ./.adp/scripts/init.ps1
+          } elseif (Test-Path '.adp-placeholder') {
+            Write-Host "ADP placeholder found. ADP integration is pending."
+          } else {
+            Write-Host "ADP not configured."
+          }
+
+      - name: Install required PowerShell modules
+        shell: pwsh
+        run: |
+          $modules = @('Pester', 'PSScriptAnalyzer', 'PowerShellGet')
+          foreach ($module in $modules) {
+            Write-Host "Installing $module..."
+            Install-Module $module -Scope CurrentUser -Force -SkipPublisherCheck -AllowClobber
+          }
+
+      - name: Display PowerShell version
+        shell: pwsh
+        run: |
+          $PSVersionTable | Format-Table
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          if (Test-Path './PSScriptAnalyzerSettings.psd1') {
+            Write-Host "Running PSScriptAnalyzer with custom settings..."
+            $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1 -ReportSummary
+          } else {
+            Write-Host "Running PSScriptAnalyzer with default settings..."
+            $results = Invoke-ScriptAnalyzer -Path . -Recurse -ReportSummary
+          }
+          
+          # Filter to only show Warnings and Errors
+          $issues = $results | Where-Object { $_.Severity -in @('Warning', 'Error') }
+          
+          if ($issues) {
+            $issues | Format-Table -AutoSize
+            $errorCount = ($issues | Where-Object { $_.Severity -eq 'Error' }).Count
+            $warningCount = ($issues | Where-Object { $_.Severity -eq 'Warning' }).Count
+            
+            Write-Host "`nSummary: $errorCount error(s), $warningCount warning(s)"
+            
+            if ($errorCount -gt 0) {
+              throw "PSScriptAnalyzer found $errorCount error(s). Please fix them."
+            }
+          } else {
+            Write-Host "No issues found by PSScriptAnalyzer."
+          }
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          if (Test-Path 'tests') {
+            Write-Host "Running Pester tests..."
+            $config = New-PesterConfiguration
+            $config.Run.Path = 'tests'
+            $config.Run.PassThru = $true
+            $config.CodeCoverage.Enabled = $true
+            $config.CodeCoverage.Path = @('*.psm1', '*.ps1')
+            $config.CodeCoverage.OutputFormat = 'JaCoCo'
+            $config.CodeCoverage.OutputPath = 'coverage.xml'
+            $config.TestResult.Enabled = $true
+            $config.TestResult.OutputFormat = 'NUnitXml'
+            $config.TestResult.OutputPath = 'testResults.xml'
+            $config.Output.Verbosity = 'Detailed'
+            
+            $result = Invoke-Pester -Configuration $config
+            
+            if ($result.FailedCount -gt 0) {
+              throw "$($result.FailedCount) test(s) failed."
+            }
+            
+            Write-Host "`nTest Summary:"
+            Write-Host "  Passed: $($result.PassedCount)"
+            Write-Host "  Failed: $($result.FailedCount)"
+            Write-Host "  Skipped: $($result.SkippedCount)"
+            Write-Host "  Total: $($result.TotalCount)"
+          } else {
+            Write-Host "No tests directory found. Skipping tests."
+          }
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}-ps${{ matrix.ps-version }}
+          path: |
+            testResults.xml
+            coverage.xml
+          retention-days: 30
+
+      - name: Upload code coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./coverage.xml
+          flags: unittests-${{ matrix.os }}-ps${{ matrix.ps-version }}
+          name: codecov-${{ matrix.os }}-ps${{ matrix.ps-version }}
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Package module
+        shell: pwsh
+        run: |
+          $out = Join-Path $PWD 'dist'
+          if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
+          
+          # Package StateSmith.DSC module
+          $ver = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
+          $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+          $folder = 'StateSmith.DSC'
+          
+          $src = @(
+            'StateSmith.DSC.psd1',
+            'StateSmith.DSC.psm1',
+            'StateSmith.DSC.Reverse.psm1',
+            'Resources',
+            'Installers',
+            'SimpleDSC.psd1',
+            'Simple.DSC.psm1',
+            'Simple.DSC.Basic.psm1',
+            'Simple-DSC-README.md'
+          ) | Where-Object { Test-Path $_ }
+          
+          $temp = Join-Path $env:TEMP $folder
+          if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
+          New-Item -ItemType Directory -Path $temp | Out-Null
+          Copy-Item -Recurse -Force -Path $src -Destination $temp
+          
+          $zipPath = Join-Path $out "$folder-$ver-$stamp.zip"
+          Compress-Archive -Path (Join-Path $temp '*') -DestinationPath $zipPath -Force
+          
+          Write-Host "Package created: $zipPath"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-dist-${{ matrix.os }}-ps${{ matrix.ps-version }}
+          path: dist/*.zip
+          retention-days: 90
