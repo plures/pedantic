@@ -1,12 +1,13 @@
 # SimpleDSC Module Manifest
 # Provides simplified package management through custom DSC resources
+# Part of the Pedantic project
 
 @{
     ModuleVersion = '1.0.0'
     GUID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
-    Author = 'SimpleDSC Team'
-    CompanyName = 'SimpleDSC'
-    Copyright = '(c) 2025 SimpleDSC Team. All rights reserved.'
+    Author = 'Pedantic Project'
+    CompanyName = 'Pedantic'
+    Copyright = '(c) 2025 Pedantic Project. All rights reserved.'
     Description = 'Simplified package management DSC resources'
     
     PowerShellVersion = '7.2'

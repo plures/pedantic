@@ -67,7 +67,8 @@ $commit = Get-CommitInfo
 
 # Layout
 $artifactName = "Pedantic-$Version-$timestamp.zip"
-$stagingRoot  = Join-Path $env:TEMP ("pedantic_pkg_" + [Guid]::NewGuid())
+$tempDir = if ($env:TEMP) { $env:TEMP } else { '/tmp' }
+$stagingRoot  = Join-Path $tempDir ("pedantic_pkg_" + [Guid]::NewGuid())
 $null = New-Item -ItemType Directory -Force -Path $stagingRoot
 
 $contentRoot  = Join-Path $stagingRoot 'content'
@@ -86,9 +87,10 @@ Copy-Item -Path (Join-Path $PSScriptRoot 'Pedantic.psd1') -Destination $moduleFo
 Copy-IfExists -Path (Join-Path $PSScriptRoot 'Resources')  -Destination (Join-Path $contentRoot 'Resources')
 Copy-IfExists -Path (Join-Path $PSScriptRoot 'Installers') -Destination (Join-Path $contentRoot 'Installers')
 
-# Copy docs
-$docs = @('README.md','LICENSE')
-foreach ($d in $docs) { if (Test-Path (Join-Path $PSScriptRoot $d)) { Copy-Item (Join-Path $PSScriptRoot $d) -Destination $contentRoot -Force } }
+# Copy README and docs folder
+if (Test-Path (Join-Path $PSScriptRoot 'README.md')) { 
+  Copy-Item (Join-Path $PSScriptRoot 'README.md') -Destination $contentRoot -Force 
+}
 Copy-IfExists -Path (Join-Path $PSScriptRoot 'docs') -Destination (Join-Path $contentRoot 'docs')
 
 # Include tests optionally
