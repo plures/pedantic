@@ -19,6 +19,8 @@ This project uses ADP (Automated Development Process) to streamline development 
 - ✅ Dual DSL parsers (Simple + SudoLang)
 - ✅ Resource graph visualization (basic)
 - ✅ Test framework with passing tests
+- ✅ **Praxis-inspired logic engine** (fact/event/rule system)
+- ✅ **Reactive state management** (framework-agnostic)
 
 ### What's Next
 - 🔴 **LSP Integration** ← Critical path (start here)
@@ -31,6 +33,7 @@ This project uses ADP (Automated Development Process) to streamline development 
 - [1.0 Release Plan (7-8 weeks)](RELEASE-1.0-PLAN.md)
 - [Full Roadmap (6-7 months)](FULL-ROADMAP-PLAN.md)
 - [Implementation Analysis](ROADMAP-ANALYSIS.md)
+- [**Praxis Integration Guide**](docs/PRAXIS-INTEGRATION.md)
 
 ---
 
