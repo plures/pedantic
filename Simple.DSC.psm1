@@ -4,7 +4,7 @@
 # Module Manifest would be Simple.DSC.psd1
 # For now, implementing as a single .psm1 file
 
-using module .\StateSmith.DSC.psm1
+using module .\Pedantic.psm1
 
 class SimpleDscConfig {
     [hashtable] $Preferences
