@@ -1,10 +1,10 @@
 #requires -Version 7.2
 
-Describe 'StateSmith.DSC Public API' {
+Describe 'Pedantic Public API' {
   BeforeAll {
-    # Import StateSmith module directly
-    $ssPath = Join-Path $PSScriptRoot '..' 'StateSmith.DSC.psm1'
-    if (Test-Path $ssPath) { Import-Module $ssPath -Force } else { Import-Module StateSmith.DSC -Force -ErrorAction Stop }
+    # Import Pedantic module directly
+    $modulePath = Join-Path $PSScriptRoot '..' 'Pedantic.psm1'
+    if (Test-Path $modulePath) { Import-Module $modulePath -Force } else { Import-Module Pedantic -Force -ErrorAction Stop }
   }
 
   It 'exports expected commands' {
@@ -16,7 +16,7 @@ Describe 'StateSmith.DSC Public API' {
 
   Context 'Invoke-DscHelper routing' {
     It 'returns inDesiredState when -ReturnInDesiredState is set' {
-      InModuleScope 'StateSmith.DSC' {
+      InModuleScope 'Pedantic' {
         Mock -CommandName Test-DscExecutable {}
         Mock -CommandName Test-DscPaths {}
         Mock -CommandName Build-DscArguments { @('config','test','--file','x.yaml','--output-format','json') }

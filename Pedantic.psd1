@@ -1,11 +1,11 @@
 @{
-  RootModule = 'StateSmith.DSC.psm1'
+  RootModule = 'Pedantic.psm1'
   ModuleVersion = '0.9.0'
   GUID = '2b6a3c27-1a4a-4d3f-9c9f-9b8b7d9d1234'
-  Author = 'StateSmith Project'
-  CompanyName = 'StateSmith'
-  Copyright = '(c) StateSmith. All rights reserved.'
-  Description = 'StateSmith DSC Helper Module. Provides user-friendly DSC v3 operations with parameter autocomplete support and automatic remote execution.'
+  Author = 'Pedantic Project'
+  CompanyName = 'Pedantic'
+  Copyright = '(c) Pedantic. All rights reserved.'
+  Description = 'Pedantic DSC Helper Module. Provides user-friendly DSC v3 operations with parameter autocomplete support and automatic remote execution.'
   PowerShellVersion = '7.2'
   CompatiblePSEditions = @('Core')
   # Export explicit public surface for performance and clarity
@@ -34,7 +34,7 @@
   CmdletsToExport = @()
   VariablesToExport = '*'
   AliasesToExport = @('head','tail')
-  # Standalone StateSmith module; no legacy nested modules
+  # Pedantic module; no legacy nested modules
   NestedModules = @()
-  PrivateData = @{ PSData = @{ Tags = @('DSC','StateSmith','DesiredStateConfiguration','Automation') } }
+  PrivateData = @{ PSData = @{ Tags = @('DSC','Pedantic','DesiredStateConfiguration','Automation') } }
 }
