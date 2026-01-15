@@ -309,7 +309,7 @@ export class AiPanel {
     }
     const panel = vscode.window.createWebviewPanel(
       'statesmithAi',
-      'StateSmith AI Assistant',
+      'Pedantic AI Assistant',
       vscode.ViewColumn.Beside,
       { enableScripts: true, retainContextWhenHidden: true }
     );
