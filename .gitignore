@@ -4,12 +4,17 @@ dist/
 
 # Test results
 testResults.xml
+coverage.xml
 
 # Node modules
 node_modules/
 
 # PowerShell
 *.ps1xml
+
+# CI/CD tools (downloaded locally)
+actionlint
+yamllint
 
 # IDE
 .vscode/

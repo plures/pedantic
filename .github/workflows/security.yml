@@ -123,13 +123,22 @@ jobs:
   npm-audit:
     name: NPM Security Audit
     runs-on: ubuntu-latest
-    if: hashFiles('extension/package.json') != ''
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check for package.json
+        id: check-npm
+        run: |
+          if [ -f "extension/package.json" ]; then
+            echo "has_package=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_package=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup Node.js
+        if: steps.check-npm.outputs.has_package == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '18'
@@ -137,14 +146,15 @@ jobs:
           cache-dependency-path: extension/package-lock.json
 
       - name: Run npm audit
+        if: steps.check-npm.outputs.has_package == 'true'
         working-directory: extension
         run: |
           npm audit --production --audit-level=moderate || true
           npm audit --production --audit-level=moderate --json > npm-audit.json || true
 
       - name: Upload npm audit results
+        if: steps.check-npm.outputs.has_package == 'true'
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: npm-audit-results
           path: extension/npm-audit.json

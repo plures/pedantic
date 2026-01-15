@@ -189,11 +189,6 @@ jobs:
         run: |
           echo "Checking documentation for required secrets..."
           
-          required_secrets=(
-            "CODECOV_TOKEN"
-            "PSGALLERY_API_KEY"
-          )
-          
           # Check if CI/CD documentation exists
           if [ -f "docs/CICD.md" ] || [ -f ".github/CICD.md" ]; then
             echo "✓ CI/CD documentation found"
@@ -217,18 +212,20 @@ jobs:
     steps:
       - name: Generate test summary
         run: |
-          echo "# CI/CD Workflow Self-Test Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Workflow Validation**: ${{ needs.validate-workflows.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build Workflow Test**: ${{ needs.test-build-workflow.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Security Workflow Test**: ${{ needs.test-security-workflow.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Release Workflow Test**: ${{ needs.test-release-workflow.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Integration Test**: ${{ needs.test-ci-cd-integration.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*Report generated at $(date -u +'%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "# CI/CD Workflow Self-Test Report"
+            echo ""
+            echo "## Test Results"
+            echo ""
+            echo "- **Workflow Validation**: ${{ needs.validate-workflows.result }}"
+            echo "- **Build Workflow Test**: ${{ needs.test-build-workflow.result }}"
+            echo "- **Security Workflow Test**: ${{ needs.test-security-workflow.result }}"
+            echo "- **Release Workflow Test**: ${{ needs.test-release-workflow.result }}"
+            echo "- **Integration Test**: ${{ needs.test-ci-cd-integration.result }}"
+            echo ""
+            echo "---"
+            echo "*Report generated at $(date -u +'%Y-%m-%d %H:%M:%S UTC')*"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check overall status
         run: |

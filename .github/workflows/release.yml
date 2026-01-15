@@ -65,15 +65,15 @@ jobs:
           }
           
           $changelog = @"
-# Release v$version
-
-## Changes
-
-$changes
-
----
-*Generated on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')*
-"@
+          # Release v$version
+          
+          ## Changes
+          
+          $changes
+          
+          ---
+          *Generated on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')*
+          "@
           
           $changelog | Out-File -FilePath changelog.md -Encoding utf8
           Write-Host "Changelog generated:"
@@ -184,7 +184,7 @@ $changes
           path: release
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           body_path: changelog.md
           files: |
