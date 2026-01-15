@@ -47,9 +47,9 @@ class SudoCstParser extends CstParser {
     this.CONSUME(Install);
     this.OPTION(() => this.CONSUME(Package));
     this.SUBRULE(this.packageRef);
-    this.OPTION(() => this.SUBRULE(this.viaClause));
-    this.OPTION2(() => this.SUBRULE(this.versionClause));
-    this.OPTION3(() => this.SUBRULE(this.execClause));
+    this.OPTION2(() => this.SUBRULE(this.viaClause));
+    this.OPTION3(() => this.SUBRULE(this.versionClause));
+    this.OPTION4(() => this.SUBRULE(this.execClause));
   });
 
   private ensureStmt = this.RULE('ensureStmt', () => {

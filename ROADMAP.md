@@ -208,25 +208,39 @@ Performance Budgets (Phase 7):
 
 Legend: [ ] pending, [~] in progress, [x] done
 
-### Foundation & Scaffolding
+**Last Updated:** January 15, 2026  
+**Status Summary:** Phase 1-2 foundations (parsers) complete. LSP integration is critical path.  
+**See:** [ROADMAP-ANALYSIS.md](ROADMAP-ANALYSIS.md) for detailed status assessment.
+
+### Foundation & Scaffolding (~95% Complete)
 * [x] Rebrand to StateSmith (PowerShell core)
-* [ ] Monorepo scaffolding (packages, build scripts)
-* [ ] Extension activation + basic command
-* [ ] PowerShell bridge contract (JSON schema v1)
+* [x] Extension activation + basic commands (4 registered)
+* [x] Extension package.json + TypeScript build pipeline
+* [x] Webview framework (resource graph panel)
+* [ ] PowerShell bridge contract (JSON schema v1) ← **HIGH PRIORITY**
 
-### Parsing & LSP
-* [ ] Simple DSL tolerant parser
-* [ ] Diagnostics & completions (core keys, methods)
-* [ ] Golden tests (simple → DSC YAML)
+### Parsing & LSP (~40% Complete - CRITICAL PATH)
+* [x] Simple DSL tolerant parser (DSL001-DSL010 diagnostics)
+* [x] SudoLang Chevrotain parser (5 passing tests)
+* [x] Unified AST design (Document/Block/Package hierarchy)
+* [ ] **LSP server setup** ← **START HERE**
+* [ ] **Real-time diagnostics publishing** ← **CRITICAL**
+* [ ] **Completions provider (keys, methods, package IDs)** ← **CRITICAL**
+* [ ] Golden tests (simple → DSC YAML corpus)
 * [ ] Performance instrumentation
+* [ ] Hovers (package info, method docs)
+* [ ] Code actions (add packages key, expand string → object, remove unknown field)
+* [ ] Format provider (canonical ordering, idempotent)
 
-### SudoLang DSL
-* [ ] Grammar spec document
-* [ ] Chevrotain implementation
-* [ ] Round‑trip converters & tests
+### SudoLang DSL (~70% Complete)
+* [x] Grammar spec document (DSL-SPEC.md)
+* [x] Chevrotain implementation (install/ensure statements)
+* [x] Test suite (5 core scenarios passing)
+* [ ] Round‑trip converters (Simple ↔ SudoLang)
+* [ ] Round‑trip tests with lossiness detection
 * [ ] Lossiness report generator
 
-### AI / MCP
+### AI / MCP (~0% Complete - DEFERRED TO POST-MVP)
 * [ ] MCP server scaffold
 * [ ] Tool: generateConfig
 * [ ] Tool: explainConfig
@@ -235,23 +249,35 @@ Legend: [ ] pending, [~] in progress, [x] done
 * [ ] Tool: reverseToDsl
 * [ ] Diff preview UI & audit log
 
-### Visualizations
-* [ ] Resource graph webview
+### Visualizations (~20% Complete)
+* [x] Resource graph webview (basic radial layout)
+* [x] Auto-refresh on document change (debounced)
+* [x] Diagnostic display in webview
+* [ ] **ECharts integration** (currently placeholder)
+* [ ] **Node click → reveal source location**
+* [ ] Provider grouping visualization
 * [ ] Drift dashboard webview
 * [ ] Reverse explorer
 * [ ] AI design canvas
 
-### Engine Evolution
+### Engine Evolution (~0% Complete - DEFERRED TO PHASE 6)
 * [ ] JS provider abstraction (winget/choco/msi)
 * [ ] Install plan optimizer
 * [ ] Caching/offline manager
 * [ ] Optional Deno experiment flag
 
-### Quality & Ops
-* [ ] Test matrix (unit/LSP/webview/E2E)
+### Quality & Ops (~10% Complete)
+* [x] Test infrastructure (node:test framework)
+* [x] SudoLang parser tests (5 passing)
+* [ ] **Simple parser tests** ← **HIGH PRIORITY**
+* [ ] **Golden test corpus** (6-10 representative configs)
+* [ ] LSP integration tests
+* [ ] Webview tests
+* [ ] E2E smoke tests
+* [ ] Test coverage ≥80% statements
 * [ ] Telemetry (opt‑in) & redaction check
 * [ ] Security checklist & sandbox prompts
-* [ ] Performance budgets enforced
+* [ ] Performance budgets enforced (CI gating)
 * [ ] Documentation suite (User, DSL Spec, AI Safety)
 * [ ] Marketplace publish (Preview)
 * [ ] 1.0.0 Release
@@ -286,3 +312,44 @@ Will define standards for:
 ---
 This roadmap supersedes prior “clean stable release” module-centric plan. Historical material retained in version control history for reference.
 
+
+---
+## 15. Status Update (January 2026)
+
+**Current Implementation Status:** ~15-20% complete toward 1.0. See [ROADMAP-ANALYSIS.md](ROADMAP-ANALYSIS.md) for comprehensive assessment.
+
+### What's Working
+- ✅ PowerShell module (mature, production-ready)
+- ✅ VS Code extension scaffold (commands, activation, webview)
+- ✅ Dual DSL parsers (Simple YAML + SudoLang with Chevrotain)
+- ✅ Unified AST design with diagnostics
+- ✅ Resource graph webview (basic visualization)
+- ✅ Test framework (5 SudoLang tests passing)
+
+### Critical Path (Next 3-4 Weeks)
+1. **LSP Integration** ← START HERE
+   - Wire up language server/client
+   - Publish real-time diagnostics to Problems panel
+   - Implement completions for keys, methods, package IDs
+   
+2. **Testing Infrastructure**
+   - Add golden test corpus (6-10 representative configs)
+   - Simple parser unit tests
+   - Round-trip validation tests
+
+3. **PowerShell Bridge**
+   - Define JSON contract schema
+   - Connect generateConfig command to PowerShell module
+   - Error handling and timeout management
+
+4. **UI Polish**
+   - ECharts integration for graph
+   - Node click → reveal source
+   - Formatter + 3 code actions
+
+**MVP Delivery Target:** 3-4 weeks  
+**1.0 Release Target:** 7-8 weeks  
+**Full Roadmap (with AI):** 6-7 months
+
+### Strategic Decision
+AI/MCP features (Phase 4-7) are **explicitly deferred** until after MVP ships. This focuses effort on core value delivery and reduces scope risk.
