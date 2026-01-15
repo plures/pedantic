@@ -112,6 +112,7 @@ jobs:
             Write-Host "✓ Successfully created test package: $zipPath"
             $size = (Get-Item $zipPath).Length
             Write-Host "  Package size: $([math]::Round($size/1KB, 2)) KB"
+            return
           } else {
             throw "Failed to create test package"
           }

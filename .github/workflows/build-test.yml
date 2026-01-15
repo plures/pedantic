@@ -21,11 +21,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup PowerShell ${{ matrix.ps-version }}
-        uses: actions/setup-powershell@v1
-        if: runner.os != 'Windows'
-        with:
-          pwsh-version: ${{ matrix.ps-version }}
+      # Note: PowerShell setup step not needed - Windows runners have pwsh pre-installed
 
       - name: Initialize ADP Submodule (if configured)
         shell: pwsh

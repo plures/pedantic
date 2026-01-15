@@ -219,7 +219,7 @@ jobs:
         run: |
           if (-not $env:PSGALLERY_API_KEY) {
             Write-Warning "PSGALLERY_API_KEY secret not set. Skipping PowerShell Gallery publish."
-            exit 0
+            return
           }
           
           $modulePath = Join-Path $PWD 'release' 'StateSmith.DSC'

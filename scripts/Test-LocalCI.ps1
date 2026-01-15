@@ -55,6 +55,8 @@ if (-not $SkipLinter) {
     # Ensure PSScriptAnalyzer is installed
     if (-not (Get-Module PSScriptAnalyzer -ListAvailable)) {
         Write-Host "Installing PSScriptAnalyzer..." -ForegroundColor Yellow
+        # Note: -SkipPublisherCheck is used because PSScriptAnalyzer may not always be signed
+        # in CI/CD environments or when installing from local caches
         Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
     }
     
@@ -105,6 +107,8 @@ if (-not $SkipTests) {
         $pesterModule = Get-Module Pester -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
         if (-not $pesterModule -or $pesterModule.Version.Major -lt 5) {
             Write-Host "Installing Pester 5.x..." -ForegroundColor Yellow
+            # Note: -SkipPublisherCheck is used because Pester may not always be signed
+            # in CI/CD environments or when installing from local caches
             Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck -MinimumVersion 5.0.0
         }
         

@@ -94,7 +94,7 @@ jobs:
             
             $criticalCount = ($results | Where-Object { $_.Severity -eq 'Error' }).Count
             if ($criticalCount -gt 0) {
-              throw "Found $criticalCount critical security issue(s)."
+              throw "Found $criticalCount critical security issue(s). Run 'Invoke-ScriptAnalyzer -Path . -Recurse -IncludeRule <RuleName>' locally for details."
             }
             
             Write-Warning "Found $($results.Count) security warning(s). Please review."

@@ -62,7 +62,9 @@ if (-not $hasYamllint) {
 if ($hasActionlint) {
     Write-Host "Running actionlint..." -ForegroundColor Yellow
     
-    $workflowFiles = Get-ChildItem -Path .github/workflows -Filter *.yml -File | Where-Object { $_.Name -ne 'ci.yml.old' }
+    $workflowFiles = Get-ChildItem -Path .github/workflows -Filter *.yml -File | Where-Object { 
+        $_.Name -notmatch '\.old$' 
+    }
     
     $actionlintErrors = 0
     foreach ($file in $workflowFiles) {
