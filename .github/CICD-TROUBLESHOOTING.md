@@ -111,8 +111,8 @@ Get-Command SomeCommand -ErrorAction SilentlyContinue
 $out = Join-Path $env:TEMP 'test-package'
 if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out }
 
-$ver = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
-Compress-Archive -Path 'StateSmith.DSC.psd1','StateSmith.DSC.psm1' -DestinationPath (Join-Path $out "test-$ver.zip")
+$ver = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
+Compress-Archive -Path 'Pedantic.psd1','Pedantic.psm1' -DestinationPath (Join-Path $out "test-$ver.zip")
 ```
 
 **Solutions**:
@@ -120,7 +120,7 @@ Compress-Archive -Path 'StateSmith.DSC.psd1','StateSmith.DSC.psm1' -DestinationP
 1. **Missing files**:
    ```powershell
    # Check all required files exist
-   $required = @('StateSmith.DSC.psd1', 'StateSmith.DSC.psm1')
+   $required = @('Pedantic.psd1', 'Pedantic.psm1')
    $required | ForEach-Object {
        if (-not (Test-Path $_)) { Write-Warning "Missing: $_" }
    }
@@ -129,7 +129,7 @@ Compress-Archive -Path 'StateSmith.DSC.psd1','StateSmith.DSC.psm1' -DestinationP
 2. **Invalid manifest**:
    ```powershell
    # Validate manifest
-   Test-ModuleManifest ./StateSmith.DSC.psd1
+   Test-ModuleManifest ./Pedantic.psd1
    ```
 
 3. **Path too long** (Windows):
@@ -285,14 +285,14 @@ npm audit --production
 **Solution**:
 ```powershell
 # 1. Check current manifest version
-(Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
+(Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
 
 # 2. Update manifest to match tag
-# Edit StateSmith.DSC.psd1:
+# Edit Pedantic.psd1:
 ModuleVersion = '1.2.3'  # Match your tag
 
 # 3. Commit and push
-git add StateSmith.DSC.psd1
+git add Pedantic.psd1
 git commit -m "chore: update version to 1.2.3"
 git push
 
@@ -322,7 +322,7 @@ git push origin v1.2.3
 # In GitHub: Settings → Secrets → Actions → PSGALLERY_API_KEY
 
 # Test locally (if you have API key)
-Publish-Module -Path ./release/StateSmith.DSC -NuGetApiKey $env:PSGALLERY_API_KEY -WhatIf
+Publish-Module -Path ./release/Pedantic -NuGetApiKey $env:PSGALLERY_API_KEY -WhatIf
 ```
 
 **Solutions**:
@@ -340,10 +340,10 @@ Publish-Module -Path ./release/StateSmith.DSC -NuGetApiKey $env:PSGALLERY_API_KE
 3. **Manifest validation fails**:
    ```powershell
    # Validate manifest
-   Test-ModuleManifest -Path ./StateSmith.DSC.psd1
+   Test-ModuleManifest -Path ./Pedantic.psd1
    
    # Check for required fields
-   $manifest = Import-PowerShellDataFile './StateSmith.DSC.psd1'
+   $manifest = Import-PowerShellDataFile './Pedantic.psd1'
    $manifest.Author       # Must be set
    $manifest.Description  # Must be set
    ```

@@ -14,7 +14,7 @@ Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
 Invoke-Pester -Path tests -Output Detailed
 
 # Check module manifest is valid
-Test-ModuleManifest ./StateSmith.DSC.psd1
+Test-ModuleManifest ./Pedantic.psd1
 ```
 
 ### Understanding CI Results
@@ -46,14 +46,14 @@ All checks must pass before merging:
 
 ### Creating a Release
 
-1. **Update version** in `StateSmith.DSC.psd1`
+1. **Update version** in `Pedantic.psd1`
    ```powershell
    ModuleVersion = 'X.Y.Z'  # Update this
    ```
 
 2. **Commit and push** to main branch
    ```bash
-   git add StateSmith.DSC.psd1
+   git add Pedantic.psd1
    git commit -m "chore: bump version to X.Y.Z"
    git push origin main
    ```
@@ -145,7 +145,7 @@ Invoke-ScriptAnalyzer -Path . -Recurse -Fix
 ### Test Failures
 ```powershell
 # Run specific test file
-Invoke-Pester -Path tests/StateSmith.DSC.PublicApi.Tests.ps1 -Output Detailed
+Invoke-Pester -Path tests/Pedantic.PublicApi.Tests.ps1 -Output Detailed
 
 # Debug mode
 $config = New-PesterConfiguration
@@ -156,7 +156,7 @@ Invoke-Pester -Configuration $config
 ### Version Mismatch
 ```powershell
 # Check current manifest version
-(Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
+(Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
 
 # Check git tags
 git tag --list 'v*' | sort -V | tail -5

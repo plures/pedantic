@@ -42,7 +42,7 @@ jobs:
           }
           
           # Check if version in manifest matches
-          $manifestVersion = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
+          $manifestVersion = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
           if ($manifestVersion -ne $version) {
             throw "Version mismatch: Manifest=$manifestVersion, Release=$version"
           }
@@ -65,15 +65,15 @@ jobs:
           }
           
           $changelog = @"
-# Release v$version
-
-## Changes
-
-$changes
-
----
-*Generated on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')*
-"@
+          # Release v$version
+          
+          ## Changes
+          
+          $changes
+          
+          ---
+          *Generated on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')*
+          "@
           
           $changelog | Out-File -FilePath changelog.md -Encoding utf8
           Write-Host "Changelog generated:"
@@ -115,8 +115,8 @@ $changes
           $out = Join-Path $PWD 'release'
           if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
           
-          $version = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
-          $moduleName = 'StateSmith.DSC'
+          $version = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
+          $moduleName = 'Pedantic'
           
           # Create release package directory structure
           $releaseDir = Join-Path $out $moduleName
@@ -125,16 +125,15 @@ $changes
           
           # Copy module files
           $filesToCopy = @(
-            'StateSmith.DSC.psd1',
-            'StateSmith.DSC.psm1',
-            'StateSmith.DSC.Reverse.psm1',
+            'Pedantic.psd1',
+            'Pedantic.psm1',
+            'Pedantic.Reverse.psm1',
             'Resources',
-            'Installers',
             'SimpleDSC.psd1',
             'Simple.DSC.psm1',
             'Simple.DSC.Basic.psm1',
             'README.md',
-            'Simple-DSC-README.md',
+            'docs',
             'LICENSE'
           )
           
@@ -173,18 +172,18 @@ $changes
         uses: actions/checkout@v4
 
       - name: Download changelog
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.3
         with:
           name: changelog
 
       - name: Download release package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.3
         with:
           name: release-package
           path: release
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           body_path: changelog.md
           files: |
@@ -207,7 +206,7 @@ $changes
         uses: actions/checkout@v4
 
       - name: Download release package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.3
         with:
           name: release-package
           path: release
@@ -219,10 +218,10 @@ $changes
         run: |
           if (-not $env:PSGALLERY_API_KEY) {
             Write-Warning "PSGALLERY_API_KEY secret not set. Skipping PowerShell Gallery publish."
-            exit 0
+            return
           }
           
-          $modulePath = Join-Path $PWD 'release' 'StateSmith.DSC'
+          $modulePath = Join-Path $PWD 'release' 'Pedantic'
           
           if (-not (Test-Path $modulePath)) {
             throw "Module path not found: $modulePath"

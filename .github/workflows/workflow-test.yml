@@ -10,6 +10,9 @@ on:
     # Run monthly on the 1st at 3 AM UTC
     - cron: '0 3 1 * *'
 
+permissions:
+  contents: read
+
 jobs:
   validate-workflows:
     name: Validate Workflow Syntax
@@ -95,10 +98,10 @@ jobs:
           $out = Join-Path $env:TEMP 'test-package'
           if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
           
-          $ver = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
-          $folder = 'StateSmith.DSC'
+          $ver = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
+          $folder = 'Pedantic'
           
-          $src = @('StateSmith.DSC.psd1', 'StateSmith.DSC.psm1') | Where-Object { Test-Path $_ }
+          $src = @('Pedantic.psd1', 'Pedantic.psm1') | Where-Object { Test-Path $_ }
           
           $temp = Join-Path $env:TEMP $folder
           if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
@@ -112,6 +115,7 @@ jobs:
             Write-Host "✓ Successfully created test package: $zipPath"
             $size = (Get-Item $zipPath).Length
             Write-Host "  Package size: $([math]::Round($size/1KB, 2)) KB"
+            return
           } else {
             throw "Failed to create test package"
           }
@@ -149,7 +153,7 @@ jobs:
         run: |
           Write-Host "Testing version validation logic..."
           
-          $manifestVersion = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
+          $manifestVersion = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
           
           if ($manifestVersion -notmatch '^\d+\.\d+\.\d+$') {
             throw "Invalid version format in manifest: $manifestVersion"
@@ -189,11 +193,6 @@ jobs:
         run: |
           echo "Checking documentation for required secrets..."
           
-          required_secrets=(
-            "CODECOV_TOKEN"
-            "PSGALLERY_API_KEY"
-          )
-          
           # Check if CI/CD documentation exists
           if [ -f "docs/CICD.md" ] || [ -f ".github/CICD.md" ]; then
             echo "✓ CI/CD documentation found"
@@ -217,18 +216,20 @@ jobs:
     steps:
       - name: Generate test summary
         run: |
-          echo "# CI/CD Workflow Self-Test Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Workflow Validation**: ${{ needs.validate-workflows.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build Workflow Test**: ${{ needs.test-build-workflow.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Security Workflow Test**: ${{ needs.test-security-workflow.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Release Workflow Test**: ${{ needs.test-release-workflow.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Integration Test**: ${{ needs.test-ci-cd-integration.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*Report generated at $(date -u +'%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "# CI/CD Workflow Self-Test Report"
+            echo ""
+            echo "## Test Results"
+            echo ""
+            echo "- **Workflow Validation**: ${{ needs.validate-workflows.result }}"
+            echo "- **Build Workflow Test**: ${{ needs.test-build-workflow.result }}"
+            echo "- **Security Workflow Test**: ${{ needs.test-security-workflow.result }}"
+            echo "- **Release Workflow Test**: ${{ needs.test-release-workflow.result }}"
+            echo "- **Integration Test**: ${{ needs.test-ci-cd-integration.result }}"
+            echo ""
+            echo "---"
+            echo "*Report generated at $(date -u +'%Y-%m-%d %H:%M:%S UTC')*"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check overall status
         run: |

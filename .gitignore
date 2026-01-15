@@ -11,12 +11,17 @@ Installers/*.zip
 Installers/*.json
 Resources/*/
 !Resources/SimpleDSC.PackageInstaller/
+coverage.xml
 
 # Node modules
 node_modules/
 
 # PowerShell
 *.ps1xml
+
+# CI/CD tools (downloaded locally)
+actionlint
+yamllint
 
 # IDE
 .vscode/

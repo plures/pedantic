@@ -7,6 +7,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-test:
     name: Build & Test (PS ${{ matrix.ps-version }} on ${{ matrix.os }})
@@ -14,18 +17,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, windows-2019]
+        os: [windows-latest, windows-2022]
         ps-version: ['7.2', '7.4']
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup PowerShell ${{ matrix.ps-version }}
-        uses: actions/setup-powershell@v1
-        if: runner.os != 'Windows'
-        with:
-          pwsh-version: ${{ matrix.ps-version }}
+      # Note: PowerShell setup step not needed - Windows runners have pwsh pre-installed
 
       - name: Initialize ADP Submodule (if configured)
         shell: pwsh
@@ -152,21 +151,20 @@ jobs:
           $out = Join-Path $PWD 'dist'
           if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
           
-          # Package StateSmith.DSC module
-          $ver = (Import-PowerShellDataFile './StateSmith.DSC.psd1').ModuleVersion
+          # Package Pedantic module
+          $ver = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
           $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-          $folder = 'StateSmith.DSC'
+          $folder = 'Pedantic'
           
           $src = @(
-            'StateSmith.DSC.psd1',
-            'StateSmith.DSC.psm1',
-            'StateSmith.DSC.Reverse.psm1',
+            'Pedantic.psd1',
+            'Pedantic.psm1',
+            'Pedantic.Reverse.psm1',
             'Resources',
-            'Installers',
             'SimpleDSC.psd1',
             'Simple.DSC.psm1',
             'Simple.DSC.Basic.psm1',
-            'Simple-DSC-README.md'
+            'docs'
           ) | Where-Object { Test-Path $_ }
           
           $temp = Join-Path $env:TEMP $folder
