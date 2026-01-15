@@ -38,7 +38,10 @@ function Get-ModuleVersionFromManifest {
   try {
     $data = Import-PowerShellDataFile -Path $manifestPath
     return $data.ModuleVersion
-  } catch { return $null }
+  } catch {
+    Write-Warning "Failed to read module version from manifest: $($_.Exception.Message)"
+    return $null
+  }
 }
 
 function Get-CommitInfo {
@@ -46,7 +49,9 @@ function Get-CommitInfo {
     $sha = (git rev-parse --short HEAD 2>$null)
     $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
     if ($sha) { return @{ Sha = "$sha"; Branch = "$branch" } }
-  } catch { }
+  } catch {
+    Write-Verbose "Git not available or not in a repository: $($_.Exception.Message)"
+  }
   return @{ Sha = ''; Branch = '' }
 }
 

@@ -6,10 +6,13 @@ Import-Module .\Pedantic.Reverse.psm1 -Force
 Write-Host "=== DSC Reverse Feature Test ===" -ForegroundColor Yellow
 Write-Host "This script demonstrates the DSC Reverse functionality" -ForegroundColor Cyan
 
+# Use localhost for testing instead of hardcoded production machine
+$testComputerName = $env:COMPUTERNAME
+
 # Test 1: Create a system catalog
 Write-Host "`n=== Test 1: System Cataloging ===" -ForegroundColor Green
 try {
-  $catalogResult = New-DscSystemCatalog -ComputerName co1hcibldprd015 -CatalogName "TestCatalog" -IncludeResources @("Registry", "File", "Service")
+  $catalogResult = New-DscSystemCatalog -ComputerName $testComputerName -CatalogName "TestCatalog" -IncludeResources @("Registry", "File", "Service")
     
   if ($catalogResult) {
     Write-Host "✓ Catalog created successfully" -ForegroundColor Green
@@ -26,7 +29,7 @@ try {
 Write-Host "`n=== Test 2: Second Catalog (for comparison) ===" -ForegroundColor Green
 try {
   Start-Sleep -Seconds 2  # Small delay to ensure different timestamp
-  $catalogResult2 = New-DscSystemCatalog -ComputerName co1hcibldprd015 -CatalogName "TestCatalog2" -IncludeResources @("Registry", "File", "Service")
+  $catalogResult2 = New-DscSystemCatalog -ComputerName $testComputerName -CatalogName "TestCatalog2" -IncludeResources @("Registry", "File", "Service")
     
   if ($catalogResult2) {
     Write-Host "✓ Second catalog created successfully" -ForegroundColor Green
