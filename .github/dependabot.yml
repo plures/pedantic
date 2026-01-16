@@ -47,5 +47,4 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-patch", "version-update:semver-minor"]
-        dependency-type: "development"
     versioning-strategy: increase
