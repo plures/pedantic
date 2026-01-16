@@ -64,7 +64,7 @@
     "test:build": "tsc -p tsconfig.test.json"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
+    "@types/node": "^25.0.9",
     "typescript": "^5.4.0",
     "vsce": "^2.15.0",
     "vscode": "^1.1.37"
