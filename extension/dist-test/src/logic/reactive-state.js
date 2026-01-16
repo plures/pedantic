@@ -151,10 +151,12 @@ class ReactiveState {
         const subscribers = new Set();
         // Unsubscribe function for the parent subscription (when active)
         let parentUnsubscribe = null;
+        // Keep reference to parent for later access
+        const parent = this;
         const start = () => {
             if (parentUnsubscribe)
                 return;
-            parentUnsubscribe = this.subscribe((newState) => {
+            parentUnsubscribe = parent.subscribe((newState) => {
                 const newValue = selector(newState);
                 if (value !== newValue) {
                     value = newValue;
@@ -173,7 +175,7 @@ class ReactiveState {
                 // If this is the first subscriber, make sure we are observing the parent
                 if (subscribers.size === 0) {
                     // Recompute from current parent state in case it changed while idle
-                    value = selector(this.state);
+                    value = selector(parent.state);
                     start();
                 }
                 subscribers.add(subscriber);
