@@ -35,12 +35,16 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const node_1 = require("vscode-languageserver/node");
 const vscode_languageserver_textdocument_1 = require("vscode-languageserver-textdocument");
+const formatter_1 = require("./formatter");
+const codeActions_1 = require("./codeActions");
 // Create a connection for the server using Node IPC
 const connection = (0, node_1.createConnection)(node_1.ProposedFeatures.all);
 // Create a text document manager
 const documents = new node_1.TextDocuments(vscode_languageserver_textdocument_1.TextDocument);
 let hasConfigurationCapability = false;
 let hasWorkspaceFolderCapability = false;
+// Store diagnostics for code actions
+const documentDiagnostics = new Map();
 connection.onInitialize((params) => {
     const capabilities = params.capabilities;
     // Does the client support workspace folders?
@@ -55,7 +59,9 @@ connection.onInitialize((params) => {
             diagnosticProvider: {
                 interFileDependencies: false,
                 workspaceDiagnostics: false
-            }
+            },
+            documentFormattingProvider: true,
+            codeActionProvider: true
         }
     };
 });
@@ -97,6 +103,8 @@ async function validateDocument(textDocument) {
             code: d.code,
             source: 'pedantic'
         }));
+        // Store diagnostics for code actions
+        documentDiagnostics.set(uri, diagnostics);
         connection.sendDiagnostics({ uri, diagnostics });
     }
     catch (err) {
@@ -111,6 +119,7 @@ async function validateDocument(textDocument) {
                 message: `Parse error: ${err.message}`,
                 source: 'pedantic'
             }];
+        documentDiagnostics.set(uri, diagnostics);
         connection.sendDiagnostics({ uri, diagnostics });
     }
 }
@@ -160,6 +169,57 @@ connection.onCompletion((params) => {
         }));
     }
     return [];
+});
+// Document formatting provider
+connection.onDocumentFormatting((params) => {
+    const document = documents.get(params.textDocument.uri);
+    if (!document) {
+        return [];
+    }
+    const text = document.getText();
+    const uri = params.textDocument.uri;
+    // Only format Simple DSL files
+    if (uri.endsWith('.ssudo')) {
+        return []; // SudoLang formatting not implemented yet
+    }
+    try {
+        const { parseSimple } = require('../dsl/simpleParser');
+        const parsed = parseSimple(text);
+        const formatted = (0, formatter_1.formatSimpleDsl)(parsed);
+        // Return a single edit that replaces the entire document
+        return [
+            node_1.TextEdit.replace({
+                start: { line: 0, character: 0 },
+                end: { line: document.lineCount, character: 0 }
+            }, formatted)
+        ];
+    }
+    catch (err) {
+        connection.console.error(`Formatting error: ${err.message}`);
+        return [];
+    }
+});
+// Code actions provider
+connection.onCodeAction((params) => {
+    const document = documents.get(params.textDocument.uri);
+    if (!document) {
+        return [];
+    }
+    const diagnostics = documentDiagnostics.get(params.textDocument.uri) || [];
+    const documentText = document.getText();
+    // Get code actions based on diagnostics
+    const actions = (0, codeActions_1.getCodeActions)(diagnostics, documentText);
+    // Fix the URI in the edits (replace '' with actual URI)
+    for (const action of actions) {
+        if (action.edit?.changes) {
+            const changes = action.edit.changes[''];
+            if (changes) {
+                delete action.edit.changes[''];
+                action.edit.changes[params.textDocument.uri] = changes;
+            }
+        }
+    }
+    return actions;
 });
 // Make the text document manager listen on the connection
 documents.listen(connection);

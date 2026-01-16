@@ -65,12 +65,14 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/vscode": "^1.108.1",
     "typescript": "^5.4.0",
     "vsce": "^2.15.0",
     "vscode": "^1.1.37"
   },
   "dependencies": {
     "chevrotain": "^10.5.0",
+    "echarts": "^6.0.0",
     "vscode-languageclient": "^9.0.1",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.12",
