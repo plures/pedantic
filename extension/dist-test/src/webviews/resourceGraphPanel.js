@@ -134,8 +134,13 @@ class ResourceGraphPanel {
     }
     getEChartsUri() {
         const echartsPath = path.join(this.context.extensionPath, 'node_modules', 'echarts', 'dist', 'echarts.min.js');
-        // Cast to any to avoid type issues with older vscode type definitions
-        return this.panel.webview.asWebviewUri(vscode.Uri.file(echartsPath));
+        const fileUri = vscode.Uri.file(echartsPath);
+        // Use type guard to check if asWebviewUri exists
+        if ('asWebviewUri' in this.panel.webview && typeof this.panel.webview.asWebviewUri === 'function') {
+            return this.panel.webview.asWebviewUri(fileUri);
+        }
+        // Fallback for older VS Code versions
+        return fileUri;
     }
     getHtml() {
         const nonce = Math.random().toString(36).slice(2);

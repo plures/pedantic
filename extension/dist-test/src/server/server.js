@@ -171,7 +171,7 @@ connection.onCompletion((params) => {
     return [];
 });
 // Document formatting provider
-connection.onDocumentFormatting((params) => {
+connection.onDocumentFormatting(async (params) => {
     const document = documents.get(params.textDocument.uri);
     if (!document) {
         return [];
@@ -183,7 +183,7 @@ connection.onDocumentFormatting((params) => {
         return []; // SudoLang formatting not implemented yet
     }
     try {
-        const { parseSimple } = require('../dsl/simpleParser');
+        const { parseSimple } = await Promise.resolve().then(() => __importStar(require('../dsl/simpleParser')));
         const parsed = parseSimple(text);
         const formatted = (0, formatter_1.formatSimpleDsl)(parsed);
         // Return a single edit that replaces the entire document

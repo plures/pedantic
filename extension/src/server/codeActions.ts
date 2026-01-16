@@ -2,8 +2,7 @@ import {
   CodeAction,
   CodeActionKind,
   Diagnostic,
-  TextEdit,
-  Range
+  TextEdit
 } from 'vscode-languageserver/node';
 
 /**

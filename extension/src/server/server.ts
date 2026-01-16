@@ -183,7 +183,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
 });
 
 // Document formatting provider
-connection.onDocumentFormatting((params: DocumentFormattingParams): TextEdit[] => {
+connection.onDocumentFormatting(async (params: DocumentFormattingParams): Promise<TextEdit[]> => {
   const document = documents.get(params.textDocument.uri);
   if (!document) {
     return [];
@@ -198,7 +198,7 @@ connection.onDocumentFormatting((params: DocumentFormattingParams): TextEdit[] =
   }
 
   try {
-    const { parseSimple } = require('../dsl/simpleParser');
+    const { parseSimple } = await import('../dsl/simpleParser');
     const parsed = parseSimple(text);
     const formatted = formatSimpleDsl(parsed);
 

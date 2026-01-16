@@ -32,14 +32,37 @@ export async function invokePwsh(request: BridgeRequest): Promise<BridgeResponse
   }
   
   return new Promise((resolve, reject) => {
-    const proc = spawn(pwshPath, args, { timeout });
+    const proc = spawn(pwshPath, args);
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    
+    // Manually implement timeout with process termination
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill('SIGTERM');
+      // Force kill if SIGTERM doesn't work
+      setTimeout(() => {
+        if (!proc.killed) {
+          proc.kill('SIGKILL');
+        }
+      }, 1000);
+    }, timeout);
     
     proc.stdout.on('data', data => stdout += data.toString());
     proc.stderr.on('data', data => stderr += data.toString());
     
     proc.on('close', code => {
+      clearTimeout(timer);
+      
+      if (timedOut) {
+        resolve({
+          success: false,
+          errors: [`PowerShell process timed out after ${timeout}ms`]
+        });
+        return;
+      }
+      
       try {
         // Try to parse JSON response
         const response: BridgeResponse = JSON.parse(stdout);
@@ -62,6 +85,7 @@ export async function invokePwsh(request: BridgeRequest): Promise<BridgeResponse
     });
     
     proc.on('error', err => {
+      clearTimeout(timer);
       reject(new Error(`PowerShell bridge failed: ${err.message}`));
     });
   });
