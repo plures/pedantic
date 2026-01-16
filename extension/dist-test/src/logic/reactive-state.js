@@ -38,27 +38,48 @@ function writable(initialValue) {
  * Create a derived observable (computed value)
  */
 function derived(observable, deriver) {
-    let value;
+    let value = deriver(observable.get());
+    let initialized = false;
     const subscribers = new Set();
-    const unsubscribe = observable.subscribe((newValue) => {
-        const derivedValue = deriver(newValue);
-        if (value !== derivedValue) {
-            value = derivedValue;
-            subscribers.forEach((sub) => sub(value));
-        }
-    });
+    let sourceUnsubscribe = null;
     return {
         subscribe(subscriber) {
+            // Lazily subscribe to the source observable when the first subscriber appears
+            if (subscribers.size === 0) {
+                // Initialize the derived value from the current source value
+                const initial = deriver(observable.get());
+                value = initial;
+                initialized = true;
+                // Keep derived value in sync with source updates
+                sourceUnsubscribe = observable.subscribe((newValue) => {
+                    const derivedValue = deriver(newValue);
+                    if (!initialized || value !== derivedValue) {
+                        value = derivedValue;
+                        initialized = true;
+                        subscribers.forEach((sub) => sub(value));
+                    }
+                });
+            }
             subscribers.add(subscriber);
-            subscriber(value); // Emit current value immediately
+            // Emit current value immediately (if initialized)
+            if (initialized) {
+                subscriber(value);
+            }
             return () => {
                 subscribers.delete(subscriber);
-                if (subscribers.size === 0) {
-                    unsubscribe();
+                if (subscribers.size === 0 && sourceUnsubscribe) {
+                    sourceUnsubscribe();
+                    sourceUnsubscribe = null;
                 }
             };
         },
         get() {
+            if (!initialized) {
+                // Ensure get() returns a meaningful value even before any subscription
+                const initial = deriver(observable.get());
+                value = initial;
+                initialized = true;
+            }
             return value;
         },
     };
@@ -124,20 +145,47 @@ class ReactiveState {
      * Create a derived observable from state
      */
     derive(selector) {
+        // Current derived value
         let value = selector(this.state);
+        // Subscribers to the derived observable
         const subscribers = new Set();
-        this.subscribe((newState) => {
-            const newValue = selector(newState);
-            if (value !== newValue) {
-                value = newValue;
-                subscribers.forEach((sub) => sub(value));
+        // Unsubscribe function for the parent subscription (when active)
+        let parentUnsubscribe = null;
+        const start = () => {
+            if (parentUnsubscribe)
+                return;
+            parentUnsubscribe = this.subscribe((newState) => {
+                const newValue = selector(newState);
+                if (value !== newValue) {
+                    value = newValue;
+                    subscribers.forEach((sub) => sub(value));
+                }
+            });
+        };
+        const stop = () => {
+            if (parentUnsubscribe) {
+                parentUnsubscribe();
+                parentUnsubscribe = null;
             }
-        });
+        };
         return {
             subscribe(subscriber) {
+                // If this is the first subscriber, make sure we are observing the parent
+                if (subscribers.size === 0) {
+                    // Recompute from current parent state in case it changed while idle
+                    value = selector(this.state);
+                    start();
+                }
                 subscribers.add(subscriber);
+                // Emit current derived value immediately
                 subscriber(value);
-                return () => subscribers.delete(subscriber);
+                return () => {
+                    subscribers.delete(subscriber);
+                    // If no more subscribers, detach from the parent to avoid leaks
+                    if (subscribers.size === 0) {
+                        stop();
+                    }
+                };
             },
             get() {
                 return value;

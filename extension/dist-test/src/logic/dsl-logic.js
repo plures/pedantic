@@ -213,13 +213,17 @@ function processDocument(doc, enableDiagnostics = false) {
     const engine = createDslEngine(enableDiagnostics);
     // Process document
     const result = engine.step([exports.ParseDocument.create({ document: doc })]);
-    // Validate each package
+    // Validate each package in a single engine step to avoid repeated recalculation
+    const packageEvents = [];
     for (const block of doc.blocks) {
         if (block.kind === 'InstallBlock') {
             for (const pkg of block.packages) {
-                engine.step([exports.ValidatePackage.create({ package: pkg })]);
+                packageEvents.push(exports.ValidatePackage.create({ package: pkg }));
             }
         }
+    }
+    if (packageEvents.length > 0) {
+        engine.step(packageEvents);
     }
     return {
         context: engine.getContext(),
