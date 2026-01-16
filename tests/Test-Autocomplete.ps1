@@ -1,19 +1,19 @@
 # Test script for parameter autocomplete functionality
 <#
 .SYNOPSIS
-  Tests parameter autocomplete functionality for the StateSmith.DSC module.
+  Tests parameter autocomplete functionality for the Pedantic module.
 .DESCRIPTION
     This script verifies that parameter autocomplete is working correctly
-  for all functions in the StateSmith.DSC module.
+  for all functions in the Pedantic module.
 #>
 
 Write-Host "=== Testing Parameter Autocomplete ===" -ForegroundColor Green
 Write-Host ""
 
 # Import the module
-Write-Host "Importing StateSmith.DSC module..." -ForegroundColor Yellow
-Remove-Module StateSmith.DSC -Force -ErrorAction SilentlyContinue
-Import-Module ".\StateSmith.DSC.psm1" -Force
+Write-Host "Importing Pedantic module..." -ForegroundColor Yellow
+Remove-Module Pedantic -Force -ErrorAction SilentlyContinue
+Import-Module ".\Pedantic.psm1" -Force
 Write-Host "✓ Module imported successfully" -ForegroundColor Green
 Write-Host ""
 
@@ -89,8 +89,8 @@ Write-Host ""
 Write-Host "If autocomplete still doesn't work:" -ForegroundColor Cyan
 Write-Host "1. Make sure you're using PowerShell 5.1 or later" -ForegroundColor Gray
 Write-Host "2. Try restarting PowerShell" -ForegroundColor Gray
-Write-Host "3. Check if the module is loaded: Get-Module StateSmith.DSC" -ForegroundColor Gray
-Write-Host "4. Try importing again: Import-Module '.\StateSmith.DSC.psm1' -Force" -ForegroundColor Gray
+Write-Host "3. Check if the module is loaded: Get-Module Pedantic" -ForegroundColor Gray
+Write-Host "4. Try importing again: Import-Module '.\Pedantic.psm1' -Force" -ForegroundColor Gray
 Write-Host ""
 
 Write-Host "=== Test Complete ===" -ForegroundColor Green 

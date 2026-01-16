@@ -45,7 +45,7 @@ try {
 # Test 3: View catalog history
 Write-Host "`n=== Test 3: Catalog History ===" -ForegroundColor Green
 try {
-  $history = Get-DscCatalogHistory -ComputerName co1hcibldprd015 -Limit 5
+  $history = Get-DscCatalogHistory -ComputerName $testComputerName -Limit 5
     
   if ($history.Count -gt 0) {
     Write-Host "✓ Catalog history retrieved successfully" -ForegroundColor Green
@@ -87,7 +87,7 @@ if ($catalogResult -and $catalogResult2) {
 Write-Host "`n=== Test 5: Configuration Restoration (WhatIf) ===" -ForegroundColor Green
 if ($catalogResult) {
   try {
-    $restoreResult = Restore-DscSystemConfiguration -CatalogPath $catalogResult.FilePath -ComputerName co1hcibldprd015 -WhatIf
+    $restoreResult = Restore-DscSystemConfiguration -CatalogPath $catalogResult.FilePath -ComputerName $testComputerName -WhatIf
         
     if ($restoreResult) {
       Write-Host "✓ Configuration restoration test completed" -ForegroundColor Green

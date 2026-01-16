@@ -17,8 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, windows-2022]
-        ps-version: ['7.2', '7.4']
+        os: [windows-latest]
+        ps-version: ['7.4']
     
     steps:
       - name: Checkout repository

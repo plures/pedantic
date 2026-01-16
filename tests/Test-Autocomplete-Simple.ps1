@@ -1,8 +1,8 @@
 # Simple autocomplete test
-Write-Host "Testing StateSmith.DSC module autocomplete..." -ForegroundColor Green
+Write-Host "Testing Pedantic module autocomplete..." -ForegroundColor Green
 
 # Import module
-Remove-Module StateSmith.DSC -Force -ErrorAction SilentlyContinue
+Remove-Module Pedantic -Force -ErrorAction SilentlyContinue
 Import-Module ".\Pedantic.psm1" -Force
 Write-Host "✓ Module imported" -ForegroundColor Green
 

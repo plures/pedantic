@@ -14,16 +14,23 @@ We're building a comprehensive DSC ecosystem that combines:
 
 ## What Works Today
 
-### ✅ PowerShell Module (Production-Ready)
+### What's Working
+- ✅ PowerShell module (production-ready)
+- ✅ VS Code extension scaffold  
+- ✅ Dual DSL parsers (Simple + SudoLang)
+- ✅ Resource graph visualization (basic)
+- ✅ Test framework with passing tests
+- ✅ **Praxis-inspired logic engine** (fact/event/rule system)
+- ✅ **Reactive state management** (framework-agnostic)
 
 The Pedantic PowerShell module is fully functional and ready to use in production environments:
 
-- **Remote DSC Operations** - Execute DSC on remote machines without manual setup
-- **Smart Resource Management** - Automatic resource mapping and caching
-- **Platform-Aware** - Detects and manages DSC versions across Windows, macOS, and Linux
-- **Installer Caching** - Downloads and caches DSC installers for offline use
-- **Resource Discovery** - Maps classic DSC resources to PowerShell Gallery modules
-- **PowerShell 7+ Compatible** - Modern PowerShell Core support
+**Detailed Plans:**
+- [MVP Plan (3-4 weeks)](MVP-PLAN.md)
+- [1.0 Release Plan (7-8 weeks)](RELEASE-1.0-PLAN.md)
+- [Full Roadmap (6-7 months)](FULL-ROADMAP-PLAN.md)
+- [Implementation Analysis](ROADMAP-ANALYSIS.md)
+- [**Praxis Integration Guide**](docs/PRAXIS-INTEGRATION.md)
 
 ### 🚧 In Development
 
