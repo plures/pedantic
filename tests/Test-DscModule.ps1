@@ -1,9 +1,9 @@
-# Test script for StateSmith.DSC module with parameter autocomplete
+# Test script for Pedantic module with parameter autocomplete
 <#
 .SYNOPSIS
-  Demonstrates the StateSmith.DSC module functionality with full parameter autocomplete support.
+  Demonstrates the Pedantic module functionality with full parameter autocomplete support.
 .DESCRIPTION
-  This script shows how to import and use the StateSmith.DSC module, which provides
+  This script shows how to import and use the Pedantic module, which provides
     full parameter autocomplete in PowerShell for DSC operations.
 .EXAMPLE
     .\Test-DscModule.ps1 -Operation "Test" -DscPath "C:\Configs\WebServer.yaml"
@@ -29,7 +29,7 @@ param(
   [switch]$WhatIf
 )
 
-Write-Host "=== StateSmith.DSC Module Test Script ===" -ForegroundColor Green
+Write-Host "=== Pedantic Module Test Script ===" -ForegroundColor Green
 Write-Host "Operation: $Operation" -ForegroundColor Yellow
 Write-Host "DSC Path: $DscPath" -ForegroundColor Yellow
 if ($ParametersPath) { Write-Host "Parameters: $ParametersPath" -ForegroundColor Yellow }
@@ -38,7 +38,7 @@ if ($WhatIf) { Write-Host "WhatIf: Enabled" -ForegroundColor Yellow }
 Write-Host ""
 
 # Import the module
-$modulePath = Join-Path $PSScriptRoot "StateSmith.DSC.psm1"
+$modulePath = Join-Path $PSScriptRoot ".." "Pedantic.psd1"
 if (-not (Test-Path $modulePath)) {
   Write-Error "Module file not found: $modulePath"
   exit 1
@@ -46,12 +46,12 @@ if (-not (Test-Path $modulePath)) {
 
 try {
   Import-Module $modulePath -Force
-  Write-Host "✓ StateSmith.DSC module imported successfully" -ForegroundColor Green
+  Write-Host "✓ Pedantic module imported successfully" -ForegroundColor Green
   Write-Host ""
     
   # Show available functions
   Write-Host "Available functions:" -ForegroundColor Cyan
-  Get-Command -Module StateSmith.DSC | ForEach-Object {
+  Get-Command -Module Pedantic | ForEach-Object {
     Write-Host "  $($_.Name)" -ForegroundColor Gray
   }
   Write-Host ""
@@ -65,8 +65,8 @@ try {
     Write-Host "  -$($_.Name)$required : $($_.ParameterType.Name)" -ForegroundColor Gray
   }
     
-  Write-Host "`nTest-DscCompliance:" -ForegroundColor Yellow
-  (Get-Command Test-DscCompliance).Parameters.Values | Where-Object { $_.ParameterType -ne [System.Management.Automation.SwitchParameter] } | ForEach-Object {
+  Write-Host "`nTest-DscConfiguration:" -ForegroundColor Yellow
+  (Get-Command Test-DscConfiguration).Parameters.Values | Where-Object { $_.ParameterType -ne [System.Management.Automation.SwitchParameter] } | ForEach-Object {
     $required = if ($_.Mandatory) { " [Required]" } else { " [Optional]" }
     Write-Host "  -$($_.Name)$required : $($_.ParameterType.Name)" -ForegroundColor Gray
   }
@@ -84,9 +84,9 @@ try {
     
   switch ($Operation) {
     "Test" {
-      Write-Host "Testing DSC compliance..." -ForegroundColor Cyan
-      $result = Test-DscCompliance -DscPath $DscPath -ParametersPath $ParametersPath -ComputerName $ComputerName
-      Write-Host "Compliance result: $result" -ForegroundColor $(if ($result) { 'Green' } else { 'Red' })
+      Write-Host "Testing DSC configuration..." -ForegroundColor Cyan
+      $result = Test-DscConfiguration -DscPath $DscPath -ParametersPath $ParametersPath -ComputerName $ComputerName
+      Write-Host "Configuration test completed" -ForegroundColor Green
     }
     "Set" {
       Write-Host "Applying DSC configuration..." -ForegroundColor Cyan
@@ -95,7 +95,7 @@ try {
     }
     "Validate" {
       Write-Host "Validating DSC configuration..." -ForegroundColor Cyan
-      $result = Test-DscConfiguration -DscPath $DscPath
+      $result = Validate-DscConfiguration -DscPath $DscPath
       Write-Host "Configuration validation completed" -ForegroundColor Green
     }
     "Export" {
@@ -111,11 +111,11 @@ try {
   Write-Host ""
   Write-Host "1. Type 'Invoke-DscHelper -' and press TAB to cycle through parameters" -ForegroundColor Gray
   Write-Host "2. Type 'Invoke-DscHelper -Operation ' and press TAB to see valid values" -ForegroundColor Gray
-  Write-Host "3. Type 'Test-DscCompliance -' for the simplified compliance test" -ForegroundColor Gray
-  Write-Host "4. Type 'Set-DscConfiguration -' for the simplified configuration apply" -ForegroundColor Gray
+  Write-Host "3. Type 'Test-DscConfiguration -' for the configuration test" -ForegroundColor Gray
+  Write-Host "4. Type 'Set-DscConfiguration -' for the configuration apply" -ForegroundColor Gray
   Write-Host ""
   Write-Host "Example commands you can now run:" -ForegroundColor Yellow
-  Write-Host "  Test-DscCompliance -DscPath 'C:\Configs\WebServer.yaml'" -ForegroundColor Gray
+  Write-Host "  Test-DscConfiguration -DscPath 'C:\Configs\WebServer.yaml'" -ForegroundColor Gray
   Write-Host "  Set-DscConfiguration -DscPath 'C:\Configs\Cluster.yaml' -WhatIf" -ForegroundColor Gray
   Write-Host "  Invoke-DscHelper -DscPath 'C:\Configs\Baseline.yaml' -Operation 'Test' -ReturnInDesiredState" -ForegroundColor Gray
     
@@ -124,8 +124,8 @@ try {
   Write-Host "Module test failed: $($_.Exception.Message)" -ForegroundColor Red
 } finally {
   # Clean up
-  if (Get-Module StateSmith.DSC) {
-    Remove-Module StateSmith.DSC -Force
+  if (Get-Module Pedantic) {
+    Remove-Module Pedantic -Force
     Write-Host "✓ Module unloaded" -ForegroundColor Green
   }
 }
