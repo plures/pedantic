@@ -60,7 +60,7 @@ documents.listen(connection);
 
 **Acceptance:**
 - [ ] Language server starts when extension activates
-- [ ] Server logs appear in Output → "StateSmith Language Server"
+- [ ] Server logs appear in Output → "Pedantic Language Server"
 - [ ] Document sync events fire on open/edit/close
 
 ---
@@ -94,7 +94,7 @@ async function validateDocument(doc: TextDocument): Promise<void> {
     },
     message: d.message,
     code: d.code,
-    source: 'statesmith'
+    source: 'pedantic'
   })) || [];
   
   connection.sendDiagnostics({ uri, diagnostics });
@@ -256,7 +256,7 @@ import { spawn } from 'child_process';
 import { workspace } from 'vscode';
 
 export async function invokePwsh(request: BridgeRequest): Promise<BridgeResponse> {
-  const pwshPath = workspace.getConfiguration('statesmith').get<string>('bridge.pwshPath', 'pwsh');
+  const pwshPath = workspace.getConfiguration('pedantic').get<string>('bridge.pwshPath', 'pwsh');
   const timeout = request.options?.timeout || 30000;
   
   const scriptPath = path.join(__dirname, '../../scripts/bridge.ps1');
@@ -301,7 +301,7 @@ param(
     [switch]$OutputJson
 )
 
-Import-Module StateSmith.DSC -ErrorAction Stop
+Import-Module pedantic.DSC -ErrorAction Stop
 
 try {
     $result = switch ($Command) {

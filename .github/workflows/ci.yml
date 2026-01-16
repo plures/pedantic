@@ -10,7 +10,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Initialize ADP Submodule (if configured)
         shell: pwsh
@@ -90,7 +90,7 @@ jobs:
           Compress-Archive -Path (Join-Path $temp '*') -DestinationPath (Join-Path $out "$folder-$ver-$stamp.zip") -Force
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: module-dist
           path: dist/*.zip
