@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { ResourceGraphPanel } from './webviews/resourceGraphPanel';
 import { activateLanguageServer, deactivateLanguageServer } from './client';
+import { invokePwsh } from './bridge/pwshBridge';
+import * as fs from 'fs';
+import * as path from 'path';
 
 let graphPanel: vscode.WebviewPanel | undefined;
 let aiPanel: vscode.WebviewPanel | undefined;
@@ -11,10 +14,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   const disposables: vscode.Disposable[] = [];
 
-  disposables.push(vscode.commands.registerCommand('statesmith.generateConfig', async () => {
+  disposables.push(vscode.commands.registerCommand('pedantic.generateConfig', async () => {
     const workspaceIsTrusted = ((vscode.workspace as unknown) as { isTrusted?: boolean }).isTrusted ?? true;
     if (!workspaceIsTrusted) {
-      vscode.window.showWarningMessage('StateSmith: Workspace is not trusted. Enable trust to generate DSC output.');
+      vscode.window.showWarningMessage('Pedantic: Workspace is not trusted. Enable trust to generate DSC output.');
       return;
     }
     const editor = vscode.window.activeTextEditor;
@@ -22,9 +25,52 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showWarningMessage('No active editor – open a DSL file to generate.');
       return;
     }
+    
     const doc = editor.document;
-    // Placeholder: future bridge invocation to PowerShell / engine
-    vscode.window.showInformationMessage(`StateSmith: (stub) would generate DSC for ${doc.fileName}`);
+    
+    // Save document to temp file if it has unsaved changes
+    let dslPath = doc.uri.fsPath;
+    let tempFile: string | undefined;
+    
+    if (doc.isDirty) {
+      const tempDir = path.join(context.globalStoragePath, 'temp');
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      tempFile = path.join(tempDir, path.basename(doc.fileName));
+      fs.writeFileSync(tempFile, doc.getText(), 'utf-8');
+      dslPath = tempFile;
+    }
+    
+    try {
+      vscode.window.showInformationMessage('Pedantic: Generating DSC configuration...');
+      
+      const response = await invokePwsh({
+        command: 'generate',
+        dslPath,
+        options: { timeout: 30000 }
+      });
+      
+      if (response.success) {
+        // Create a new document with the generated output
+        const outputDoc = await vscode.workspace.openTextDocument({
+          content: response.output || '',
+          language: 'yaml'
+        });
+        await vscode.window.showTextDocument(outputDoc, vscode.ViewColumn.Beside);
+        vscode.window.showInformationMessage('Pedantic: DSC configuration generated successfully');
+      } else {
+        const errors = response.errors?.join('\n') || 'Unknown error';
+        vscode.window.showErrorMessage(`Pedantic: Generation failed:\n${errors}`);
+      }
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Pedantic: Bridge error: ${err.message}`);
+    } finally {
+      // Clean up temp file
+      if (tempFile && fs.existsSync(tempFile)) {
+        fs.unlinkSync(tempFile);
+      }
+    }
   }));
 
   // Debounced graph refresh support
@@ -46,7 +92,7 @@ export function activate(context: vscode.ExtensionContext) {
     }, 200); // 200ms debounce
   };
 
-  disposables.push(vscode.commands.registerCommand('statesmith.openGraph', async () => {
+  disposables.push(vscode.commands.registerCommand('pedantic.openGraph', async () => {
     const panel = ResourceGraphPanel.createOrShow(context);
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -78,14 +124,14 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }));
 
-  disposables.push(vscode.commands.registerCommand('statesmith.openAiPanel', () => {
+  disposables.push(vscode.commands.registerCommand('pedantic.openAiPanel', () => {
     if (aiPanel) {
       aiPanel.reveal();
       return;
     }
     aiPanel = vscode.window.createWebviewPanel(
-      'statesmithAi',
-      'StateSmith AI Assistant',
+      'pedanticAi',
+      'Pedantic AI Assistant',
       vscode.ViewColumn.Beside,
       { enableScripts: true }
     );
@@ -94,7 +140,7 @@ export function activate(context: vscode.ExtensionContext) {
   }));
 
   // Debug: parse active document (Simple DSL only for now) and show diagnostics
-  disposables.push(vscode.commands.registerCommand('statesmith.debugParse', async () => {
+  disposables.push(vscode.commands.registerCommand('pedantic.debugParse', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       vscode.window.showWarningMessage('No active editor to parse.');
@@ -111,7 +157,7 @@ export function activate(context: vscode.ExtensionContext) {
     const doc = parserMod.parseSimple(text);
     const ch = getOutputChannel();
     ch.clear();
-    ch.appendLine('StateSmith Debug Parse Results');
+    ch.appendLine('Pedantic Debug Parse Results');
     ch.appendLine('Dialect: simple');
     ch.appendLine('Blocks: ' + doc.blocks.length);
     for (const b of doc.blocks) {
@@ -163,7 +209,7 @@ ${body}
 let _outputChannel: vscode.OutputChannel | undefined;
 function getOutputChannel(): vscode.OutputChannel {
   if (!_outputChannel) {
-    _outputChannel = vscode.window.createOutputChannel('StateSmith DSL');
+    _outputChannel = vscode.window.createOutputChannel('Pedantic DSL');
   }
   return _outputChannel;
 }
