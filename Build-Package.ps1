@@ -48,9 +48,11 @@ function Get-CommitInfo {
   try {
     $sha = git rev-parse --short HEAD 2>&1 | Out-String
     $sha = $sha.Trim()
+    $shaExitCode = $LASTEXITCODE
     $branch = git rev-parse --abbrev-ref HEAD 2>&1 | Out-String
     $branch = $branch.Trim()
-    if ($sha -and -not $sha.Contains('fatal')) { 
+    $branchExitCode = $LASTEXITCODE
+    if ($shaExitCode -eq 0 -and $branchExitCode -eq 0 -and $sha) { 
       return @{ Sha = "$sha"; Branch = "$branch" } 
     }
   } catch {
