@@ -1,24 +1,5 @@
 version: 2
 updates:
-  # PowerShell module dependencies (if using PSDepend or similar)
-  - package-ecosystem: "nuget"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "06:00"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "automated"
-    commit-message:
-      prefix: "deps"
-      include: "scope"
-    reviewers:
-      - "plures/maintainers"
-    assignees:
-      - "plures/maintainers"
-
   # GitHub Actions workflows
   - package-ecosystem: "github-actions"
     directory: "/"
