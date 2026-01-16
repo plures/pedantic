@@ -60,7 +60,7 @@ documents.listen(connection);
 
 **Acceptance:**
 - [ ] Language server starts when extension activates
-- [ ] Server logs appear in Output → "StateSmith Language Server"
+- [ ] Server logs appear in Output → "Pedantic Language Server"
 - [ ] Document sync events fire on open/edit/close
 
 ---
