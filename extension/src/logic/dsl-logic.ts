@@ -293,15 +293,19 @@ export function processDocument(doc: Document, enableDiagnostics = false): {
   // Process document
   const result = engine.step([ParseDocument.create({ document: doc })]);
 
-  // Validate each package
+  // Validate each package in a single engine step to avoid repeated recalculation
+  const packageEvents = [];
   for (const block of doc.blocks) {
     if (block.kind === 'InstallBlock') {
       for (const pkg of block.packages) {
-        engine.step([ValidatePackage.create({ package: pkg })]);
+        packageEvents.push(ValidatePackage.create({ package: pkg }));
       }
     }
   }
 
+  if (packageEvents.length > 0) {
+    engine.step(packageEvents);
+  }
   return {
     context: engine.getContext(),
     facts: engine.getFacts(),
