@@ -68,7 +68,7 @@ export function derived<T, U>(
   observable: Observable<T>,
   deriver: (value: T) => U
 ): Observable<U> {
-  let value: U;
+  let value: U = deriver(observable.get());
   const subscribers = new Set<Subscriber<U>>();
 
   const unsubscribe = observable.subscribe((newValue) => {
