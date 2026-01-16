@@ -126,7 +126,7 @@ jobs:
           }
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: test-results-${{ matrix.os }}-ps${{ matrix.ps-version }}
@@ -178,7 +178,7 @@ jobs:
           Write-Host "Package created: $zipPath"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: module-dist-${{ matrix.os }}-ps${{ matrix.ps-version }}
           path: dist/*.zip
