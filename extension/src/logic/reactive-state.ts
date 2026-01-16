@@ -69,30 +69,53 @@ export function derived<T, U>(
   deriver: (value: T) => U
 ): Observable<U> {
   let value: U = deriver(observable.get());
+  let initialized = false;
   const subscribers = new Set<Subscriber<U>>();
-
-  const unsubscribe = observable.subscribe((newValue) => {
-    const derivedValue = deriver(newValue);
-    if (value !== derivedValue) {
-      value = derivedValue;
-      subscribers.forEach((sub) => sub(value));
-    }
-  });
+  let sourceUnsubscribe: Unsubscriber | null = null;
 
   return {
     subscribe(subscriber: Subscriber<U>): Unsubscriber {
+      // Lazily subscribe to the source observable when the first subscriber appears
+      if (subscribers.size === 0) {
+        // Initialize the derived value from the current source value
+        const initial = deriver(observable.get());
+        value = initial;
+        initialized = true;
+
+        // Keep derived value in sync with source updates
+        sourceUnsubscribe = observable.subscribe((newValue) => {
+          const derivedValue = deriver(newValue);
+          if (!initialized || value !== derivedValue) {
+            value = derivedValue;
+            initialized = true;
+            subscribers.forEach((sub) => sub(value));
+          }
+        });
+      }
+
       subscribers.add(subscriber);
-      subscriber(value); // Emit current value immediately
+
+      // Emit current value immediately (if initialized)
+      if (initialized) {
+        subscriber(value);
+      }
 
       return () => {
         subscribers.delete(subscriber);
-        if (subscribers.size === 0) {
-          unsubscribe();
+        if (subscribers.size === 0 && sourceUnsubscribe) {
+          sourceUnsubscribe();
+          sourceUnsubscribe = null;
         }
       };
     },
 
     get(): U {
+      if (!initialized) {
+        // Ensure get() returns a meaningful value even before any subscription
+        const initial = deriver(observable.get());
+        value = initial;
+        initialized = true;
+      }
       return value;
     },
   };
