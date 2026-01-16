@@ -67,7 +67,7 @@ function New-DscSystemCatalog {
 
     if ($IncludeResources) {
       try {
-        $resources = & dsc resource list --output-format json 2>$null | ConvertFrom-Json
+        $resources = & dsc resource list --output-format json 2>&1 | Where-Object { $_ -is [string] } | ConvertFrom-Json -ErrorAction SilentlyContinue
         if ($resources) {
           $catalog.resources = $resources | ForEach-Object {
             [ordered]@{ type=$_.type; version=$_.version; kind=$_.kind; description=$_.description }

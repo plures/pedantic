@@ -46,9 +46,13 @@ function Get-ModuleVersionFromManifest {
 
 function Get-CommitInfo {
   try {
-    $sha = (git rev-parse --short HEAD 2>$null)
-    $branch = (git rev-parse --abbrev-ref HEAD 2>$null)
-    if ($sha) { return @{ Sha = "$sha"; Branch = "$branch" } }
+    $sha = git rev-parse --short HEAD 2>&1 | Out-String
+    $sha = $sha.Trim()
+    $branch = git rev-parse --abbrev-ref HEAD 2>&1 | Out-String
+    $branch = $branch.Trim()
+    if ($sha -and -not $sha.Contains('fatal')) { 
+      return @{ Sha = "$sha"; Branch = "$branch" } 
+    }
   } catch {
     Write-Verbose "Git not available or not in a repository: $($_.Exception.Message)"
   }

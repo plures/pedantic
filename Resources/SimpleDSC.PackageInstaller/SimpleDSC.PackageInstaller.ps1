@@ -105,7 +105,7 @@ function Test-PackageInstalled {
     switch ($Method) {
         'winget' {
             try {
-                $result = winget list --id $resolvedName --exact 2>$null
+                $result = winget list --id $resolvedName --exact 2>&1 | Out-String
                 return $LASTEXITCODE -eq 0 -and $result -like "*$resolvedName*"
             }
             catch {
@@ -114,7 +114,7 @@ function Test-PackageInstalled {
         }
         'chocolatey' {
             try {
-                $result = choco list --local-only $resolvedName --exact 2>$null
+                $result = choco list --local-only $resolvedName --exact 2>&1 | Out-String
                 return $LASTEXITCODE -eq 0 -and $result -like "*$resolvedName*"
             }
             catch {
@@ -123,7 +123,7 @@ function Test-PackageInstalled {
         }
         'apt' {
             try {
-                $result = dpkg -l $resolvedName 2>$null
+                $result = dpkg -l $resolvedName 2>&1 | Out-String
                 return $LASTEXITCODE -eq 0
             }
             catch {

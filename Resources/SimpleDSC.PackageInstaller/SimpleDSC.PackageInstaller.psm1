@@ -167,7 +167,7 @@ class SimpleDSC.PackageInstaller {
         switch ($method) {
             ([InstallMethod]::winget) {
                 try {
-                    $result = winget list --id $resolvedName --exact 2>$null
+                    $result = winget list --id $resolvedName --exact 2>&1 | Out-String
                     return $LASTEXITCODE -eq 0 -and $result -like "*$resolvedName*"
                 }
                 catch {
@@ -176,7 +176,7 @@ class SimpleDSC.PackageInstaller {
             }
             ([InstallMethod]::chocolatey) {
                 try {
-                    $result = choco list --local-only $resolvedName --exact 2>$null
+                    $result = choco list --local-only $resolvedName --exact 2>&1 | Out-String
                     return $LASTEXITCODE -eq 0 -and $result -like "*$resolvedName*"
                 }
                 catch {
@@ -185,7 +185,7 @@ class SimpleDSC.PackageInstaller {
             }
             ([InstallMethod]::apt) {
                 try {
-                    $result = dpkg -l $resolvedName 2>$null
+                    $result = dpkg -l $resolvedName 2>&1 | Out-String
                     return $LASTEXITCODE -eq 0
                 }
                 catch {
