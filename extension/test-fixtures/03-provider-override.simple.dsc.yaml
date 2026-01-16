@@ -1,0 +1,6 @@
+dsc.install:
+  packages:
+    - name: Git.Git
+      method: winget
+    - name: Node.js
+      method: chocolatey

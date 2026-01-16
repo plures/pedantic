@@ -1,0 +1,5 @@
+dsc.install:
+  packages:
+    - name: CustomApp
+      executable: C:\custom\installer.exe
+      args: /silent /install

@@ -3,8 +3,8 @@
 // NOTE: Intentionally tolerant: collects diagnostics, continues when possible.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseSimple = parseSimple;
-// Using dynamic require for 'yaml' to allow operation when dependency is not yet installed.
 const ast_1 = require("./ast");
+const yaml_1 = require("yaml");
 // Diagnostic codes reused from spec where applicable
 const Codes = {
     MissingRoot: 'DSL001',
@@ -28,23 +28,8 @@ function parseSimple(source, opts = {}) {
     }
     catch { /* ignore size computation errors */ }
     let yaml;
-    let parseDocumentFn;
     try {
-        // dynamic import to satisfy TypeScript without Node types when unavailable
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval
-        // @ts-ignore
-        parseDocumentFn = (Function('return globalThis.require || undefined')() || globalThis.require || undefined)?.('yaml')?.parseDocument;
-    }
-    catch {
-        (0, ast_1.pushDiagnostic)(doc, { code: 'DSL010', severity: 'error', message: 'YAML module not installed; cannot parse.', range: zr() });
-        return doc;
-    }
-    if (!parseDocumentFn) {
-        (0, ast_1.pushDiagnostic)(doc, { code: 'DSL010', severity: 'error', message: 'YAML module not installed; cannot parse.', range: zr() });
-        return doc;
-    }
-    try {
-        yaml = parseDocumentFn(source, { keepCstNodes: true, keepNodeTypes: true });
+        yaml = (0, yaml_1.parseDocument)(source);
     }
     catch (e) {
         (0, ast_1.pushDiagnostic)(doc, { code: 'DSL010', severity: 'error', message: 'YAML syntax error: ' + e.message, range: zr() });

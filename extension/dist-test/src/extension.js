@@ -37,9 +37,12 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const resourceGraphPanel_1 = require("./webviews/resourceGraphPanel");
+const client_1 = require("./client");
 let graphPanel;
 let aiPanel;
 function activate(context) {
+    // Start the language server
+    (0, client_1.activateLanguageServer)(context);
     const disposables = [];
     disposables.push(vscode.commands.registerCommand('statesmith.generateConfig', async () => {
         const workspaceIsTrusted = vscode.workspace.isTrusted ?? true;
@@ -164,6 +167,7 @@ function activate(context) {
 function deactivate() {
     graphPanel = undefined;
     aiPanel = undefined;
+    return (0, client_1.deactivateLanguageServer)();
 }
 function getBasicHtml(title, body) {
     const nonce = Math.random().toString(36).slice(2);

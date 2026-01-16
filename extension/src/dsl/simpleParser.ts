@@ -1,8 +1,8 @@
 // Simple DSL structural parser (YAML subset) - v0.1
 // NOTE: Intentionally tolerant: collects diagnostics, continues when possible.
 
-// Using dynamic require for 'yaml' to allow operation when dependency is not yet installed.
 import { createEmptyDocument, Document, InstallBlock, PackageSpec, pushDiagnostic } from './ast';
+import { parseDocument } from 'yaml';
 
 type YamlDoc = any; // fallback type
 
@@ -33,22 +33,8 @@ export function parseSimple(source: string, opts: SimpleParserOptions = {}): Doc
     }
   } catch { /* ignore size computation errors */ }
   let yaml: YamlDoc | undefined;
-  let parseDocumentFn: any;
   try {
-    // dynamic import to satisfy TypeScript without Node types when unavailable
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    // @ts-ignore
-    parseDocumentFn = (Function('return globalThis.require || undefined')() || (globalThis as any).require || undefined)?.('yaml')?.parseDocument;
-  } catch {
-    pushDiagnostic(doc, { code: 'DSL010', severity: 'error', message: 'YAML module not installed; cannot parse.', range: zr() });
-    return doc;
-  }
-  if (!parseDocumentFn) {
-    pushDiagnostic(doc, { code: 'DSL010', severity: 'error', message: 'YAML module not installed; cannot parse.', range: zr() });
-    return doc;
-  }
-  try {
-    yaml = parseDocumentFn(source, { keepCstNodes: true, keepNodeTypes: true });
+    yaml = parseDocument(source);
   } catch (e: any) {
     pushDiagnostic(doc, { code: 'DSL010', severity: 'error', message: 'YAML syntax error: ' + e.message, range: zr() });
     return doc;

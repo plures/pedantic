@@ -1,10 +1,14 @@
 import * as vscode from 'vscode';
 import { ResourceGraphPanel } from './webviews/resourceGraphPanel';
+import { activateLanguageServer, deactivateLanguageServer } from './client';
 
 let graphPanel: vscode.WebviewPanel | undefined;
 let aiPanel: vscode.WebviewPanel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+  // Start the language server
+  activateLanguageServer(context);
+
   const disposables: vscode.Disposable[] = [];
 
   disposables.push(vscode.commands.registerCommand('statesmith.generateConfig', async () => {
@@ -135,6 +139,7 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
   graphPanel = undefined;
   aiPanel = undefined;
+  return deactivateLanguageServer();
 }
 
 function getBasicHtml(title: string, body: string): string {
