@@ -1,4 +1,4 @@
-# StateSmith DSC Helper Module
+# Pedantic DSC Helper Module
 # Provides user-friendly DSC v3 operations with parameter autocomplete support
 # Automatically handles remote execution without manual setup on remote machines
 # PowerShell 7 compatible version
@@ -2231,7 +2231,7 @@ function Export-DscConfiguration {
 
 <#
  Create secure remote session with fallback logic (SSH -> SSL -> HTTP)
- Ported from legacy with StateSmith branding.
+ Ported from legacy module with updated branding.
 #>
 function New-SecureRemoteSession {
     [CmdletBinding()]
@@ -2345,7 +2345,7 @@ function Repair-DscInstallation {
                     }
                     $installerPath = Get-DscInstallerPath -Quiet:$Quiet
                     if (-not $installerPath) { throw "No cached DSC installer found. Run Update-DscInstallerCache first." }
-                    $remoteTempDir = "C:\Temp\StateSmithDscHelper"
+                    $remoteTempDir = "C:\Temp\PedanticDscHelper"
                     Invoke-Command -Session $session -ScriptBlock { New-Item -Path $using:remoteTempDir -ItemType Directory -Force | Out-Null }
                     $installerFileName = Split-Path $installerPath -Leaf
                     $remoteInstallerPath = Join-Path $remoteTempDir $installerFileName
@@ -2439,7 +2439,7 @@ function Install-DscResourceOffline {
             if (-not $Quiet) { Write-Host "Installing DSC resource $ResourceType on remote machine: $ComputerName" -ForegroundColor Yellow }
             $session = New-SecureRemoteSession -TargetComputer $ComputerName -Credential $Credential -Quiet:$Quiet
             try {
-                $remoteTempDir = "C:\Temp\StateSmithDscHelper"
+                $remoteTempDir = "C:\Temp\PedanticDscHelper"
                 Invoke-Command -Session $session -ScriptBlock { New-Item -Path $using:remoteTempDir -ItemType Directory -Force | Out-Null }
                 $resourceFileName = Split-Path $localResourcePath -Leaf
                 $remoteResourcePath = Join-Path $remoteTempDir $resourceFileName

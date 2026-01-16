@@ -1,36 +1,59 @@
-# StateSmith Full Roadmap Completion Plan
-**Goal:** Feature-complete vision with AI, advanced visualizations, and engine evolution  
-**Timeline:** 6-7 months after MVP (Phases 4-7)  
-**Dependencies:** 1.0 released, stable user base established
+# Pedantic Full Roadmap Completion Plan
+**Goal:** Build the DSC ecosystem hub - the Ansible Galaxy for DSC  
+**Timeline:** 2026 through early 2027  
+**Dependencies:** MVP and 1.0 released, community engagement established
 
 ---
 
 ## Strategic Overview
+
+### Vision: The DSC Community Hub
+
+Pedantic will become the central platform where the DSC community:
+- **Discovers** - Find resources by category, platform, use case
+- **Shares** - Publish configurations and resources with ratings/reviews
+- **Collaborates** - Contribute improvements, report issues, discuss solutions
+- **Learns** - Access documentation, examples, and best practices
+- **Integrates** - Connect with modern development workflows (VS Code, CI/CD, etc.)
 
 ### Post-1.0 Philosophy
 
 **Principle:** Ship value incrementally. Each phase delivers standalone features.
 
 **Release Cadence:**
-- 1.1 (Phase 4): AI/MCP foundation - 2 months after 1.0
-- 1.2 (Phase 5): Advanced visualizations - 1 month after 1.1
-- 1.3 (Phase 6): Engine evolution - 2 months after 1.2
-- 2.0 (Phase 7): Performance & hardening - 1 month after 1.3
+- 1.0 (Q2 2026): Core tooling with LSP, visualization, and PowerShell integration
+- 1.5 (Q3 2026): Community hub with resource sharing and PluresDB integration
+- 2.0 (Q4 2026): AI features, advanced integrations, and ecosystem maturity
 
 ---
 
-## Phase 4: MCP Server & AI Workflows
+## Phase 3: Community Hub & PluresDB Integration
 
-**Timeline:** 3-4 weeks  
-**Version:** 1.1.0  
-**Dependencies:** 1.0 shipped, positive user feedback
+**Timeline:** Q3 2026  
+**Version:** 1.5.0  
+**Dependencies:** 1.0 shipped, positive user adoption
 
 ### Goals
 
-1. ✅ MCP server exposing 5 AI tools
-2. ✅ Diff preview UI with Apply/Reject workflow
-3. ✅ Audit log for AI changes
-4. ✅ Safety validation (schema, allowlist)
+1. ✅ Resource catalog with PluresDB backend
+2. ✅ Discovery and search interface
+3. ✅ Publishing workflow for contributors
+4. ✅ Rating and review system
+5. ✅ Integration with existing PowerShell module
+
+### Architecture Overview
+
+**Decentralized Resource Catalog:**
+- PluresDB stores resource metadata (title, description, author, ratings)
+- Git repositories host actual DSC configuration files
+- Pedantic VS Code extension interfaces with both
+
+**Key Components:**
+1. **Resource Schema** - Standardized metadata format
+2. **PluresDB Adapter** - Interface to decentralized graph database
+3. **Discovery UI** - Search, browse, filter resources
+4. **Publishing Tools** - CLI and extension commands to share resources
+5. **Rating System** - Community feedback and quality indicators
 
 ### Week 1: MCP Server Foundation
 
@@ -286,7 +309,7 @@ export class AiPanel {
     }
     const panel = vscode.window.createWebviewPanel(
       'statesmithAi',
-      'StateSmith AI Assistant',
+      'Pedantic AI Assistant',
       vscode.ViewColumn.Beside,
       { enableScripts: true, retainContextWhenHidden: true }
     );

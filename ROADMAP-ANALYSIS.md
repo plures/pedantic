@@ -1,17 +1,18 @@
-# StateSmith Roadmap Analysis
+# Pedantic Roadmap Analysis
 **Date:** January 15, 2026  
 **Purpose:** Comprehensive analysis of current project state vs. roadmap goals
 
 ## Executive Summary
 
-StateSmith is transitioning from a PowerShell-centric DSC helper module to a VS Code extension ecosystem with dual DSL support (Simple YAML + SudoLang), AI capabilities, and visualization. The project has **solid foundational work** but is in **very early stages** (Phase 1-2 territory).
+Pedantic is positioned to become **the Ansible Galaxy for DSC** - a central hub for discovering, sharing, and managing DSC resources and configurations. The project has **solid foundational work** with a production-ready PowerShell module and is building modern tooling via a VS Code extension.
 
-### Current Status: ~15-20% Complete Toward 1.0
-- ✅ **Foundational infrastructure** established
-- ✅ **Core parsing** implemented for both DSLs
+### Current Status: Strong Foundation, Building Toward Community Hub
+- ✅ **PowerShell module** production-ready and fully functional
+- ✅ **Core parsing** implemented for dual DSLs (Simple YAML + SudoLang)
 - ✅ **Basic webview** framework created
-- ❌ **LSP integration** not started
-- ❌ **AI/MCP features** not implemented
+- ❌ **LSP integration** not started (critical for VS Code extension)
+- ❌ **Community platform** not yet designed
+- ❌ **PluresDB integration** not implemented
 - ❌ **PowerShell bridge** not connected
 - ❌ **Testing infrastructure** incomplete
 
@@ -21,9 +22,9 @@ StateSmith is transitioning from a PowerShell-centric DSC helper module to a VS 
 
 ### ✅ Completed Work (Strong Foundation)
 
-#### 1. PowerShell Module (Legacy Substrate)
+#### 1. PowerShell Module (Production-Ready Foundation)
 **Status:** Mature, production-ready  
-**Files:** `StateSmith.DSC.psm1`, `StateSmith.DSC.psd1`, related helpers
+**Files:** `Pedantic.psm1`, `Pedantic.psd1`, related helpers
 
 - Comprehensive DSC v3 resource management
 - Remote execution capabilities
@@ -31,7 +32,7 @@ StateSmith is transitioning from a PowerShell-centric DSC helper module to a VS 
 - Platform-aware version detection
 - Well-documented with examples
 
-**Assessment:** This is solid work that serves as the "compatibility substrate" mentioned in the roadmap. Can bridge to TypeScript.
+**Assessment:** This is the solid foundation that demonstrates Pedantic's value today. The module serves real users while we build the ecosystem vision.
 
 #### 2. VS Code Extension Scaffold
 **Status:** Basic structure in place  
@@ -195,7 +196,7 @@ StateSmith is transitioning from a PowerShell-centric DSC helper module to a VS 
 ## Roadmap Checklist Update
 
 ### Foundation & Scaffolding
-- [x] Rebrand to StateSmith (PowerShell core)
+- [x] Project branding and positioning (Pedantic - DSC ecosystem hub)
 - [x] ~~Monorepo scaffolding~~ → Single extension package (acceptable)
 - [x] Extension activation + basic commands
 - [ ] **PowerShell bridge contract (JSON schema v1)** ← HIGH PRIORITY
@@ -559,22 +560,23 @@ StateSmith is transitioning from a PowerShell-centric DSC helper module to a VS 
 
 ## Conclusion
 
-**StateSmith has excellent bones.** The dual parser architecture, clean AST design, and comprehensive documentation demonstrate strong engineering. However, **the project is in very early stages** (~15-20% complete toward 1.0).
+**Pedantic has excellent foundations.** The dual parser architecture, clean AST design, production-ready PowerShell module, and comprehensive documentation demonstrate strong engineering. The project is well-positioned to become the central hub for the DSC community.
 
 **Critical Path:**
-1. ✅ **Fix parser bugs** (done in this PR)
-2. 🔴 **Implement LSP** (2-3 weeks) ← START HERE
-3. 🟡 **Add testing** (1 week)
-4. 🟢 **Connect bridge** (1 week)
-5. 🟢 **Polish UI** (1 week)
+1. ✅ **Fix parser bugs** (done)
+2. 🔴 **Implement LSP** (Q1 2026) ← START HERE
+3. 🟡 **Add testing** (Q1 2026)
+4. 🟢 **Connect bridge** (Q1 2026)
+5. 🟢 **Polish UI** (Q1 2026)
 6. 🟢 **Ship MVP** (beta testing)
 
 **Strategic Decision Point:**  
-Defer all AI/MCP work (Phases 4-7) until **after MVP ships**. This reduces risk, delivers value faster, and validates the core concept before investing in advanced features.
+Build incrementally: Core tooling (Q1-Q2) → Community Hub (Q3) → Advanced Features (Q4). This approach validates each phase before investing in the next, ensuring we build what the community actually needs.
 
 **Recommended Timeline:**
-- **MVP:** 3-4 weeks
-- **1.0 Release:** 7-8 weeks
-- **Full Roadmap:** 6-7 months
+- **MVP:** Q1 2026
+- **1.0 Release:** Q2 2026
+- **Community Hub:** Q3 2026
+- **Advanced Features:** Q4 2026
 
-With focused execution on the critical path, StateSmith can ship a valuable MVP within a month and reach 1.0 in two months.
+With focused execution on the critical path and community engagement, Pedantic can become the Ansible Galaxy for DSC by end of 2026.
