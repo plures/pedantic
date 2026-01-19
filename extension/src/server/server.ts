@@ -49,10 +49,6 @@ connection.onInitialize((params: InitializeParams) => {
       completionProvider: {
         triggerCharacters: ['.', ':']
       },
-      diagnosticProvider: {
-        interFileDependencies: false,
-        workspaceDiagnostics: false
-      },
       documentFormattingProvider: true,
       codeActionProvider: true
     }

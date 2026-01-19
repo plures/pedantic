@@ -197,6 +197,48 @@ Test-SimpleDsc -SimpleDslPath .\projects\dsc\simple-install.yaml
 4. Add error handling and validation
 5. Package as a proper PowerShell module
 
+## Ansible Parity and Rust Replatform
+
+### Why
+
+- Achieve Ansible-like ergonomics with `dsc.noun.verb` while emitting DSC v3 under the hood.
+- Deliver first-class templating (critical): Jinja-like syntax via Rust `minijinja` for `dsc.file.template`.
+- Align implementation language with DSC v3 core for performance and shared libraries.
+
+### Initial Ansible ⇔ Simple DSC coverage
+
+- Package → `dsc.install`
+- Service → `dsc.service.ensure`
+- File → `dsc.file.ensure`
+- Copy → `dsc.file.copy`
+- Template → `dsc.file.template` (minijinja render + DSC File)
+- User/Group → `dsc.user.ensure` / `dsc.group.ensure`
+- Git → `dsc.git.clone`
+- Download → `dsc.http.fetch`
+- Unarchive → `dsc.archive.extract`
+- Line/Block edit → `dsc.file.line` / `dsc.file.block`
+- Schedule/Cron → `dsc.schedule.ensure`
+
+See `docs/ansible-mapping.yaml` for the source-of-truth manifest (parameters, check/diff, backends).
+
+### Rust refactor game plan
+
+- Create a Rust core that parses Simple DSC YAML, loads `ansible-mapping.yaml`, and projects to DSC v3 documents.
+- Embed `minijinja` for templates; expose `dsc.file.template` with check/diff output.
+- Provide FFI/bridge for the VS Code extension (TypeScript) to call into the Rust core (napi-rs/wasm32 for webviews, or native binary).
+- Keep DSC resources in PowerShell where needed but let Rust handle mapping, validation, and rendering.
+- Add golden tests that mirror Ansible behaviors (package, service, template, file mutations) to guard parity and idempotency.
+
+### Current Rust core status (planner/runtime)
+
+- Rust workspace (`rust/`): `pedantic-core` exposes planning, templating, mapping loaders; `pedantic-node` exports Node bindings.
+- Planner: classifies tasks as resource vs runtime primitives from `ansible-mapping.yaml`, strips control params, expands loops, and carries `when`/`register` metadata.
+- Runtime primitives supported: `register`, `set_fact`, `debug`, `when`, `loop`, `group`, `group_by` (non-DSC control flow).
+- Conditions & overrides: `when` uses Jinja expressions; `changed_when` / `failed_when` parsed and evaluated with `result` in scope.
+- Handlers: tasks may `notify` handler names; `listen` marks handlers; changed tasks enqueue handlers for post-run execution (deduped, order-preserving).
+- Results/diff/check: `TaskResult` carries `changed`, `check`, structured `diffs`; surfaced through Node bindings for UI/register use.
+- Docs: see `docs/EXPRESSIONS-AND-TEMPLATING.md` for expression/filter plan and `docs/RUST-RUNTIME-PRIMITIVES.md` for control/handler semantics.
+
 ---
 
 *Simple DSC: The power of DSC with the simplicity of modern configuration management.*

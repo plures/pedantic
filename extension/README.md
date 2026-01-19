@@ -18,6 +18,12 @@ The Pedantic extension provides a modern development experience for Desired Stat
 - **Live updates**: Graph refreshes automatically as you edit
 - **Diagnostic overlay**: View errors and warnings alongside the graph
 
+### 🧰 Prereqs & Resource Management
+- **DSC v3 prerequisite check**: Validate DSC installation and version from VS Code
+- **Common resource guardrails**: Ensure baseline resources are present; one-click install missing items
+- **Resource inventory**: Visual bar chart + tables showing installed vs cached/available resources
+- **Add resources fast**: Quick-pick installer to pull DSC resources into your project
+
 ### ⚡ PowerShell Bridge
 - **DSC generation**: Convert Simple DSL to standard DSC v3 YAML
 - **JSON communication**: Structured error reporting and timeout handling
@@ -62,6 +68,9 @@ dsc.install:
 - `Pedantic: Open Resource Graph` - Visualize package dependencies
 - `Pedantic: Debug Parse Current Document` - Show parser diagnostics
 - `Pedantic: Open AI Assistant` - Placeholder for future MCP integration
+- `Pedantic: Check DSC Prerequisites` - Verify DSC v3 + common resources; offers one-click fixes
+- `Pedantic: Show Resource Inventory` - Graph/list view of installed vs cached/available resources
+- `Pedantic: Add DSC Resource to Project` - Install a DSC resource from catalog/cache in one step
 
 ### Keyboard Shortcuts
 

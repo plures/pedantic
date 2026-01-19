@@ -12,7 +12,10 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:yaml"
+    "onLanguage:yaml",
+    "onCommand:pedantic.checkPrereqs",
+    "onCommand:pedantic.showResourceInventory",
+    "onCommand:pedantic.addResourceToProject"
   ],
   "main": "dist/extension.js",
   "contributes": {
@@ -35,6 +38,21 @@
       {
         "command": "pedantic.debugParse",
         "title": "Pedantic: Debug Parse Current Document",
+        "category": "Pedantic"
+      },
+      {
+        "command": "pedantic.checkPrereqs",
+        "title": "Pedantic: Check DSC Prerequisites",
+        "category": "Pedantic"
+      },
+      {
+        "command": "pedantic.showResourceInventory",
+        "title": "Pedantic: Show Resource Inventory",
+        "category": "Pedantic"
+      },
+      {
+        "command": "pedantic.addResourceToProject",
+        "title": "Pedantic: Add DSC Resource to Project",
         "category": "Pedantic"
       }
     ],

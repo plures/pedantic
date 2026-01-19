@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ResourceGraphPanel } from './webviews/resourceGraphPanel';
+import { ResourceInventoryPanel } from './webviews/resourceInventoryPanel';
 import { activateLanguageServer, deactivateLanguageServer } from './client';
 import { invokePwsh } from './bridge/pwshBridge';
 import * as fs from 'fs';
@@ -13,6 +14,179 @@ export function activate(context: vscode.ExtensionContext) {
   activateLanguageServer(context);
 
   const disposables: vscode.Disposable[] = [];
+  const commonResources = [
+    'Microsoft.DSC/Archive',
+    'Microsoft.DSC/File',
+    'Microsoft.DSC/Service',
+    'Microsoft.Windows/Registry',
+    'Microsoft.Windows/File',
+    'Microsoft.Windows/Service'
+  ];
+  const defaultTimeoutMs = 60000;
+
+  const installResource = async (resourceType: string) => {
+    return vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: `Pedantic: Installing ${resourceType}`
+    }, async () => {
+      const response = await invokePwsh({
+        command: 'installResource',
+        resourceType,
+        options: { timeout: defaultTimeoutMs }
+      });
+
+      if (!response.success) {
+        const errors = response.errors?.join('\n') || 'Unknown error';
+        vscode.window.showErrorMessage(`Pedantic: Failed to install ${resourceType}: ${errors}`);
+        return false;
+      }
+
+      const installed = response.data?.installed;
+      vscode.window.showInformationMessage(installed
+        ? `Pedantic: Resource ${resourceType} installed`
+        : `Pedantic: Install attempted for ${resourceType} (see output)`);
+      return installed;
+    });
+  };
+
+  disposables.push(vscode.commands.registerCommand('pedantic.checkPrereqs', async () => {
+    const response = await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: 'Pedantic: Checking DSC prerequisites'
+    }, async () => {
+      return invokePwsh({
+        command: 'prereqs',
+        resourceTypes: commonResources,
+        options: { timeout: defaultTimeoutMs }
+      });
+    });
+
+    if (!response.success) {
+      const errors = response.errors?.join('\n') || 'Unknown error';
+      vscode.window.showErrorMessage(`Pedantic: Prerequisite check failed: ${errors}`);
+      return;
+    }
+
+    const data = response.data || {};
+    const missing: string[] = data.commonResources?.missing || [];
+    const dscInstalled: boolean = !!data.dscInstalled;
+    const dscVersion: string | undefined = data.dscVersion;
+
+    const message = `DSC ${dscInstalled ? 'found' : 'not found'}${dscVersion ? ' (' + dscVersion + ')' : ''}. ` +
+      (missing.length ? `${missing.length} common resource(s) missing.` : 'Common resources available.');
+
+    const actions: string[] = missing.length ? ['Install missing resources', 'Open resource inventory'] : ['Open resource inventory'];
+    const selection = await vscode.window.showInformationMessage(message, ...actions);
+
+    if (selection === 'Install missing resources') {
+      for (const res of missing) {
+        await installResource(res);
+      }
+    }
+
+    if (selection === 'Open resource inventory') {
+      const panel = ResourceInventoryPanel.createOrShow(context);
+      panel.update({
+        dscInstalled,
+        dscVersion,
+        commonResources: data.commonResources,
+        installed: data.installedResources,
+        cached: data.cached
+      });
+    }
+  }));
+
+  disposables.push(vscode.commands.registerCommand('pedantic.showResourceInventory', async () => {
+    const response = await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: 'Pedantic: Gathering resource inventory'
+    }, async () => {
+      return invokePwsh({
+        command: 'resources',
+        resourceTypes: commonResources,
+        options: { timeout: defaultTimeoutMs }
+      });
+    });
+
+    if (!response.success) {
+      const errors = response.errors?.join('\n') || 'Unknown error';
+      vscode.window.showErrorMessage(`Pedantic: Resource inventory failed: ${errors}`);
+      return;
+    }
+
+    const panel = ResourceInventoryPanel.createOrShow(context);
+    panel.update(response.data || {});
+  }));
+
+  disposables.push(vscode.commands.registerCommand('pedantic.addResourceToProject', async () => {
+    const response = await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: 'Pedantic: Loading available resources'
+    }, async () => {
+      return invokePwsh({
+        command: 'resources',
+        resourceTypes: commonResources,
+        options: { timeout: defaultTimeoutMs }
+      });
+    });
+
+    if (!response.success) {
+      const errors = response.errors?.join('\n') || 'Unknown error';
+      vscode.window.showErrorMessage(`Pedantic: Failed to load resources: ${errors}`);
+      return;
+    }
+
+    const data = response.data || {};
+    const installedTypes = new Set<string>();
+    for (const r of data.installed || data.installedResources || []) {
+      const t = r.type || r.Type;
+      if (t) installedTypes.add(t);
+    }
+
+    const candidates = new Map<string, vscode.QuickPickItem>();
+    const addCandidate = (type?: string, version?: string, source?: string, detail?: string) => {
+      if (!type || installedTypes.has(type) || candidates.has(type)) {
+        return;
+      }
+      candidates.set(type, {
+        label: type,
+        description: source || 'available',
+        detail: version ? `version ${version}` : detail
+      });
+    };
+
+    for (const r of data.cached || []) {
+      addCandidate(r.Type || r.type || r.Key, r.Version || r.version, r.Source || r.source || 'cached', r.Path || r.path);
+    }
+
+    const catalog = data.catalog || {};
+    for (const r of catalog.MappedResources || []) {
+      addCandidate(r.OriginalType, r.Version, r.Source || 'mapped', r.Description);
+    }
+    for (const r of catalog.BuiltInResources || []) {
+      addCandidate(r.Type, r.Version, 'built-in', r.Description);
+    }
+    for (const r of (catalog.GalleryResources || []).slice?.(0, 50) || []) {
+      addCandidate(r.Name, r.Version, r.Source || 'gallery', r.Description);
+    }
+
+    if (candidates.size === 0) {
+      vscode.window.showInformationMessage('Pedantic: No additional resources available to add.');
+      return;
+    }
+
+    const pick = await vscode.window.showQuickPick(Array.from(candidates.values()), {
+      placeHolder: 'Select a DSC resource to install into this project'
+    });
+    if (!pick) { return; }
+
+    await installResource(pick.label);
+
+    const panel = ResourceInventoryPanel.current();
+    if (panel) {
+      panel.update(response.data || {});
+    }
+  }));
 
   disposables.push(vscode.commands.registerCommand('pedantic.generateConfig', async () => {
     const workspaceIsTrusted = ((vscode.workspace as unknown) as { isTrusted?: boolean }).isTrusted ?? true;

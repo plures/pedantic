@@ -19,16 +19,27 @@ export async function invokePwsh(request: BridgeRequest): Promise<BridgeResponse
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', scriptPath,
     '-Command', request.command,
-    '-DslPath', request.dslPath,
     '-OutputJson'
   ];
+
+  if (request.dslPath) {
+    args.push('-DslPath', request.dslPath);
+  }
+
+  if (request.resourceTypes && request.resourceTypes.length > 0) {
+    args.push('-ResourceTypes', request.resourceTypes.join(','));
+  }
+
+  if (request.resourceType) {
+    args.push('-ResourceType', request.resourceType);
+  }
   
   if (request.options?.whatIf) {
     args.push('-WhatIf');
   }
   
   if (request.options?.verbose) {
-    args.push('-Verbose');
+    args.push('-VerboseOutput');
   }
   
   return new Promise((resolve, reject) => {

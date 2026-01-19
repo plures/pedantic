@@ -1998,7 +1998,35 @@ function Test-DscResourceAvailability {
         }
     }
 
-    # ...existing code...
+    # If any resources are missing and Force is specified, attempt to download/cache them now
+    if ($missingResources.Count -gt 0 -and $Force) {
+        $resolvedNow = @()
+        foreach ($res in $missingResources.ToArray()) {
+            try {
+                $downloaded = Update-DscResourceCacheInternal -Force -Quiet:$Quiet -SpecificResource $res
+                if ($downloaded) {
+                    $resolvedNow += $res
+                    $availableResources += $res
+                    $missingResources = $missingResources | Where-Object { $_ -ne $res }
+                    if (-not $Quiet) {
+                        Write-Host "✓ Resource downloaded: $res" -ForegroundColor Green
+                    }
+                }
+            }
+            catch {
+                if (-not $Quiet) {
+                    Write-Warning "Failed to download ${res}: $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
+    $success = $missingResources.Count -eq 0
+    return @{
+        Success = $success
+        AvailableResources = $availableResources
+        MissingResources = $missingResources
+    }
 }
 
 # Internal helpers and public command wrappers migrated from legacy module
