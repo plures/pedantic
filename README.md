@@ -1,68 +1,27 @@
-# Pedantic • A DSC Ecosystem Hub
+# Pedantic
 
-**The Ansible Galaxy for Desired State Configuration**
+**Modern DSC (Desired State Configuration) management toolkit**
 
-Pedantic is an evolving ecosystem for discovering, sharing, and managing DSC (Desired State Configuration) resources and configurations. Like Ansible Galaxy provides a central hub for Ansible roles and collections, Pedantic aims to become the go-to platform for the DSC community.
+Pedantic is a PowerShell module and toolset for managing DSC resources and configurations across Windows, macOS, and Linux with PowerShell 7+. It provides a simplified interface for working with DSC v3, resource caching, remote execution, and dual DSL support for configuration authoring.
 
-## Vision
+## Features
 
-We're building a comprehensive DSC ecosystem that combines:
-- **Resource Discovery & Sharing** - A community hub for DSC configurations and resources
-- **Powerful Tooling** - Modern development tools for authoring and managing DSC
-- **Cross-Platform Support** - Works on Windows, macOS, and Linux with PowerShell 7+
-- **Integration** - Seamless integration with the [Plures](https://github.com/plures) ecosystem of development tools
+The Pedantic PowerShell module (v0.9.0) provides:
 
-## What Works Today
+- **DSC Configuration Management** - Apply, test, validate, and export DSC configurations
+- **Resource Caching** - Automatic downloading and caching of DSC resources from PowerShell Gallery
+- **Remote Execution** - Secure remote DSC operations via SSH and WinRM
+- **Dual DSL Support** - Work with both simplified YAML syntax and SudoLang configurations
+- **Built-in Resource Mapping** - Pre-configured mappings for 30+ classic DSC resources
+- **Cross-Platform** - PowerShell 7.2+ on Windows, macOS, and Linux
+- **Utility Functions** - Text processing helpers like `Get-Head` and `Get-Tail`
 
-### What's Working
-- ✅ PowerShell module (production-ready)
-- ✅ VS Code extension scaffold  
-- ✅ Dual DSL parsers (Simple + SudoLang)
-- ✅ Resource graph visualization (basic)
-- ✅ Test framework with passing tests
-- ✅ **Praxis-inspired logic engine** (fact/event/rule system)
-- ✅ **Reactive state management** (framework-agnostic)
+### VS Code Extension (Early Development)
 
-The Pedantic PowerShell module is fully functional and ready to use in production environments:
-
-**Detailed Plans:**
-- [MVP Plan (3-4 weeks)](MVP-PLAN.md)
-- [1.0 Release Plan (7-8 weeks)](RELEASE-1.0-PLAN.md)
-- [Full Roadmap (6-7 months)](FULL-ROADMAP-PLAN.md)
-- [Implementation Analysis](ROADMAP-ANALYSIS.md)
-- [**Praxis Integration Guide**](docs/PRAXIS-INTEGRATION.md)
-
-### 🚧 In Development
-
-- **VS Code Extension** - Rich editing experience with dual DSL support
-- **Resource Graph Visualization** - Visual dependency mapping
-- **AI-Assisted Configuration** - Intelligent DSC authoring
-- **Community Hub** - Central repository for sharing DSC configurations
-
-## Roadmap
-
-### Current Phase: Foundation (Q1 2026)
-Building the core infrastructure and establishing the PowerShell module as the foundation.
-
-### Near-Term Goals (Q2-Q3 2026)
-- Launch community hub for DSC resource sharing
-- Complete VS Code extension with LSP integration
-- Establish integration points with Plures ecosystem projects:
-  - [PluresDB](https://github.com/plures/pluresdb) - Decentralized resource catalog
-  - [RuneBook](https://github.com/plures/runebook) - Interactive DSC workflow development
-  - [Praxis](https://github.com/plures/praxis) - Full-stack framework integration
-
-### Long-Term Vision (2026-2027)
-- Become the primary DSC resource discovery platform
-- Support for community contributions and ratings
-- Advanced AI-powered configuration generation
-- Enterprise-grade resource management
-
-**Detailed Plans:**
-- [MVP Plan](MVP-PLAN.md) - Next phase development
-- [1.0 Release Plan](RELEASE-1.0-PLAN.md) - Production release targets
-- [Full Roadmap](FULL-ROADMAP-PLAN.md) - Complete vision
-- [Next Steps](NEXT-STEPS.md) - Current priorities
+The VS Code extension (v0.0.1) includes basic scaffolding for:
+- Language Server Protocol (LSP) with syntax diagnostics
+- Resource graph visualization
+- DSL parsing and code completion
 
 ---
 
@@ -80,8 +39,6 @@ Import-Module ./Pedantic.psd1
 ```
 
 ### Quick Start Examples
-
-The PowerShell module provides powerful DSC management capabilities today:
 
 #### Example 1: Text Utilities
 
@@ -217,7 +174,7 @@ Set-DscConfiguration -DscPath ./go-install-winget.dsc.yaml
 
 ## Module Reference
 
-For detailed command documentation, use PowerShell's built-in help system:
+The module includes 38+ functions for DSC management. For detailed command documentation:
 
 ```powershell
 # Get help for a specific command
@@ -227,45 +184,41 @@ Get-Help Set-DscConfiguration -Full
 Get-Command -Module Pedantic
 ```
 
-## Integration with Plures Ecosystem
+### Key Functions
 
-Pedantic is part of the [Plures](https://github.com/plures) ecosystem, designed to work seamlessly with:
+- **Configuration Management**: `Set-DscConfiguration`, `Test-DscConfiguration`, `Validate-DscConfiguration`, `Export-DscConfiguration`
+- **Resource Management**: `Update-DscResourceCache`, `Ensure-DscResourcesAvailable`, `Get-DscResourcePath`
+- **Remote Operations**: `New-SecureRemoteSession`, `Repair-DscInstallation`
+- **Utilities**: `Get-Head`, `Get-Tail`, `Invoke-DscHelper`
 
-- **[PluresDB](https://github.com/plures/pluresdb)** - Decentralized graph database for sharing DSC resources
-- **[RuneBook](https://github.com/plures/runebook)** - Interactive canvas environment for building DSC workflows
-- **[Praxis](https://github.com/plures/praxis)** - Full-stack application framework with DSC integration
+## Related Projects
 
-These integrations will enable:
-- Decentralized resource discovery and sharing
-- Visual DSC workflow development
-- Seamless application deployment with DSC
+Pedantic is part of the [Plures](https://github.com/plures) organization. Related projects include:
+
+- **[PluresDB](https://github.com/plures/pluresdb)** - Decentralized graph database
+- **[RuneBook](https://github.com/plures/runebook)** - Interactive canvas environment
+- **[Praxis](https://github.com/plures/praxis)** - Full-stack application framework
 
 ## Contributing
 
-We welcome contributions! Whether you're:
-- Sharing DSC configurations and resources
-- Improving the PowerShell module
-- Building integrations with other tools
-- Enhancing documentation
-
-See our [Contributing Guide](CONTRIBUTING.md) (coming soon) for details.
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Community & Support
 
-- **GitHub Issues** - Bug reports and feature requests
-- **Discussions** - Questions and community support
-- **Plures Organization** - Explore related projects at [github.com/plures](https://github.com/plures)
+- **[GitHub Issues](https://github.com/plures/pedantic/issues)** - Bug reports and feature requests
+- **[GitHub Discussions](https://github.com/plures/pedantic/discussions)** - Questions and community support
+- **[Plures Organization](https://github.com/plures)** - Explore related projects
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
-## Roadmap Documents
+## Roadmap & Planning
 
-For detailed information about our plans and progress:
+For detailed information about future plans and development roadmap, see:
 
-- **[NEXT-STEPS.md](NEXT-STEPS.md)** - Current priorities and immediate next steps
-- **[MVP-PLAN.md](MVP-PLAN.md)** - Next phase development plan
-- **[RELEASE-1.0-PLAN.md](RELEASE-1.0-PLAN.md)** - Production release targets
-- **[FULL-ROADMAP-PLAN.md](FULL-ROADMAP-PLAN.md)** - Complete long-term vision
-- **[ROADMAP-ANALYSIS.md](ROADMAP-ANALYSIS.md)** - Detailed status analysis
+- [NEXT-STEPS.md](NEXT-STEPS.md) - Current priorities
+- [MVP-PLAN.md](MVP-PLAN.md) - MVP development plan
+- [RELEASE-1.0-PLAN.md](RELEASE-1.0-PLAN.md) - 1.0 release targets
+- [FULL-ROADMAP-PLAN.md](FULL-ROADMAP-PLAN.md) - Long-term vision
+- [CHANGELOG.md](CHANGELOG.md) - Version history
