@@ -1,0 +1,16 @@
+[package]
+name = "pedantic-node"
+version = "0.1.0"
+edition = "2021"
+description = "Node binding for pedantic-core"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", features = ["serde-json"] }
+napi-derive = "2"
+serde_json = "1"
+serde_yaml = "0.9"
+pedantic-core = { path = "../pedantic-core" }

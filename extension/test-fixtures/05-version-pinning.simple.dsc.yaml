@@ -1,0 +1,6 @@
+dsc.install:
+  packages:
+    - name: Git.Git
+      version: 2.43.0
+    - name: Python.Python.3.12
+      version: 3.12.1

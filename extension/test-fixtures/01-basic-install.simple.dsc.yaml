@@ -1,0 +1,4 @@
+dsc.install:
+  packages:
+    - Git.Git
+    - Microsoft.VisualStudioCode

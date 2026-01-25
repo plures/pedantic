@@ -37,14 +37,20 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const resourceGraphPanel_1 = require("./webviews/resourceGraphPanel");
+const client_1 = require("./client");
+const pwshBridge_1 = require("./bridge/pwshBridge");
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
 let graphPanel;
 let aiPanel;
 function activate(context) {
+    // Start the language server
+    (0, client_1.activateLanguageServer)(context);
     const disposables = [];
-    disposables.push(vscode.commands.registerCommand('statesmith.generateConfig', async () => {
+    disposables.push(vscode.commands.registerCommand('pedantic.generateConfig', async () => {
         const workspaceIsTrusted = vscode.workspace.isTrusted ?? true;
         if (!workspaceIsTrusted) {
-            vscode.window.showWarningMessage('StateSmith: Workspace is not trusted. Enable trust to generate DSC output.');
+            vscode.window.showWarningMessage('Pedantic: Workspace is not trusted. Enable trust to generate DSC output.');
             return;
         }
         const editor = vscode.window.activeTextEditor;
@@ -53,8 +59,48 @@ function activate(context) {
             return;
         }
         const doc = editor.document;
-        // Placeholder: future bridge invocation to PowerShell / engine
-        vscode.window.showInformationMessage(`StateSmith: (stub) would generate DSC for ${doc.fileName}`);
+        // Save document to temp file if it has unsaved changes
+        let dslPath = doc.uri.fsPath;
+        let tempFile;
+        if (doc.isDirty) {
+            const tempDir = path.join(context.globalStoragePath, 'temp');
+            if (!fs.existsSync(tempDir)) {
+                fs.mkdirSync(tempDir, { recursive: true });
+            }
+            tempFile = path.join(tempDir, path.basename(doc.fileName));
+            fs.writeFileSync(tempFile, doc.getText(), 'utf-8');
+            dslPath = tempFile;
+        }
+        try {
+            vscode.window.showInformationMessage('Pedantic: Generating DSC configuration...');
+            const response = await (0, pwshBridge_1.invokePwsh)({
+                command: 'generate',
+                dslPath,
+                options: { timeout: 30000 }
+            });
+            if (response.success) {
+                // Create a new document with the generated output
+                const outputDoc = await vscode.workspace.openTextDocument({
+                    content: response.output || '',
+                    language: 'yaml'
+                });
+                await vscode.window.showTextDocument(outputDoc, vscode.ViewColumn.Beside);
+                vscode.window.showInformationMessage('Pedantic: DSC configuration generated successfully');
+            }
+            else {
+                const errors = response.errors?.join('\n') || 'Unknown error';
+                vscode.window.showErrorMessage(`Pedantic: Generation failed:\n${errors}`);
+            }
+        }
+        catch (err) {
+            vscode.window.showErrorMessage(`Pedantic: Bridge error: ${err.message}`);
+        }
+        finally {
+            // Clean up temp file
+            if (tempFile && fs.existsSync(tempFile)) {
+                fs.unlinkSync(tempFile);
+            }
+        }
     }));
     // Debounced graph refresh support
     let graphRefreshTimer;
@@ -78,7 +124,7 @@ function activate(context) {
             }
         }, 200); // 200ms debounce
     };
-    disposables.push(vscode.commands.registerCommand('statesmith.openGraph', async () => {
+    disposables.push(vscode.commands.registerCommand('pedantic.openGraph', async () => {
         const panel = resourceGraphPanel_1.ResourceGraphPanel.createOrShow(context);
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
@@ -109,17 +155,17 @@ function activate(context) {
             scheduleGraphRefresh();
         }
     }));
-    disposables.push(vscode.commands.registerCommand('statesmith.openAiPanel', () => {
+    disposables.push(vscode.commands.registerCommand('pedantic.openAiPanel', () => {
         if (aiPanel) {
             aiPanel.reveal();
             return;
         }
-        aiPanel = vscode.window.createWebviewPanel('statesmithAi', 'StateSmith AI Assistant', vscode.ViewColumn.Beside, { enableScripts: true });
+        aiPanel = vscode.window.createWebviewPanel('pedanticAi', 'Pedantic AI Assistant', vscode.ViewColumn.Beside, { enableScripts: true });
         aiPanel.onDidDispose(() => { aiPanel = undefined; }, null, context.subscriptions);
         aiPanel.webview.html = getBasicHtml('AI Assistant', `<p>AI panel placeholder. MCP integration forthcoming.</p>`);
     }));
     // Debug: parse active document (Simple DSL only for now) and show diagnostics
-    disposables.push(vscode.commands.registerCommand('statesmith.debugParse', async () => {
+    disposables.push(vscode.commands.registerCommand('pedantic.debugParse', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             vscode.window.showWarningMessage('No active editor to parse.');
@@ -137,7 +183,7 @@ function activate(context) {
         const doc = parserMod.parseSimple(text);
         const ch = getOutputChannel();
         ch.clear();
-        ch.appendLine('StateSmith Debug Parse Results');
+        ch.appendLine('Pedantic Debug Parse Results');
         ch.appendLine('Dialect: simple');
         ch.appendLine('Blocks: ' + doc.blocks.length);
         for (const b of doc.blocks) {
@@ -164,6 +210,7 @@ function activate(context) {
 function deactivate() {
     graphPanel = undefined;
     aiPanel = undefined;
+    return (0, client_1.deactivateLanguageServer)();
 }
 function getBasicHtml(title, body) {
     const nonce = Math.random().toString(36).slice(2);
@@ -185,7 +232,7 @@ ${body}
 let _outputChannel;
 function getOutputChannel() {
     if (!_outputChannel) {
-        _outputChannel = vscode.window.createOutputChannel('StateSmith DSL');
+        _outputChannel = vscode.window.createOutputChannel('Pedantic DSL');
     }
     return _outputChannel;
 }

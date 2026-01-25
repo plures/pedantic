@@ -1,16 +1,197 @@
 import * as vscode from 'vscode';
 import { ResourceGraphPanel } from './webviews/resourceGraphPanel';
+import { ResourceInventoryPanel } from './webviews/resourceInventoryPanel';
+import { activateLanguageServer, deactivateLanguageServer } from './client';
+import { invokePwsh } from './bridge/pwshBridge';
+import * as fs from 'fs';
+import * as path from 'path';
 
 let graphPanel: vscode.WebviewPanel | undefined;
 let aiPanel: vscode.WebviewPanel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-  const disposables: vscode.Disposable[] = [];
+  // Start the language server
+  activateLanguageServer(context);
 
-  disposables.push(vscode.commands.registerCommand('statesmith.generateConfig', async () => {
+  const disposables: vscode.Disposable[] = [];
+  const commonResources = [
+    'Microsoft.DSC/Archive',
+    'Microsoft.DSC/File',
+    'Microsoft.DSC/Service',
+    'Microsoft.Windows/Registry',
+    'Microsoft.Windows/File',
+    'Microsoft.Windows/Service'
+  ];
+  const defaultTimeoutMs = 60000;
+
+  const installResource = async (resourceType: string) => {
+    return vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: `Pedantic: Installing ${resourceType}`
+    }, async () => {
+      const response = await invokePwsh({
+        command: 'installResource',
+        resourceType,
+        options: { timeout: defaultTimeoutMs }
+      });
+
+      if (!response.success) {
+        const errors = response.errors?.join('\n') || 'Unknown error';
+        vscode.window.showErrorMessage(`Pedantic: Failed to install ${resourceType}: ${errors}`);
+        return false;
+      }
+
+      const installed = response.data?.installed;
+      vscode.window.showInformationMessage(installed
+        ? `Pedantic: Resource ${resourceType} installed`
+        : `Pedantic: Install attempted for ${resourceType} (see output)`);
+      return installed;
+    });
+  };
+
+  disposables.push(vscode.commands.registerCommand('pedantic.checkPrereqs', async () => {
+    const response = await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: 'Pedantic: Checking DSC prerequisites'
+    }, async () => {
+      return invokePwsh({
+        command: 'prereqs',
+        resourceTypes: commonResources,
+        options: { timeout: defaultTimeoutMs }
+      });
+    });
+
+    if (!response.success) {
+      const errors = response.errors?.join('\n') || 'Unknown error';
+      vscode.window.showErrorMessage(`Pedantic: Prerequisite check failed: ${errors}`);
+      return;
+    }
+
+    const data = response.data || {};
+    const missing: string[] = data.commonResources?.missing || [];
+    const dscInstalled: boolean = !!data.dscInstalled;
+    const dscVersion: string | undefined = data.dscVersion;
+
+    const message = `DSC ${dscInstalled ? 'found' : 'not found'}${dscVersion ? ' (' + dscVersion + ')' : ''}. ` +
+      (missing.length ? `${missing.length} common resource(s) missing.` : 'Common resources available.');
+
+    const actions: string[] = missing.length ? ['Install missing resources', 'Open resource inventory'] : ['Open resource inventory'];
+    const selection = await vscode.window.showInformationMessage(message, ...actions);
+
+    if (selection === 'Install missing resources') {
+      for (const res of missing) {
+        await installResource(res);
+      }
+    }
+
+    if (selection === 'Open resource inventory') {
+      const panel = ResourceInventoryPanel.createOrShow(context);
+      panel.update({
+        dscInstalled,
+        dscVersion,
+        commonResources: data.commonResources,
+        installed: data.installedResources,
+        cached: data.cached
+      });
+    }
+  }));
+
+  disposables.push(vscode.commands.registerCommand('pedantic.showResourceInventory', async () => {
+    const response = await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: 'Pedantic: Gathering resource inventory'
+    }, async () => {
+      return invokePwsh({
+        command: 'resources',
+        resourceTypes: commonResources,
+        options: { timeout: defaultTimeoutMs }
+      });
+    });
+
+    if (!response.success) {
+      const errors = response.errors?.join('\n') || 'Unknown error';
+      vscode.window.showErrorMessage(`Pedantic: Resource inventory failed: ${errors}`);
+      return;
+    }
+
+    const panel = ResourceInventoryPanel.createOrShow(context);
+    panel.update(response.data || {});
+  }));
+
+  disposables.push(vscode.commands.registerCommand('pedantic.addResourceToProject', async () => {
+    const response = await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: 'Pedantic: Loading available resources'
+    }, async () => {
+      return invokePwsh({
+        command: 'resources',
+        resourceTypes: commonResources,
+        options: { timeout: defaultTimeoutMs }
+      });
+    });
+
+    if (!response.success) {
+      const errors = response.errors?.join('\n') || 'Unknown error';
+      vscode.window.showErrorMessage(`Pedantic: Failed to load resources: ${errors}`);
+      return;
+    }
+
+    const data = response.data || {};
+    const installedTypes = new Set<string>();
+    for (const r of data.installed || data.installedResources || []) {
+      const t = r.type || r.Type;
+      if (t) installedTypes.add(t);
+    }
+
+    const candidates = new Map<string, vscode.QuickPickItem>();
+    const addCandidate = (type?: string, version?: string, source?: string, detail?: string) => {
+      if (!type || installedTypes.has(type) || candidates.has(type)) {
+        return;
+      }
+      candidates.set(type, {
+        label: type,
+        description: source || 'available',
+        detail: version ? `version ${version}` : detail
+      });
+    };
+
+    for (const r of data.cached || []) {
+      addCandidate(r.Type || r.type || r.Key, r.Version || r.version, r.Source || r.source || 'cached', r.Path || r.path);
+    }
+
+    const catalog = data.catalog || {};
+    for (const r of catalog.MappedResources || []) {
+      addCandidate(r.OriginalType, r.Version, r.Source || 'mapped', r.Description);
+    }
+    for (const r of catalog.BuiltInResources || []) {
+      addCandidate(r.Type, r.Version, 'built-in', r.Description);
+    }
+    for (const r of (catalog.GalleryResources || []).slice?.(0, 50) || []) {
+      addCandidate(r.Name, r.Version, r.Source || 'gallery', r.Description);
+    }
+
+    if (candidates.size === 0) {
+      vscode.window.showInformationMessage('Pedantic: No additional resources available to add.');
+      return;
+    }
+
+    const pick = await vscode.window.showQuickPick(Array.from(candidates.values()), {
+      placeHolder: 'Select a DSC resource to install into this project'
+    });
+    if (!pick) { return; }
+
+    await installResource(pick.label);
+
+    const panel = ResourceInventoryPanel.current();
+    if (panel) {
+      panel.update(response.data || {});
+    }
+  }));
+
+  disposables.push(vscode.commands.registerCommand('pedantic.generateConfig', async () => {
     const workspaceIsTrusted = ((vscode.workspace as unknown) as { isTrusted?: boolean }).isTrusted ?? true;
     if (!workspaceIsTrusted) {
-      vscode.window.showWarningMessage('StateSmith: Workspace is not trusted. Enable trust to generate DSC output.');
+      vscode.window.showWarningMessage('Pedantic: Workspace is not trusted. Enable trust to generate DSC output.');
       return;
     }
     const editor = vscode.window.activeTextEditor;
@@ -18,9 +199,52 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showWarningMessage('No active editor – open a DSL file to generate.');
       return;
     }
+    
     const doc = editor.document;
-    // Placeholder: future bridge invocation to PowerShell / engine
-    vscode.window.showInformationMessage(`StateSmith: (stub) would generate DSC for ${doc.fileName}`);
+    
+    // Save document to temp file if it has unsaved changes
+    let dslPath = doc.uri.fsPath;
+    let tempFile: string | undefined;
+    
+    if (doc.isDirty) {
+      const tempDir = path.join(context.globalStoragePath, 'temp');
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      tempFile = path.join(tempDir, path.basename(doc.fileName));
+      fs.writeFileSync(tempFile, doc.getText(), 'utf-8');
+      dslPath = tempFile;
+    }
+    
+    try {
+      vscode.window.showInformationMessage('Pedantic: Generating DSC configuration...');
+      
+      const response = await invokePwsh({
+        command: 'generate',
+        dslPath,
+        options: { timeout: 30000 }
+      });
+      
+      if (response.success) {
+        // Create a new document with the generated output
+        const outputDoc = await vscode.workspace.openTextDocument({
+          content: response.output || '',
+          language: 'yaml'
+        });
+        await vscode.window.showTextDocument(outputDoc, vscode.ViewColumn.Beside);
+        vscode.window.showInformationMessage('Pedantic: DSC configuration generated successfully');
+      } else {
+        const errors = response.errors?.join('\n') || 'Unknown error';
+        vscode.window.showErrorMessage(`Pedantic: Generation failed:\n${errors}`);
+      }
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Pedantic: Bridge error: ${err.message}`);
+    } finally {
+      // Clean up temp file
+      if (tempFile && fs.existsSync(tempFile)) {
+        fs.unlinkSync(tempFile);
+      }
+    }
   }));
 
   // Debounced graph refresh support
@@ -42,7 +266,7 @@ export function activate(context: vscode.ExtensionContext) {
     }, 200); // 200ms debounce
   };
 
-  disposables.push(vscode.commands.registerCommand('statesmith.openGraph', async () => {
+  disposables.push(vscode.commands.registerCommand('pedantic.openGraph', async () => {
     const panel = ResourceGraphPanel.createOrShow(context);
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -74,14 +298,14 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }));
 
-  disposables.push(vscode.commands.registerCommand('statesmith.openAiPanel', () => {
+  disposables.push(vscode.commands.registerCommand('pedantic.openAiPanel', () => {
     if (aiPanel) {
       aiPanel.reveal();
       return;
     }
     aiPanel = vscode.window.createWebviewPanel(
-      'statesmithAi',
-      'StateSmith AI Assistant',
+      'pedanticAi',
+      'Pedantic AI Assistant',
       vscode.ViewColumn.Beside,
       { enableScripts: true }
     );
@@ -90,7 +314,7 @@ export function activate(context: vscode.ExtensionContext) {
   }));
 
   // Debug: parse active document (Simple DSL only for now) and show diagnostics
-  disposables.push(vscode.commands.registerCommand('statesmith.debugParse', async () => {
+  disposables.push(vscode.commands.registerCommand('pedantic.debugParse', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       vscode.window.showWarningMessage('No active editor to parse.');
@@ -107,7 +331,7 @@ export function activate(context: vscode.ExtensionContext) {
     const doc = parserMod.parseSimple(text);
     const ch = getOutputChannel();
     ch.clear();
-    ch.appendLine('StateSmith Debug Parse Results');
+    ch.appendLine('Pedantic Debug Parse Results');
     ch.appendLine('Dialect: simple');
     ch.appendLine('Blocks: ' + doc.blocks.length);
     for (const b of doc.blocks) {
@@ -135,6 +359,7 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
   graphPanel = undefined;
   aiPanel = undefined;
+  return deactivateLanguageServer();
 }
 
 function getBasicHtml(title: string, body: string): string {
@@ -158,7 +383,7 @@ ${body}
 let _outputChannel: vscode.OutputChannel | undefined;
 function getOutputChannel(): vscode.OutputChannel {
   if (!_outputChannel) {
-    _outputChannel = vscode.window.createOutputChannel('StateSmith DSL');
+    _outputChannel = vscode.window.createOutputChannel('Pedantic DSL');
   }
   return _outputChannel;
 }

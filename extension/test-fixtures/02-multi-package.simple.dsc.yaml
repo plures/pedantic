@@ -1,0 +1,7 @@
+dsc.install:
+  packages:
+    - Git.Git
+    - Microsoft.VisualStudioCode
+    - Python.Python.3.12
+    - Microsoft.PowerShell
+    - GoLang.Go

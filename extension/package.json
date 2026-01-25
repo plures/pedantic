@@ -12,7 +12,10 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:yaml"
+    "onLanguage:yaml",
+    "onCommand:pedantic.checkPrereqs",
+    "onCommand:pedantic.showResourceInventory",
+    "onCommand:pedantic.addResourceToProject"
   ],
   "main": "dist/extension.js",
   "contributes": {
@@ -35,6 +38,21 @@
       {
         "command": "pedantic.debugParse",
         "title": "Pedantic: Debug Parse Current Document",
+        "category": "Pedantic"
+      },
+      {
+        "command": "pedantic.checkPrereqs",
+        "title": "Pedantic: Check DSC Prerequisites",
+        "category": "Pedantic"
+      },
+      {
+        "command": "pedantic.showResourceInventory",
+        "title": "Pedantic: Show Resource Inventory",
+        "category": "Pedantic"
+      },
+      {
+        "command": "pedantic.addResourceToProject",
+        "title": "Pedantic: Add DSC Resource to Project",
         "category": "Pedantic"
       }
     ],
@@ -64,12 +82,17 @@
     "test:build": "tsc -p tsconfig.test.json"
   },
   "devDependencies": {
+    "@types/vscode": "^1.108.1",
     "@types/node": "^25.0.9",
     "typescript": "^5.4.0",
     "vsce": "^2.15.0",
     "vscode": "^1.1.37"
   },
   "dependencies": {
+    "echarts": "^6.0.0",
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12",
     "chevrotain": "^11.1.0",
     "yaml": "^2.5.0"
   }

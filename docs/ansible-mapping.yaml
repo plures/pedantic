@@ -1,0 +1,554 @@
+# Seed mapping between Ansible builtin modules and Simple DSC commands
+# This file is source-of-truth for projection/routing logic.
+# Each entry should mirror parameters and capabilities.
+
+- ansibleModule: ansible.builtin.package
+  dscCommand: dsc.install
+  description: Package install/remove with provider override
+  parameters:
+    name: packages
+    state: state # present/absent
+    version: version
+    use: provider # winget/choco/apt/yum
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Package
+
+- ansibleModule: ansible.builtin.service
+  dscCommand: dsc.service.ensure
+  description: Ensure service state and enablement
+  parameters:
+    name: name
+    state: state # started/stopped/restarted
+    enabled: enabled
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Service
+
+- ansibleModule: ansible.builtin.file
+  dscCommand: dsc.file.ensure
+  description: Ensure file/dir absent/present with permissions
+  parameters:
+    path: path
+    state: state # file/directory/absent
+    owner: owner
+    group: group
+    mode: mode
+    recurse: recurse
+  supportsCheck: true
+  supportsDiff: true
+  backend: PSDesiredStateConfiguration/File
+
+- ansibleModule: ansible.builtin.copy
+  dscCommand: dsc.file.copy
+  description: Copy source to dest with checksum
+  parameters:
+    src: src
+    dest: dest
+    mode: mode
+    owner: owner
+    group: group
+    force: force
+  supportsCheck: true
+  supportsDiff: true
+  backend: PSDesiredStateConfiguration/File
+
+- ansibleModule: ansible.builtin.template
+  dscCommand: dsc.file.template
+  description: Render template (minijinja) then ensure file with permissions
+  parameters:
+    src: template
+    dest: dest
+    mode: mode
+    owner: owner
+    group: group
+    variables: vars
+  supportsCheck: true
+  supportsDiff: true
+  backend: minijinja render + PSDesiredStateConfiguration/File
+
+- ansibleModule: ansible.builtin.git
+  dscCommand: dsc.git.clone
+  description: Clone/update repo idempotently
+  parameters:
+    repo: repository
+    dest: dest
+    version: version
+    force: force
+  supportsCheck: true
+  supportsDiff: false
+  backend: Custom DSC Git resource
+
+- ansibleModule: ansible.builtin.get_url
+  dscCommand: dsc.http.fetch
+  description: Download with checksum and headers
+  parameters:
+    url: url
+    dest: dest
+    checksum: checksum
+    headers: headers
+    force: force
+  supportsCheck: true
+  supportsDiff: false
+  backend: Custom DSC HttpDownload resource
+
+- ansibleModule: ansible.builtin.unarchive
+  dscCommand: dsc.archive.extract
+  description: Idempotent archive extract with checksum
+  parameters:
+    src: src
+    dest: dest
+    remote_src: remote_src
+    creates: creates
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Archive + helpers
+
+- ansibleModule: ansible.builtin.user
+  dscCommand: dsc.user.ensure
+  description: Manage local users
+  parameters:
+    name: name
+    state: state # present/absent
+    password: password
+    groups: groups
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/User
+
+- ansibleModule: ansible.builtin.group
+  dscCommand: dsc.group.ensure
+  description: Manage local groups
+  parameters:
+    name: name
+    state: state # present/absent
+    members: members
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Group
+
+- ansibleModule: ansible.builtin.cron
+  dscCommand: dsc.schedule.ensure
+  description: Scheduled task/cron equivalent
+  parameters:
+    name: name
+    job: command
+    state: state # present/absent
+    minute: minute
+    hour: hour
+    day: day
+    month: month
+    weekday: weekday
+  supportsCheck: true
+  supportsDiff: false
+  backend: Custom DSC Schedule/WindowsTask resource
+
+- ansibleModule: ansible.builtin.lineinfile
+  dscCommand: dsc.file.line
+  description: Ensure line present/absent in file
+  parameters:
+    path: path
+    line: line
+    regexp: regexp
+    state: state # present/absent
+    backrefs: backrefs
+  supportsCheck: true
+  supportsDiff: true
+  backend: Custom DSC LineEdit resource
+
+- ansibleModule: ansible.builtin.blockinfile
+  dscCommand: dsc.file.block
+  description: Ensure managed block present/absent in file
+  parameters:
+    path: path
+    block: block
+    marker: marker
+    state: state # present/absent
+  supportsCheck: true
+  supportsDiff: true
+  backend: Custom DSC BlockEdit resource
+
+- ansibleModule: ansible.builtin.win_feature
+  dscCommand: dsc.feature.ensure
+  description: Ensure Windows feature/capability present/absent
+  parameters:
+    name: name
+    state: state # present/absent
+    include_sub_features: includeAllSubFeature
+    source: source
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/WindowsFeature
+
+- ansibleModule: ansible.builtin.win_package
+  dscCommand: dsc.winpackage.install
+  description: Install/uninstall Windows packages (msi/exe)
+  parameters:
+    path: path
+    product_id: productId
+    state: state # present/absent
+    arguments: arguments
+    log_path: logPath
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Package
+
+- ansibleModule: ansible.builtin.win_service
+  dscCommand: dsc.service.ensure
+  description: Ensure Windows service state/enablement (alias of service)
+  parameters:
+    name: name
+    state: state # started/stopped/restarted
+    enabled: enabled
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Service
+
+- ansibleModule: ansible.builtin.win_firewall_rule
+  dscCommand: dsc.firewall.rule
+  description: Manage Windows firewall rules
+  parameters:
+    name: name
+    localport: localPort
+    protocol: protocol
+    action: action # allow/block
+    direction: direction # in/out
+    enabled: enabled
+    profile: profile
+  supportsCheck: true
+  supportsDiff: false
+  backend: NetworkingDsc/Firewall
+
+- ansibleModule: ansible.builtin.win_regedit
+  dscCommand: dsc.registry.set
+  description: Ensure registry keys/values
+  parameters:
+    path: keyPath
+    name: valueName
+    data: valueData
+    type: valueType
+    state: state # present/absent
+  supportsCheck: true
+  supportsDiff: true
+  backend: PSDesiredStateConfiguration/Registry
+
+- ansibleModule: ansible.builtin.win_environment
+  dscCommand: dsc.environment.ensure
+  description: Manage environment variables (machine/user)
+  parameters:
+    name: name
+    value: value
+    state: state # present/absent
+    level: level # Machine/User/Process
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Environment
+
+- ansibleModule: ansible.builtin.win_scheduled_task
+  dscCommand: dsc.schedule.ensure
+  description: Manage scheduled tasks (Windows)
+  parameters:
+    name: name
+    actions: actions
+    triggers: triggers
+    state: state # present/absent
+    enabled: enabled
+  supportsCheck: true
+  supportsDiff: false
+  backend: Custom DSC Schedule/WindowsTask resource
+
+- ansibleModule: ansible.builtin.uri
+  dscCommand: dsc.http.request
+  description: Perform HTTP requests (GET/POST/etc.)
+  parameters:
+    url: url
+    method: method
+    body: body
+    headers: headers
+    status_code: statusCode
+  supportsCheck: false
+  supportsDiff: false
+  backend: Custom DSC HttpRequest resource
+
+- ansibleModule: ansible.builtin.command
+  dscCommand: dsc.exec.run
+  description: Run a command (non-idempotent unless guarded)
+  parameters:
+    cmd: command
+    creates: creates
+    removes: removes
+    chdir: workingDirectory
+  supportsCheck: false
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Script
+
+- ansibleModule: ansible.builtin.shell
+  dscCommand: dsc.exec.shell
+  description: Run a shell command (non-idempotent unless guarded)
+  parameters:
+    cmd: command
+    creates: creates
+    removes: removes
+    chdir: workingDirectory
+  supportsCheck: false
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Script
+
+- ansibleModule: ansible.builtin.wait_for
+  dscCommand: dsc.waitfor
+  description: Wait for port/file/timeout conditions
+  parameters:
+    host: host
+    port: port
+    path: path
+    timeout: timeout
+    delay: delay
+  supportsCheck: false
+  supportsDiff: false
+  backend: Custom DSC WaitFor resource
+
+- ansibleModule: ansible.builtin.reboot
+  dscCommand: dsc.reboot.request
+  description: Request system reboot with reason and timeout
+  parameters:
+    msg: message
+    pre_reboot_delay: preDelay
+    post_reboot_delay: postDelay
+  supportsCheck: false
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Script (wraps Reboot)
+
+- ansibleModule: ansible.builtin.winrm
+  dscCommand: dsc.winrm.configure
+  description: Configure WinRM listeners/auth/settings
+  parameters:
+    listen_port: port
+    transport: transport
+    hostname: hostname
+    allow_unencrypted: allowUnencrypted
+    ca_trust_path: caTrustPath
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/WSMan
+
+- ansibleModule: ansible.builtin.win_certificate_store
+  dscCommand: dsc.cert.store
+  description: Import/remove certificates in store
+  parameters:
+    path: path
+    store_name: storeName
+    state: state # present/absent
+    password: password
+  supportsCheck: true
+  supportsDiff: false
+  backend: CertificateDsc/PfxImport
+
+- ansibleModule: ansible.builtin.win_certificate_binding
+  dscCommand: dsc.cert.binding
+  description: Bind certificate to port (HTTP.SYS)
+  parameters:
+    ip_port: ipPort
+    hostname: hostName
+    certificate_hash: thumbprint
+    app_id: appId
+    state: state # present/absent
+  supportsCheck: true
+  supportsDiff: false
+  backend: CertificateDsc/CertificateBinding
+
+- ansibleModule: ansible.builtin.win_dns_record
+  dscCommand: dsc.network.dnsrecord
+  description: Manage DNS records
+  parameters:
+    name: name
+    type: type
+    value: value
+    zone: zone
+    state: state # present/absent
+    ttl: ttl
+  supportsCheck: true
+  supportsDiff: true
+  backend: NetworkingDsc/DnsRecord
+
+- ansibleModule: ansible.builtin.win_hostname
+  dscCommand: dsc.network.hostname
+  description: Set computer hostname
+  parameters:
+    name: name
+  supportsCheck: true
+  supportsDiff: false
+  backend: ComputerManagementDsc/Computer
+
+- ansibleModule: ansible.builtin.win_network_adapter
+  dscCommand: dsc.network.adapter
+  description: Configure network adapter settings
+  parameters:
+    name: name
+    state: state # present/absent/disabled
+    dns_servers: dnsServers
+    gateway: gateway
+    mtu: mtu
+  supportsCheck: true
+  supportsDiff: true
+  backend: NetworkingDsc/NetAdapter
+
+- ansibleModule: ansible.builtin.win_route
+  dscCommand: dsc.network.route
+  description: Manage static routes
+  parameters:
+    destination: destination
+    netmask: netmask
+    gateway: gateway
+    metric: metric
+    state: state # present/absent
+  supportsCheck: true
+  supportsDiff: true
+  backend: NetworkingDsc/Route
+
+- ansibleModule: ansible.builtin.win_hyperv_guest
+  dscCommand: dsc.hyperv.vm
+  description: Create/manage Hyper-V VMs
+  parameters:
+    name: name
+    state: state # present/absent/started/stopped
+    generation: generation
+    memory_mb: memoryMB
+    vcpus: processors
+    vhd_path: vhdPath
+    switch: switchName
+  supportsCheck: true
+  supportsDiff: true
+  backend: HyperVDsc/VM
+
+- ansibleModule: ansible.builtin.win_hyperv_switch
+  dscCommand: dsc.hyperv.switch
+  description: Manage Hyper-V virtual switches
+  parameters:
+    name: name
+    state: state # present/absent
+    type: type # external/internal/private
+    adapter_name: adapterName
+  supportsCheck: true
+  supportsDiff: true
+  backend: HyperVDsc/VMSwitch
+
+- ansibleModule: ansible.builtin.group
+  dscCommand: dsc.group.ensure
+  description: Manage local groups (alias)
+  parameters:
+    name: name
+    state: state # present/absent
+    members: members
+  supportsCheck: true
+  supportsDiff: false
+  backend: PSDesiredStateConfiguration/Group
+
+- ansibleModule: ansible.builtin.win_domain_group
+  dscCommand: dsc.ad.group
+  description: Manage AD groups
+  parameters:
+    name: name
+    state: state # present/absent
+    members: members
+    path: path
+  supportsCheck: true
+  supportsDiff: false
+  backend: ActiveDirectoryCSDsc/ADGroup
+
+- ansibleModule: ansible.builtin.set_fact
+  dscCommand: dsc.vars.set
+  description: Set variables/facts for subsequent tasks
+  parameters:
+    key: name
+    value: value
+  supportsCheck: true
+  supportsDiff: false
+  backend: Core runtime fact storage (non-DSC)
+
+- ansibleModule: ansible.builtin.debug
+  dscCommand: dsc.vars.debug
+  description: Output variables for diagnostics
+  parameters:
+    msg: message
+    var: var
+  supportsCheck: true
+  supportsDiff: false
+  backend: Core runtime logging
+
+- ansibleModule: ansible.builtin.register
+  dscCommand: dsc.vars.register
+  description: Capture task result into variable for later use
+  parameters:
+    name: name
+  supportsCheck: true
+  supportsDiff: false
+  backend: Core runtime fact storage
+
+- ansiblePrimitive: register
+  dscCommand: dsc.vars.register
+  description: Capture prior task/module result and bind to variable name
+  parameters:
+    name: name
+  supportsCheck: true
+  supportsDiff: false
+  backend: Core runtime fact storage (non-DSC)
+
+- ansiblePrimitive: set_fact
+  dscCommand: dsc.vars.set
+  description: Set ad-hoc variables/facts for subsequent tasks
+  parameters:
+    key: name
+    value: value
+  supportsCheck: true
+  supportsDiff: false
+  backend: Core runtime fact storage (non-DSC)
+
+- ansiblePrimitive: debug
+  dscCommand: dsc.vars.debug
+  description: Emit variables/messages for diagnostics
+  parameters:
+    msg: message
+    var: var
+  supportsCheck: true
+  supportsDiff: false
+  backend: Core runtime logging (non-DSC)
+
+- ansiblePrimitive: group
+  dscCommand: dsc.group.tasks
+  description: Group tasks logically; apply shared vars/condition/loop context
+  parameters:
+    name: name
+    when: condition
+    loop: loop
+  supportsCheck: true
+  supportsDiff: false
+  backend: Core runtime task grouping (non-DSC)
+
+- ansiblePrimitive: group_by
+  dscCommand: dsc.group.by
+  description: Group hosts/tasks by fact value for conditional application
+  parameters:
+    key: key
+    value: value
+  supportsCheck: true
+  supportsDiff: false
+  backend: Core runtime grouping (non-DSC)
+
+- ansiblePrimitive: when
+  dscCommand: dsc.when
+  description: Conditional task execution based on expression
+  parameters:
+    condition: expression
+  supportsCheck: true
+  supportsDiff: false
+  backend: Core runtime conditional (non-DSC)
+
+- ansiblePrimitive: loop
+  dscCommand: dsc.loop
+  description: Iterate over items and apply task with per-item vars
+  parameters:
+    items: items
+    item_var: itemVar
+  supportsCheck: true
+  supportsDiff: false
+  backend: Core runtime loop (non-DSC)
