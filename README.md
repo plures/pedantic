@@ -2,7 +2,7 @@
 
 **Modern DSC (Desired State Configuration) management toolkit**
 
-Pedantic is a PowerShell module and toolset for managing DSC resources and configurations across Windows, macOS, and Linux with PowerShell 7+. It provides a simplified interface for working with DSC v3, resource caching, remote execution, and dual DSL support for configuration authoring.
+Pedantic is a PowerShell module and toolset for managing DSC resources and configurations across Windows, macOS, and Linux with PowerShell 7.2+. It provides a simplified interface for working with DSC v3, resource caching, remote execution, and dual DSL support for configuration authoring.
 
 ## Features
 
@@ -174,7 +174,7 @@ Set-DscConfiguration -DscPath ./go-install-winget.dsc.yaml
 
 ## Module Reference
 
-The module includes 38+ functions for DSC management. For detailed command documentation:
+The module includes 23 exported functions for DSC management. For detailed command documentation:
 
 ```powershell
 # Get help for a specific command
