@@ -174,7 +174,7 @@ Set-DscConfiguration -DscPath ./go-install-winget.dsc.yaml
 
 ## Module Reference
 
-The module includes 23 exported functions for DSC management. For detailed command documentation:
+The module includes 20 exported functions for DSC management. For detailed command documentation:
 
 ```powershell
 # Get help for a specific command
