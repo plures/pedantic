@@ -6,6 +6,14 @@ The Pedantic extension provides a modern development experience for Desired Stat
 
 ## ✨ Features
 
+### 🌐 Dynamic Inventory View
+- **Host inventory tree**: View all hosts in a hierarchical tree structure in the Explorer sidebar
+- **Expandable details**: Each host shows vars, group_vars, and gathered facts
+- **Detail panel**: Click any item to view properties and values in an adjacent pane
+- **Configuration push**: Push DSC configurations to hosts with progress tracking
+- **Per-host logging**: Persistent, color-coded logs for all host operations
+- **Fact gathering**: Collect system information from hosts (similar to Ansible's `gather_facts`)
+
 ### 🔍 Language Server Protocol (LSP) Integration
 - **Real-time diagnostics**: Instant validation with error/warning messages in Problems panel
 - **Intelligent completions**: Auto-complete for keys, methods, and package managers
@@ -71,6 +79,9 @@ dsc.install:
 - `Pedantic: Check DSC Prerequisites` - Verify DSC v3 + common resources; offers one-click fixes
 - `Pedantic: Show Resource Inventory` - Graph/list view of installed vs cached/available resources
 - `Pedantic: Add DSC Resource to Project` - Install a DSC resource from catalog/cache in one step
+- `Pedantic: Refresh Inventory` - Refresh the dynamic inventory view
+- `Pedantic: Gather Facts` - Gather system facts from a selected host
+- `Pedantic: Push Configuration` - Push a DSC configuration to a selected host
 
 ### Keyboard Shortcuts
 

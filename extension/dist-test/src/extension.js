@@ -37,16 +37,174 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const resourceGraphPanel_1 = require("./webviews/resourceGraphPanel");
+const resourceInventoryPanel_1 = require("./webviews/resourceInventoryPanel");
 const client_1 = require("./client");
 const pwshBridge_1 = require("./bridge/pwshBridge");
+const inventoryTreeProvider_1 = require("./inventory/inventoryTreeProvider");
+const inventoryDetailPanel_1 = require("./inventory/inventoryDetailPanel");
+const inventoryService_1 = require("./inventory/inventoryService");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 let graphPanel;
 let aiPanel;
+let inventoryTreeProvider;
 function activate(context) {
     // Start the language server
     (0, client_1.activateLanguageServer)(context);
     const disposables = [];
+    const commonResources = [
+        'Microsoft.DSC/Archive',
+        'Microsoft.DSC/File',
+        'Microsoft.DSC/Service',
+        'Microsoft.Windows/Registry',
+        'Microsoft.Windows/File',
+        'Microsoft.Windows/Service'
+    ];
+    const defaultTimeoutMs = 60000;
+    const installResource = async (resourceType) => {
+        return vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `Pedantic: Installing ${resourceType}`
+        }, async () => {
+            const response = await (0, pwshBridge_1.invokePwsh)({
+                command: 'installResource',
+                resourceType,
+                options: { timeout: defaultTimeoutMs }
+            });
+            if (!response.success) {
+                const errors = response.errors?.join('\n') || 'Unknown error';
+                vscode.window.showErrorMessage(`Pedantic: Failed to install ${resourceType}: ${errors}`);
+                return false;
+            }
+            const installed = response.data?.installed;
+            vscode.window.showInformationMessage(installed
+                ? `Pedantic: Resource ${resourceType} installed`
+                : `Pedantic: Install attempted for ${resourceType} (see output)`);
+            return installed;
+        });
+    };
+    disposables.push(vscode.commands.registerCommand('pedantic.checkPrereqs', async () => {
+        const response = await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Pedantic: Checking DSC prerequisites'
+        }, async () => {
+            return (0, pwshBridge_1.invokePwsh)({
+                command: 'prereqs',
+                resourceTypes: commonResources,
+                options: { timeout: defaultTimeoutMs }
+            });
+        });
+        if (!response.success) {
+            const errors = response.errors?.join('\n') || 'Unknown error';
+            vscode.window.showErrorMessage(`Pedantic: Prerequisite check failed: ${errors}`);
+            return;
+        }
+        const data = response.data || {};
+        const missing = data.commonResources?.missing || [];
+        const dscInstalled = !!data.dscInstalled;
+        const dscVersion = data.dscVersion;
+        const message = `DSC ${dscInstalled ? 'found' : 'not found'}${dscVersion ? ' (' + dscVersion + ')' : ''}. ` +
+            (missing.length ? `${missing.length} common resource(s) missing.` : 'Common resources available.');
+        const actions = missing.length ? ['Install missing resources', 'Open resource inventory'] : ['Open resource inventory'];
+        const selection = await vscode.window.showInformationMessage(message, ...actions);
+        if (selection === 'Install missing resources') {
+            for (const res of missing) {
+                await installResource(res);
+            }
+        }
+        if (selection === 'Open resource inventory') {
+            const panel = resourceInventoryPanel_1.ResourceInventoryPanel.createOrShow(context);
+            panel.update({
+                dscInstalled,
+                dscVersion,
+                commonResources: data.commonResources,
+                installed: data.installedResources,
+                cached: data.cached
+            });
+        }
+    }));
+    disposables.push(vscode.commands.registerCommand('pedantic.showResourceInventory', async () => {
+        const response = await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Pedantic: Gathering resource inventory'
+        }, async () => {
+            return (0, pwshBridge_1.invokePwsh)({
+                command: 'resources',
+                resourceTypes: commonResources,
+                options: { timeout: defaultTimeoutMs }
+            });
+        });
+        if (!response.success) {
+            const errors = response.errors?.join('\n') || 'Unknown error';
+            vscode.window.showErrorMessage(`Pedantic: Resource inventory failed: ${errors}`);
+            return;
+        }
+        const panel = resourceInventoryPanel_1.ResourceInventoryPanel.createOrShow(context);
+        panel.update(response.data || {});
+    }));
+    disposables.push(vscode.commands.registerCommand('pedantic.addResourceToProject', async () => {
+        const response = await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Pedantic: Loading available resources'
+        }, async () => {
+            return (0, pwshBridge_1.invokePwsh)({
+                command: 'resources',
+                resourceTypes: commonResources,
+                options: { timeout: defaultTimeoutMs }
+            });
+        });
+        if (!response.success) {
+            const errors = response.errors?.join('\n') || 'Unknown error';
+            vscode.window.showErrorMessage(`Pedantic: Failed to load resources: ${errors}`);
+            return;
+        }
+        const data = response.data || {};
+        const installedTypes = new Set();
+        for (const r of data.installed || data.installedResources || []) {
+            const t = r.type || r.Type;
+            if (t)
+                installedTypes.add(t);
+        }
+        const candidates = new Map();
+        const addCandidate = (type, version, source, detail) => {
+            if (!type || installedTypes.has(type) || candidates.has(type)) {
+                return;
+            }
+            candidates.set(type, {
+                label: type,
+                description: source || 'available',
+                detail: version ? `version ${version}` : detail
+            });
+        };
+        for (const r of data.cached || []) {
+            addCandidate(r.Type || r.type || r.Key, r.Version || r.version, r.Source || r.source || 'cached', r.Path || r.path);
+        }
+        const catalog = data.catalog || {};
+        for (const r of catalog.MappedResources || []) {
+            addCandidate(r.OriginalType, r.Version, r.Source || 'mapped', r.Description);
+        }
+        for (const r of catalog.BuiltInResources || []) {
+            addCandidate(r.Type, r.Version, 'built-in', r.Description);
+        }
+        for (const r of (catalog.GalleryResources || []).slice?.(0, 50) || []) {
+            addCandidate(r.Name, r.Version, r.Source || 'gallery', r.Description);
+        }
+        if (candidates.size === 0) {
+            vscode.window.showInformationMessage('Pedantic: No additional resources available to add.');
+            return;
+        }
+        const pick = await vscode.window.showQuickPick(Array.from(candidates.values()), {
+            placeHolder: 'Select a DSC resource to install into this project'
+        });
+        if (!pick) {
+            return;
+        }
+        await installResource(pick.label);
+        const panel = resourceInventoryPanel_1.ResourceInventoryPanel.current();
+        if (panel) {
+            panel.update(response.data || {});
+        }
+    }));
     disposables.push(vscode.commands.registerCommand('pedantic.generateConfig', async () => {
         const workspaceIsTrusted = vscode.workspace.isTrusted ?? true;
         if (!workspaceIsTrusted) {
@@ -205,6 +363,95 @@ function activate(context) {
         }
         ch.show(true);
     }));
+    // ===== Dynamic Inventory View Commands =====
+    // Initialize inventory tree provider
+    inventoryTreeProvider = new inventoryTreeProvider_1.InventoryTreeProvider();
+    const inventoryTreeView = vscode.window.createTreeView('pedanticInventory', {
+        treeDataProvider: inventoryTreeProvider,
+        showCollapseAll: true
+    });
+    disposables.push(inventoryTreeView);
+    // Command: Refresh inventory
+    disposables.push(vscode.commands.registerCommand('pedantic.refreshInventory', async () => {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Pedantic: Gathering inventory...'
+        }, async () => {
+            const inventoryService = inventoryService_1.InventoryService.getInstance();
+            const inventory = await inventoryService.gatherInventory();
+            inventoryTreeProvider?.setInventory(inventory);
+        });
+    }));
+    // Command: Show inventory detail
+    disposables.push(vscode.commands.registerCommand('pedantic.showInventoryDetail', (item) => {
+        const panel = inventoryDetailPanel_1.InventoryDetailPanel.createOrShow(context);
+        panel.showItemDetails(item);
+    }));
+    // Command: Gather facts for host
+    disposables.push(vscode.commands.registerCommand('pedantic.gatherHostFacts', async (item) => {
+        if (!item || !item.data || !item.data.name) {
+            vscode.window.showErrorMessage('Please select a host to gather facts');
+            return;
+        }
+        const hostName = item.data.name;
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `Pedantic: Gathering facts for ${hostName}...`
+        }, async () => {
+            const inventoryService = inventoryService_1.InventoryService.getInstance();
+            const facts = await inventoryService.gatherHostFacts(hostName);
+            // Update the host with new facts in the current inventory
+            const currentInventory = await inventoryService.gatherInventory();
+            const host = currentInventory.hosts.find(h => h.name === hostName);
+            if (host) {
+                host.facts = facts;
+                // Update the tree provider with refreshed inventory
+                inventoryTreeProvider?.setInventory(currentInventory);
+                // Show updated details if panel is open
+                const panel = inventoryDetailPanel_1.InventoryDetailPanel.current();
+                if (panel) {
+                    panel.showItemDetails(item);
+                    panel.addLog({
+                        hostName,
+                        timestamp: new Date(),
+                        level: 'success',
+                        message: 'Facts gathered successfully'
+                    });
+                }
+            }
+            vscode.window.showInformationMessage(`Facts gathered for ${hostName}`);
+        });
+    }));
+    // Command: Push configuration to host
+    disposables.push(vscode.commands.registerCommand('pedantic.pushConfigToHost', async (item) => {
+        if (!item || !item.data || !item.data.name) {
+            vscode.window.showErrorMessage('Please select a host to push configuration');
+            return;
+        }
+        const hostName = item.data.name;
+        // Ask user for config file
+        const configFiles = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            filters: {
+                'DSC Config': ['yaml', 'yml', 'dsc.yaml']
+            }
+        });
+        if (!configFiles || configFiles.length === 0) {
+            return;
+        }
+        const configPath = configFiles[0].fsPath;
+        const panel = inventoryDetailPanel_1.InventoryDetailPanel.createOrShow(context);
+        // Start the push operation
+        panel.startConfigPush(hostName, configPath);
+    }));
+    // Auto-select item on tree selection change
+    inventoryTreeView.onDidChangeSelection(e => {
+        if (e.selection.length > 0) {
+            vscode.commands.executeCommand('pedantic.showInventoryDetail', e.selection[0]);
+        }
+    });
+    // Load initial inventory
+    vscode.commands.executeCommand('pedantic.refreshInventory');
     context.subscriptions.push(...disposables);
 }
 function deactivate() {
