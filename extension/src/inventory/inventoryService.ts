@@ -1,4 +1,4 @@
-import { Host, HostFacts, HostVars, Inventory, HostGroup } from './inventoryModel';
+import { Host, HostFacts, Inventory, HostGroup } from './inventoryModel';
 import { invokePwsh } from '../bridge/pwshBridge';
 
 /**
