@@ -118,6 +118,51 @@ export class InventoryTreeProvider implements vscode.TreeDataProvider<InventoryT
         return Promise.resolve(this.getVarChildren(element, InventoryItemType.VarItem));
       case InventoryItemType.HostFacts:
         return Promise.resolve(this.getFactChildren(element));
+      case InventoryItemType.VarItem:
+      case InventoryItemType.FactItem: {
+        const value = element.data && (element.data as any).value;
+        const children: InventoryTreeItem[] = [];
+
+        if (value !== null && typeof value === 'object') {
+          if (Array.isArray(value)) {
+            for (const [index, childVal] of value.entries()) {
+              const collapsible =
+                childVal !== null && typeof childVal === 'object'
+                  ? vscode.TreeItemCollapsibleState.Collapsed
+                  : vscode.TreeItemCollapsibleState.None;
+
+              children.push(
+                new InventoryTreeItem(
+                  `[${index}]`,
+                  element.itemType,
+                  { value: childVal },
+                  collapsible,
+                  element
+                )
+              );
+            }
+          } else {
+            for (const [key, childVal] of Object.entries(value)) {
+              const collapsible =
+                childVal !== null && typeof childVal === 'object'
+                  ? vscode.TreeItemCollapsibleState.Collapsed
+                  : vscode.TreeItemCollapsibleState.None;
+
+              children.push(
+                new InventoryTreeItem(
+                  key,
+                  element.itemType,
+                  { value: childVal },
+                  collapsible,
+                  element
+                )
+              );
+            }
+          }
+        }
+
+        return Promise.resolve(children);
+      }
       default:
         return Promise.resolve([]);
     }
