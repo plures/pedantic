@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Host, HostGroup, Inventory } from './inventoryModel';
+import { Host, Inventory } from './inventoryModel';
 
 export enum InventoryItemType {
   Host = 'host',
