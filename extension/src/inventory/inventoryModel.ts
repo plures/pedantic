@@ -3,25 +3,25 @@
  */
 
 export interface HostVars {
-  [key: string]: any;
+  [key: string]: string | number | boolean | object | null;
 }
 
 export interface HostFacts {
   ansible_facts?: {
-    [key: string]: any;
+    [key: string]: string | number | boolean | object | null;
   };
-  [key: string]: any;
+  [key: string]: string | number | boolean | object | null | undefined;
 }
 
 export interface GroupVars {
-  [key: string]: any;
+  [key: string]: string | number | boolean | object | null;
 }
 
 export interface Host {
   name: string;
-  vars: HostVars;
-  facts: HostFacts;
-  groups: string[];
+  vars?: HostVars;
+  facts?: HostFacts;
+  groups?: string[];
 }
 
 export interface HostGroup {

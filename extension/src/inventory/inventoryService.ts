@@ -237,7 +237,8 @@ export class InventoryService {
    * Parse Ansible inventory file (INI format)
    */
   async parseInventoryFile(filePath: string): Promise<Inventory> {
-    // This would parse actual Ansible inventory files
+    // TODO: Implement actual inventory file parsing
+    // This would parse Ansible inventory files (INI or YAML format)
     // For now, returns mock data
     return this.gatherInventory();
   }
