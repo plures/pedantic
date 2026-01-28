@@ -33,6 +33,14 @@ export async function invokePwsh(request: BridgeRequest): Promise<BridgeResponse
   if (request.resourceType) {
     args.push('-ResourceType', request.resourceType);
   }
+
+  if (request.catalogPath) {
+    args.push('-CatalogPath', request.catalogPath);
+  }
+
+  if (request.includeResources) {
+    args.push('-IncludeResources');
+  }
   
   if (request.options?.whatIf) {
     args.push('-WhatIf');

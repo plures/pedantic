@@ -12,7 +12,7 @@ import {
   type ConstraintViolation,
   type Fact,
   type StepDiagnostics,
-} from './praxis-core';
+} from './praxis-adapter';
 
 /**
  * Context for DSL processing

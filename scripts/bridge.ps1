@@ -22,17 +22,19 @@
 #>
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('generate', 'test', 'set', 'prereqs', 'resources', 'installResource')]
+    [ValidateSet('generate', 'test', 'set', 'prereqs', 'resources', 'installResource', 'cmdb')]
     [string]$Command,
 
     [string]$DslPath,
     [string[]]$ResourceTypes,
     [string]$ResourceType,
     [string]$ProjectPath,
+    [string]$CatalogPath,
 
     [switch]$OutputJson,
     [switch]$WhatIf,
-    [switch]$VerboseOutput
+    [switch]$VerboseOutput,
+    [switch]$IncludeResources
 )
 
 $ErrorActionPreference = 'Stop'
@@ -211,6 +213,146 @@ resources: []
                 installed    = $installSuccess
             }
             $result = "Resource install attempted"
+        }
+        'cmdb' {
+            $catalogs = @()
+
+            function Add-CatalogSource {
+                param(
+                    [Parameter(Mandatory)] [object]$Catalog,
+                    [Parameter(Mandatory)] [string]$SourcePath
+                )
+                if ($Catalog.PSObject.Properties.Name -contains 'meta' -and $Catalog.meta) {
+                    $Catalog.meta | Add-Member -NotePropertyName sourcePath -NotePropertyValue $SourcePath -Force
+                }
+                else {
+                    $Catalog | Add-Member -NotePropertyName meta -NotePropertyValue ([ordered]@{ sourcePath = $SourcePath }) -Force
+                }
+            }
+
+            function Read-CatalogFile {
+                param([Parameter(Mandatory)] [string]$Path)
+                try {
+                    $raw = Get-Content -Path $Path -Raw -ErrorAction Stop
+                    if (-not $raw) { return $null }
+                    $catalog = $raw | ConvertFrom-Json -ErrorAction Stop
+                    if ($catalog) {
+                        Add-CatalogSource -Catalog $catalog -SourcePath $Path
+                        return $catalog
+                    }
+                }
+                catch {
+                    $warnings += "Failed to read catalog '$Path': $($_.Exception.Message)"
+                }
+                return $null
+            }
+
+            function New-LocalCatalog {
+                param([Parameter(Mandatory)] [string]$OutputPath)
+
+                $meta = [ordered]@{
+                    generatedBy      = 'Pedantic.Bridge'
+                    generatedAt      = (Get-Date).ToString('o')
+                    computer         = $env:COMPUTERNAME
+                    includeResources = [bool]$IncludeResources
+                }
+
+                $catalog = [ordered]@{ meta = $meta; resources = @(); configuration = @{} }
+
+                try {
+                    $os = Get-CimInstance Win32_OperatingSystem
+                    $bios = Get-CimInstance Win32_BIOS
+                    $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+                    $nics = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
+
+                    $catalog.configuration = [ordered]@{
+                        OS = [ordered]@{
+                            Caption     = $os.Caption
+                            Version     = $os.Version
+                            BuildNumber = $os.BuildNumber
+                            InstallDate = $os.InstallDate
+                        }
+                        BIOS = [ordered]@{
+                            Manufacturer     = $bios.Manufacturer
+                            SMBIOSBIOSVersion = $bios.SMBIOSBIOSVersion
+                            SerialNumber     = $bios.SerialNumber
+                        }
+                        CPU = [ordered]@{
+                            Name              = $cpu.Name
+                            Cores             = $cpu.NumberOfCores
+                            LogicalProcessors = $cpu.NumberOfLogicalProcessors
+                        }
+                        Network = $nics | ForEach-Object {
+                            [ordered]@{ Name = $_.Name; Mac = $_.MacAddress; LinkSpeed = $_.LinkSpeed }
+                        }
+                    }
+                }
+                catch {
+                    $warnings += "Failed to gather system info: $($_.Exception.Message)"
+                }
+
+                if ($IncludeResources) {
+                    try {
+                        $resources = & dsc resource list --output-format json 2>&1 | Out-String | ConvertFrom-Json -ErrorAction SilentlyContinue
+                        if ($resources) {
+                            $catalog.resources = $resources | ForEach-Object {
+                                [ordered]@{ type = $_.type; version = $_.version; kind = $_.kind; description = $_.description }
+                            }
+                        }
+                    }
+                    catch {
+                        $warnings += "Failed to list DSC resources: $($_.Exception.Message)"
+                    }
+                }
+
+                $outputDir = Split-Path -Parent $OutputPath
+                if ($outputDir -and -not (Test-Path $outputDir)) { New-Item -Path $outputDir -ItemType Directory -Force | Out-Null }
+                $catalog | ConvertTo-Json -Depth 6 | Set-Content -Path $OutputPath -Encoding UTF8
+                return Get-Item $OutputPath
+            }
+
+            if ($CatalogPath) {
+                if (-not (Test-Path $CatalogPath)) {
+                    $errors += "CatalogPath not found: $CatalogPath"
+                }
+                else {
+                    $item = Get-Item $CatalogPath
+                    if ($item.PSIsContainer) {
+                        $files = Get-ChildItem -Path $CatalogPath -Filter *.json -File
+                    }
+                    else {
+                        $files = @($item)
+                    }
+                    foreach ($file in $files) {
+                        $cat = Read-CatalogFile -Path $file.FullName
+                        if ($cat) { $catalogs += $cat }
+                    }
+                }
+            }
+            else {
+                $tempPath = Join-Path $env:TEMP ("pedantic-cmdb-{0}.json" -f ([guid]::NewGuid().ToString('n')))
+                $catalogItem = $null
+                try {
+                    $catalogItem = New-DscSystemCatalog -OutputPath $tempPath -IncludeResources:$IncludeResources -ErrorAction Stop
+                }
+                catch {
+                    $warnings += "New-DscSystemCatalog unavailable or failed: $($_.Exception.Message). Falling back to local catalog generation."
+                }
+
+                if (-not $catalogItem) {
+                    try { $catalogItem = New-LocalCatalog -OutputPath $tempPath } catch { $errors += "Failed to generate local catalog: $($_.Exception.Message)" }
+                }
+
+                if (Test-Path $tempPath) {
+                    $cat = Read-CatalogFile -Path $tempPath
+                    if ($cat) { $catalogs += $cat }
+                }
+            }
+
+            $data = @{
+                catalogs = $catalogs
+            }
+            $result = "CMDB catalog loaded"
         }
     }
 

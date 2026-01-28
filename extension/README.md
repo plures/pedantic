@@ -18,6 +18,13 @@ The Pedantic extension provides a modern development experience for Desired Stat
 - **Live updates**: Graph refreshes automatically as you edit
 - **Diagnostic overlay**: View errors and warnings alongside the graph
 
+### 🗂️ CMDB Viewer (DSC v3)
+- **Catalog-driven CMDB**: Builds a host/resource catalog from DSC v3 system snapshots
+- **Folder import**: Load existing catalog JSON files from a directory
+- **PluresDB-ready**: Uses pluresdb when available, with in-memory fallback
+- **Praxis logic**: Business rules run through @plures/praxis (fallback to local engine)
+- **Svelte v5 UI**: Fast, modern UI for host and resource insights
+
 ### 🧰 Prereqs & Resource Management
 - **DSC v3 prerequisite check**: Validate DSC installation and version from VS Code
 - **Common resource guardrails**: Ensure baseline resources are present; one-click install missing items
@@ -71,6 +78,7 @@ dsc.install:
 - `Pedantic: Check DSC Prerequisites` - Verify DSC v3 + common resources; offers one-click fixes
 - `Pedantic: Show Resource Inventory` - Graph/list view of installed vs cached/available resources
 - `Pedantic: Add DSC Resource to Project` - Install a DSC resource from catalog/cache in one step
+- `Pedantic: Open CMDB` - Build and view a DSC v3 CMDB catalog
 
 ### Keyboard Shortcuts
 

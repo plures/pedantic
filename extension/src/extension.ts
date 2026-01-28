@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import { ResourceGraphPanel } from './webviews/resourceGraphPanel';
 import { ResourceInventoryPanel } from './webviews/resourceInventoryPanel';
+import { CmdbPanel } from './webviews/cmdbPanel';
 import { activateLanguageServer, deactivateLanguageServer } from './client';
 import { invokePwsh } from './bridge/pwshBridge';
+import { buildCmdbModel } from './logic/cmdb-logic';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -116,6 +118,56 @@ export function activate(context: vscode.ExtensionContext) {
 
     const panel = ResourceInventoryPanel.createOrShow(context);
     panel.update(response.data || {});
+  }));
+
+  disposables.push(vscode.commands.registerCommand('pedantic.openCmdb', async () => {
+    const mode = await vscode.window.showQuickPick(
+      ['Snapshot this machine', 'Load catalogs from folder'],
+      { placeHolder: 'Choose CMDB source' }
+    );
+
+    if (!mode) {
+      return;
+    }
+
+    let catalogPath: string | undefined;
+    if (mode === 'Load catalogs from folder') {
+      const picks = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectFiles: false,
+        canSelectMany: false,
+        openLabel: 'Select catalog folder'
+      });
+      if (!picks || picks.length === 0) {
+        return;
+      }
+      catalogPath = picks[0].fsPath;
+    }
+
+    const response = await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: 'Pedantic: Building CMDB view'
+    }, async () => {
+      return invokePwsh({
+        command: 'cmdb',
+        includeResources: mode === 'Snapshot this machine',
+        catalogPath,
+        options: { timeout: defaultTimeoutMs }
+      });
+    });
+
+    if (!response.success) {
+      const errors = response.errors?.join('\n') || 'Unknown error';
+      vscode.window.showErrorMessage(`Pedantic: CMDB load failed: ${errors}`);
+      return;
+    }
+
+    const catalogs = response.data?.catalogs || [];
+    const warnings = response.warnings || [];
+    const model = buildCmdbModel(catalogs, warnings, false);
+
+    const panel = CmdbPanel.createOrShow(context);
+    panel.update(model);
   }));
 
   disposables.push(vscode.commands.registerCommand('pedantic.addResourceToProject', async () => {

@@ -15,7 +15,8 @@
     "onLanguage:yaml",
     "onCommand:pedantic.checkPrereqs",
     "onCommand:pedantic.showResourceInventory",
-    "onCommand:pedantic.addResourceToProject"
+    "onCommand:pedantic.addResourceToProject",
+    "onCommand:pedantic.openCmdb"
   ],
   "main": "dist/extension.js",
   "contributes": {
@@ -53,6 +54,11 @@
       {
         "command": "pedantic.addResourceToProject",
         "title": "Pedantic: Add DSC Resource to Project",
+        "category": "Pedantic"
+      },
+      {
+        "command": "pedantic.openCmdb",
+        "title": "Pedantic: Open CMDB",
         "category": "Pedantic"
       }
     ],
@@ -94,6 +100,9 @@
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.12",
     "chevrotain": "^11.1.0",
-    "yaml": "^2.5.0"
+    "yaml": "^2.5.0",
+    "svelte": "^5.0.0",
+    "@plures/praxis": "latest",
+    "pluresdb": "latest"
   }
 }
