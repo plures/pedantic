@@ -63,6 +63,8 @@ class InventoryDetailPanel {
         this.context = context;
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
         this.panel.webview.html = this.getHtml();
+        // Load persisted logs from globalState
+        this.loadLogs();
         // Handle messages from webview
         this.panel.webview.onDidReceiveMessage(message => {
             switch (message.command) {
@@ -82,6 +84,7 @@ class InventoryDetailPanel {
         if (this.logs.length > 1000) {
             this.logs = this.logs.slice(-1000);
         }
+        this.saveLogs();
         this.updateLogs();
     }
     updateTaskProgress(task) {
@@ -134,6 +137,14 @@ class InventoryDetailPanel {
     updateLogs() {
         const logsToSend = this.logs.slice(-100); // Send last 100 logs
         this.panel.webview.postMessage({ command: 'updateLogs', logs: logsToSend });
+    }
+    async loadLogs() {
+        const savedLogs = this.context.globalState.get('pedantic.inventory.logs', []);
+        this.logs = savedLogs;
+        this.updateLogs();
+    }
+    async saveLogs() {
+        await this.context.globalState.update('pedantic.inventory.logs', this.logs);
     }
     async handlePushConfig(hostName, configPath) {
         // Create a task

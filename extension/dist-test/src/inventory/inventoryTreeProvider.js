@@ -121,7 +121,7 @@ class InventoryTreeProvider {
             return Promise.resolve([]);
         }
         if (!element) {
-            // Root level: return hosts and groups
+            // Root level: return hosts
             const items = [];
             // Add hosts
             for (const host of this.inventory.hosts || []) {

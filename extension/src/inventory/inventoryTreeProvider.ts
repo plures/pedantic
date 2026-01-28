@@ -92,7 +92,7 @@ export class InventoryTreeProvider implements vscode.TreeDataProvider<InventoryT
     }
 
     if (!element) {
-      // Root level: return hosts and groups
+      // Root level: return hosts
       const items: InventoryTreeItem[] = [];
       
       // Add hosts

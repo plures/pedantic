@@ -40,6 +40,9 @@ export class InventoryDetailPanel {
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     this.panel.webview.html = this.getHtml();
 
+    // Load persisted logs from globalState
+    this.loadLogs();
+
     // Handle messages from webview
     this.panel.webview.onDidReceiveMessage(
       message => {
@@ -65,6 +68,7 @@ export class InventoryDetailPanel {
     if (this.logs.length > 1000) {
       this.logs = this.logs.slice(-1000);
     }
+    this.saveLogs();
     this.updateLogs();
   }
 
@@ -126,6 +130,16 @@ export class InventoryDetailPanel {
   private updateLogs() {
     const logsToSend = this.logs.slice(-100); // Send last 100 logs
     this.panel.webview.postMessage({ command: 'updateLogs', logs: logsToSend });
+  }
+
+  private async loadLogs() {
+    const savedLogs = this.context.globalState.get<HostLog[]>('pedantic.inventory.logs', []);
+    this.logs = savedLogs;
+    this.updateLogs();
+  }
+
+  private async saveLogs() {
+    await this.context.globalState.update('pedantic.inventory.logs', this.logs);
   }
 
   private async handlePushConfig(hostName: string, configPath?: string) {

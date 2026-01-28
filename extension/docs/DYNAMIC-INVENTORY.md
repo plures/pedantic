@@ -22,10 +22,10 @@ The Pedantic VS Code extension now includes a dynamic inventory view inspired by
 - **Real-time Updates**: Watch the progress as configuration is applied
 
 ### Logging
-- **Per-Host Logs**: Session-based logging tracks operations per host (logs are cleared on extension reload)
+- **Per-Host Logs**: Persistent logging system tracks all operations per host (stored in VS Code global state)
 - **Color-Coded Levels**: Info (blue), Success (green), Warning (yellow), Error (red)
 - **Timestamp Tracking**: Every log entry includes a timestamp
-- **Scrollable History**: View up to the last 100 log entries for the current session in the detail panel
+- **Scrollable History**: View up to the last 100 log entries in the detail panel (up to 1000 stored)
 
 ## Usage
 
