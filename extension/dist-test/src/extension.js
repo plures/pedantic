@@ -400,15 +400,24 @@ function activate(context) {
         }, async () => {
             const inventoryService = inventoryService_1.InventoryService.getInstance();
             const facts = await inventoryService.gatherHostFacts(hostName);
-            // Update the host with new facts
-            const panel = inventoryDetailPanel_1.InventoryDetailPanel.current();
-            if (panel) {
-                panel.addLog({
-                    hostName,
-                    timestamp: new Date(),
-                    level: 'success',
-                    message: 'Facts gathered successfully'
-                });
+            // Update the host with new facts in the current inventory
+            const currentInventory = await inventoryService.gatherInventory();
+            const host = currentInventory.hosts.find(h => h.name === hostName);
+            if (host) {
+                host.facts = facts;
+                // Update the tree provider with refreshed inventory
+                inventoryTreeProvider?.setInventory(currentInventory);
+                // Show updated details if panel is open
+                const panel = inventoryDetailPanel_1.InventoryDetailPanel.current();
+                if (panel) {
+                    panel.showItemDetails(item);
+                    panel.addLog({
+                        hostName,
+                        timestamp: new Date(),
+                        level: 'success',
+                        message: 'Facts gathered successfully'
+                    });
+                }
             }
             vscode.window.showInformationMessage(`Facts gathered for ${hostName}`);
         });
@@ -432,13 +441,8 @@ function activate(context) {
         }
         const configPath = configFiles[0].fsPath;
         const panel = inventoryDetailPanel_1.InventoryDetailPanel.createOrShow(context);
-        // The panel will handle the push internally
-        panel.addLog({
-            hostName,
-            timestamp: new Date(),
-            level: 'info',
-            message: `Pushing configuration: ${path.basename(configPath)}`
-        });
+        // Start the push operation
+        panel.startConfigPush(hostName, configPath);
     }));
     // Auto-select item on tree selection change
     inventoryTreeView.onDidChangeSelection(e => {

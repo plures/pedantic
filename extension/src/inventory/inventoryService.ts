@@ -1,5 +1,4 @@
 import { Host, HostFacts, Inventory, HostGroup } from './inventoryModel';
-import { invokePwsh } from '../bridge/pwshBridge';
 
 /**
  * Service for gathering inventory and facts from hosts
@@ -20,57 +19,29 @@ export class InventoryService {
    * Gather inventory from configured sources
    */
   async gatherInventory(): Promise<Inventory> {
-    // For now, return mock data. In production, this would integrate with
-    // Ansible inventory sources, DSC configuration, or custom inventory providers
-    const inventory: Inventory = {
-      hosts: await this.discoverHosts(),
-      groups: await this.discoverGroups(),
+    // TODO: PowerShell bridge support for 'getInventory' command is pending
+    // Once implemented, this will call invokePwsh({ command: 'getInventory' })
+    // For now, return mock data for demonstration
+    return {
+      hosts: this.getMockHosts(),
+      groups: this.getMockGroups(),
       timestamp: new Date()
     };
-
-    return inventory;
   }
 
   /**
    * Discover hosts from various sources
+   * @deprecated Use gatherInventory() instead
    */
   private async discoverHosts(): Promise<Host[]> {
-    // Try to gather from PowerShell/DSC
-    try {
-      const response = await invokePwsh({
-        command: 'getInventory',
-        options: { timeout: 30000 }
-      });
-
-      if (response.success && response.data?.hosts) {
-        return response.data.hosts;
-      }
-    } catch (error) {
-      // Fall back to mock data if gathering fails
-    }
-
-    // Return sample/mock data for demonstration
     return this.getMockHosts();
   }
 
   /**
    * Discover groups from various sources
+   * @deprecated Use gatherInventory() instead
    */
   private async discoverGroups(): Promise<HostGroup[]> {
-    try {
-      const response = await invokePwsh({
-        command: 'getInventory',
-        options: { timeout: 30000 }
-      });
-
-      if (response.success && response.data?.groups) {
-        return response.data.groups;
-      }
-    } catch (error) {
-      // Fall back to mock data if gathering fails
-    }
-
-    // Return sample/mock data
     return this.getMockGroups();
   }
 
@@ -78,21 +49,9 @@ export class InventoryService {
    * Gather facts for a specific host
    */
   async gatherHostFacts(hostName: string): Promise<HostFacts> {
-    try {
-      const response = await invokePwsh({
-        command: 'gatherFacts',
-        hostName,
-        options: { timeout: 60000 }
-      });
-
-      if (response.success && response.data) {
-        return response.data;
-      }
-    } catch (error) {
-      // Fall back to mock facts if gathering fails
-    }
-
-    // Return mock facts
+    // TODO: PowerShell bridge support for 'gatherFacts' command is pending
+    // Once implemented, this will call invokePwsh({ command: 'gatherFacts', hostName })
+    // For now, return mock facts
     return this.getMockFacts(hostName);
   }
 

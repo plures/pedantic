@@ -25,7 +25,6 @@
         {
           "id": "pedanticInventory",
           "name": "Pedantic Inventory",
-          "icon": "$(server)",
           "contextualTitle": "Pedantic Inventory"
         }
       ]

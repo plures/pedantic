@@ -88,6 +88,12 @@ class InventoryDetailPanel {
         this.tasks.set(task.hostName, task);
         this.panel.webview.postMessage({ command: 'updateTask', task });
     }
+    /**
+     * Start a configuration push operation
+     */
+    startConfigPush(hostName, configPath) {
+        this.handlePushConfig(hostName, configPath);
+    }
     formatItemDetails(item) {
         const details = {
             title: item.label,
@@ -279,6 +285,13 @@ body {
   const tasksSection = document.getElementById('tasks-section');
   const logsContent = document.getElementById('logs-content');
 
+  // HTML escape function to prevent XSS
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
   window.addEventListener('message', event => {
     const message = event.data;
     
@@ -296,124 +309,86 @@ body {
   });
 
   function renderDetails(details) {
-    // Clear existing content
-    while (detailsContent.firstChild) {
-      detailsContent.removeChild(detailsContent.firstChild);
-    }
-
-    // Title
-    const titleEl = document.createElement('strong');
-    titleEl.textContent = String(details.title || '');
-    detailsContent.appendChild(titleEl);
-
-    // Type
-    const typeText = document.createElement('div');
-    typeText.textContent = 'Type: ' + String(details.type || '');
-    detailsContent.appendChild(typeText);
-
-    // Content (pretty-printed JSON)
-    if (details.content !== undefined) {
-      const contentPre = document.createElement('pre');
-      contentPre.textContent = JSON.stringify(details.content, null, 2);
-      detailsContent.appendChild(contentPre);
-    }
+    detailsContent.textContent = details.title + '\\n' +
+      'Type: ' + details.type + '\\n\\n' +
+      JSON.stringify(details.content, null, 2);
     
-    // Render actions
-    while (actionsContent.firstChild) {
-      actionsContent.removeChild(actionsContent.firstChild);
-    }
-
+    // Render actions using createElement for safety
     if (details.actions && details.actions.length > 0) {
+      actionsContent.innerHTML = '';
       details.actions.forEach(action => {
-        const button = document.createElement('button');
-        button.className = 'action-btn';
-        button.textContent = String(action.label || '');
-        const hostName = action.hostName || '';
-        button.addEventListener('click', () => {
-          window.handleAction(action.id, hostName);
+        const btn = document.createElement('button');
+        btn.className = 'action-btn';
+        btn.textContent = action.label;
+        btn.addEventListener('click', () => {
+          vscode.postMessage({ command: action.id, hostName: action.hostName || '' });
         });
-        actionsContent.appendChild(button);
+        actionsContent.appendChild(btn);
       });
+    } else {
+      actionsContent.innerHTML = '';
     }
   }
 
   function renderTask(task) {
     tasksSection.style.display = 'block';
-
-    while (tasksContent.firstChild) {
-      tasksContent.removeChild(tasksContent.firstChild);
-    }
-
-    const taskItem = document.createElement('div');
-    taskItem.className = 'task-item';
-
-    const hostEl = document.createElement('strong');
-    hostEl.textContent = String(task.hostName || '');
-    taskItem.appendChild(hostEl);
-
+    const statusClass = task.status;
+    const taskDiv = document.createElement('div');
+    taskDiv.className = 'task-item';
+    
+    const hostLabel = document.createElement('strong');
+    hostLabel.textContent = task.hostName;
+    taskDiv.appendChild(hostLabel);
+    
     const statusSpan = document.createElement('span');
-    statusSpan.className = 'task-status ' + String(task.status || '');
-    statusSpan.textContent = String(task.status || '');
-    taskItem.appendChild(statusSpan);
-
+    statusSpan.className = 'task-status ' + statusClass;
+    statusSpan.textContent = task.status;
+    taskDiv.appendChild(statusSpan);
+    
     const progressBar = document.createElement('div');
     progressBar.className = 'progress-bar';
-
     const progressFill = document.createElement('div');
     progressFill.className = 'progress-fill';
-    const progressValue = typeof task.progress === 'number' ? task.progress : 0;
-    progressFill.style.width = progressValue + '%';
+    progressFill.style.width = task.progress + '%';
     progressBar.appendChild(progressFill);
-
-    taskItem.appendChild(progressBar);
-
+    taskDiv.appendChild(progressBar);
+    
     if (task.error) {
-      const errorEl = document.createElement('div');
-      errorEl.style.color = '#ff6b6b;';
-      errorEl.textContent = String(task.error);
-      taskItem.appendChild(errorEl);
+      const errorDiv = document.createElement('div');
+      errorDiv.style.color = '#ff6b6b';
+      errorDiv.textContent = task.error;
+      taskDiv.appendChild(errorDiv);
     }
-
-    tasksContent.appendChild(taskItem);
+    
+    tasksContent.innerHTML = '';
+    tasksContent.appendChild(taskDiv);
   }
 
   function renderLogs(logs) {
-    while (logsContent.firstChild) {
-      logsContent.removeChild(logsContent.firstChild);
-    }
-
     if (!logs || logs.length === 0) {
       logsContent.textContent = 'No logs yet';
       return;
     }
     
+    logsContent.innerHTML = '';
     logs.forEach(log => {
-      const entry = document.createElement('div');
-      entry.className = 'log-entry ' + String(log.level || '');
-
+      const logDiv = document.createElement('div');
+      logDiv.className = 'log-entry ' + log.level;
+      
+      const time = new Date(log.timestamp).toLocaleTimeString();
       const timeSpan = document.createElement('span');
       timeSpan.className = 'log-time';
-      const time = new Date(log.timestamp).toLocaleTimeString();
-      timeSpan.textContent = '[' + time + ']';
-      entry.appendChild(timeSpan);
-
-      entry.appendChild(document.createTextNode(' '));
-
-      const hostStrong = document.createElement('strong');
-      hostStrong.textContent = String(log.hostName || '');
-      entry.appendChild(hostStrong);
-
-      entry.appendChild(document.createTextNode(': ' + String(log.message || '')));
-
-      logsContent.appendChild(entry);
+      timeSpan.textContent = '[' + time + '] ';
+      logDiv.appendChild(timeSpan);
+      
+      const hostLabel = document.createElement('strong');
+      hostLabel.textContent = log.hostName;
+      logDiv.appendChild(hostLabel);
+      
+      logDiv.appendChild(document.createTextNode(': ' + log.message));
+      logsContent.appendChild(logDiv);
     });
   }
-
-  window.handleAction = function(actionId, hostName) {
-    if (actionId === 'pushConfig') {
-      vscode.postMessage({ command: 'pushConfig', hostName });
-    }
-  };
 })();
 </script>
 </body>

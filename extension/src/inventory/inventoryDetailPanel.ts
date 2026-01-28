@@ -73,6 +73,13 @@ export class InventoryDetailPanel {
     this.panel.webview.postMessage({ command: 'updateTask', task });
   }
 
+  /**
+   * Start a configuration push operation
+   */
+  startConfigPush(hostName: string, configPath: string) {
+    this.handlePushConfig(hostName, configPath);
+  }
+
   private formatItemDetails(item: InventoryTreeItem): any {
     const details: any = {
       title: item.label,
