@@ -296,48 +296,117 @@ body {
   });
 
   function renderDetails(details) {
-    detailsContent.innerHTML = '<strong>' + details.title + '</strong>\\n' +
-      'Type: ' + details.type + '\\n\\n' +
-      JSON.stringify(details.content, null, 2);
+    // Clear existing content
+    while (detailsContent.firstChild) {
+      detailsContent.removeChild(detailsContent.firstChild);
+    }
+
+    // Title
+    const titleEl = document.createElement('strong');
+    titleEl.textContent = String(details.title || '');
+    detailsContent.appendChild(titleEl);
+
+    // Type
+    const typeText = document.createElement('div');
+    typeText.textContent = 'Type: ' + String(details.type || '');
+    detailsContent.appendChild(typeText);
+
+    // Content (pretty-printed JSON)
+    if (details.content !== undefined) {
+      const contentPre = document.createElement('pre');
+      contentPre.textContent = JSON.stringify(details.content, null, 2);
+      detailsContent.appendChild(contentPre);
+    }
     
     // Render actions
+    while (actionsContent.firstChild) {
+      actionsContent.removeChild(actionsContent.firstChild);
+    }
+
     if (details.actions && details.actions.length > 0) {
-      actionsContent.innerHTML = details.actions.map(action => 
-        '<button class="action-btn" onclick="handleAction(\'' + action.id + '\', \'' + 
-        (action.hostName || '') + '\')">' + action.label + '</button>'
-      ).join('');
-    } else {
-      actionsContent.innerHTML = '';
+      details.actions.forEach(action => {
+        const button = document.createElement('button');
+        button.className = 'action-btn';
+        button.textContent = String(action.label || '');
+        const hostName = action.hostName || '';
+        button.addEventListener('click', () => {
+          window.handleAction(action.id, hostName);
+        });
+        actionsContent.appendChild(button);
+      });
     }
   }
 
   function renderTask(task) {
     tasksSection.style.display = 'block';
-    const statusClass = task.status;
-    const html = '<div class="task-item">' +
-      '<strong>' + task.hostName + '</strong>' +
-      '<span class="task-status ' + statusClass + '">' + task.status + '</span>' +
-      '<div class="progress-bar">' +
-      '<div class="progress-fill" style="width: ' + task.progress + '%"></div>' +
-      '</div>' +
-      (task.error ? '<div style="color: #ff6b6b;">' + task.error + '</div>' : '') +
-      '</div>';
-    tasksContent.innerHTML = html;
+
+    while (tasksContent.firstChild) {
+      tasksContent.removeChild(tasksContent.firstChild);
+    }
+
+    const taskItem = document.createElement('div');
+    taskItem.className = 'task-item';
+
+    const hostEl = document.createElement('strong');
+    hostEl.textContent = String(task.hostName || '');
+    taskItem.appendChild(hostEl);
+
+    const statusSpan = document.createElement('span');
+    statusSpan.className = 'task-status ' + String(task.status || '');
+    statusSpan.textContent = String(task.status || '');
+    taskItem.appendChild(statusSpan);
+
+    const progressBar = document.createElement('div');
+    progressBar.className = 'progress-bar';
+
+    const progressFill = document.createElement('div');
+    progressFill.className = 'progress-fill';
+    const progressValue = typeof task.progress === 'number' ? task.progress : 0;
+    progressFill.style.width = progressValue + '%';
+    progressBar.appendChild(progressFill);
+
+    taskItem.appendChild(progressBar);
+
+    if (task.error) {
+      const errorEl = document.createElement('div');
+      errorEl.style.color = '#ff6b6b;';
+      errorEl.textContent = String(task.error);
+      taskItem.appendChild(errorEl);
+    }
+
+    tasksContent.appendChild(taskItem);
   }
 
   function renderLogs(logs) {
+    while (logsContent.firstChild) {
+      logsContent.removeChild(logsContent.firstChild);
+    }
+
     if (!logs || logs.length === 0) {
-      logsContent.innerHTML = 'No logs yet';
+      logsContent.textContent = 'No logs yet';
       return;
     }
     
-    logsContent.innerHTML = logs.map(log => {
+    logs.forEach(log => {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + String(log.level || '');
+
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'log-time';
       const time = new Date(log.timestamp).toLocaleTimeString();
-      return '<div class="log-entry ' + log.level + '">' +
-        '<span class="log-time">[' + time + ']</span> ' +
-        '<strong>' + log.hostName + '</strong>: ' + log.message +
-        '</div>';
-    }).join('');
+      timeSpan.textContent = '[' + time + ']';
+      entry.appendChild(timeSpan);
+
+      entry.appendChild(document.createTextNode(' '));
+
+      const hostStrong = document.createElement('strong');
+      hostStrong.textContent = String(log.hostName || '');
+      entry.appendChild(hostStrong);
+
+      entry.appendChild(document.createTextNode(': ' + String(log.message || '')));
+
+      logsContent.appendChild(entry);
+    });
   }
 
   window.handleAction = function(actionId, hostName) {
