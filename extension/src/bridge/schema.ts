@@ -1,11 +1,10 @@
 // JSON schema for PowerShell bridge communication
 
 export interface BridgeRequest {
-  command: 'generate' | 'test' | 'set' | 'prereqs' | 'resources' | 'installResource' | 'getInventory' | 'gatherFacts';
+  command: 'generate' | 'test' | 'set' | 'prereqs' | 'resources' | 'installResource';
   dslPath?: string;
   resourceTypes?: string[];
   resourceType?: string;
-  hostName?: string;
   options?: {
     whatIf?: boolean;
     verbose?: boolean;
