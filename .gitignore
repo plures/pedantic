@@ -11,6 +11,7 @@ Installers/*.zip
 Installers/*.json
 Resources/*/
 !Resources/SimpleDSC.PackageInstaller/
+!Resources/Pedantic.Ansible.Module/
 coverage.xml
 
 # Node modules

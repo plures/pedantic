@@ -1,0 +1,243 @@
+{
+  "$schema": "https://raw.githubusercontent.com/PowerShell/DSC/main/schemas/2024/04/bundled/resource/manifest.json",
+  "type": "Pedantic.Ansible/Module",
+  "version": "1.0.0",
+  "description": "DSC v3 resource for executing Ansible modules with Get/Test/Set semantics",
+  "tags": [
+    "ansible",
+    "configuration",
+    "automation",
+    "cross-platform",
+    "linux",
+    "windows",
+    "network"
+  ],
+  "get": {
+    "executable": "pwsh",
+    "args": [
+      "-NoLogo",
+      "-NonInteractive",
+      "-NoProfile",
+      "-File",
+      "Pedantic.Ansible.Module.ps1",
+      "-Operation",
+      "get"
+    ],
+    "input": "stdin"
+  },
+  "set": {
+    "executable": "pwsh",
+    "args": [
+      "-NoLogo",
+      "-NonInteractive",
+      "-NoProfile",
+      "-File",
+      "Pedantic.Ansible.Module.ps1",
+      "-Operation",
+      "set"
+    ],
+    "input": "stdin"
+  },
+  "test": {
+    "executable": "pwsh",
+    "args": [
+      "-NoLogo",
+      "-NonInteractive",
+      "-NoProfile",
+      "-File",
+      "Pedantic.Ansible.Module.ps1",
+      "-Operation",
+      "test"
+    ],
+    "input": "stdin"
+  },
+  "schema": {
+    "embedded": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "Pedantic Ansible Module",
+      "description": "Configuration for executing Ansible modules through DSC",
+      "type": "object",
+      "required": [
+        "name",
+        "module"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Resource Name",
+          "description": "Unique identifier for this resource instance"
+        },
+        "module": {
+          "type": "string",
+          "title": "Ansible Module",
+          "description": "Ansible module name (e.g., 'ansible.builtin.file', 'cisco.nxos.nxos_vlan')",
+          "examples": [
+            "ansible.builtin.file",
+            "ansible.builtin.lineinfile",
+            "ansible.windows.win_feature",
+            "cisco.nxos.nxos_vlan"
+          ]
+        },
+        "args": {
+          "type": "object",
+          "title": "Module Arguments",
+          "description": "Arguments to pass to the Ansible module",
+          "default": {}
+        },
+        "host": {
+          "type": "string",
+          "title": "Target Host",
+          "description": "Target host or group selector from inventory"
+        },
+        "inventory": {
+          "title": "Inventory Source",
+          "description": "Ansible inventory specification (file path, inline JSON, or configuration)",
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Path to inventory file"
+            },
+            {
+              "type": "object",
+              "description": "Inline inventory structure",
+              "properties": {
+                "hosts": {
+                  "type": "object"
+                },
+                "groups": {
+                  "type": "object"
+                }
+              }
+            }
+          ]
+        },
+        "checkMode": {
+          "type": "boolean",
+          "title": "Check Mode",
+          "description": "Run in check mode (dry run) for Test operation",
+          "default": true
+        },
+        "diff": {
+          "type": "boolean",
+          "title": "Show Diff",
+          "description": "Request diff output if module supports it",
+          "default": true
+        },
+        "become": {
+          "type": "boolean",
+          "title": "Become (Privilege Escalation)",
+          "description": "Enable privilege escalation (sudo/runas)",
+          "default": false
+        },
+        "becomeUser": {
+          "type": "string",
+          "title": "Become User",
+          "description": "User to become when using privilege escalation",
+          "default": "root"
+        },
+        "becomeMethod": {
+          "type": "string",
+          "title": "Become Method",
+          "description": "Method for privilege escalation",
+          "enum": [
+            "sudo",
+            "su",
+            "pbrun",
+            "pfexec",
+            "doas",
+            "dzdo",
+            "ksu",
+            "runas"
+          ],
+          "default": "sudo"
+        },
+        "vars": {
+          "type": "object",
+          "title": "Variables",
+          "description": "Additional Ansible variables",
+          "default": {}
+        },
+        "environment": {
+          "type": "object",
+          "title": "Environment Variables",
+          "description": "Environment variables for module execution",
+          "default": {}
+        },
+        "idempotencyMode": {
+          "type": "string",
+          "title": "Idempotency Mode",
+          "description": "How to determine if configuration is in desired state",
+          "enum": [
+            "native",
+            "checkmode",
+            "last_applied",
+            "always_set"
+          ],
+          "default": "native"
+        },
+        "connection": {
+          "type": "object",
+          "title": "Connection Settings",
+          "description": "Connection configuration for remote execution",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ssh",
+                "winrm",
+                "local",
+                "network_cli",
+                "httpapi"
+              ],
+              "default": "ssh"
+            },
+            "user": {
+              "type": "string",
+              "description": "Username for connection"
+            },
+            "password": {
+              "type": "string",
+              "description": "Password for connection (use vault in production)"
+            },
+            "privateKey": {
+              "type": "string",
+              "description": "Path to SSH private key"
+            },
+            "port": {
+              "type": "integer",
+              "description": "Connection port"
+            },
+            "timeout": {
+              "type": "integer",
+              "description": "Connection timeout in seconds",
+              "default": 30
+            }
+          }
+        },
+        "capabilities": {
+          "type": "object",
+          "title": "Module Capabilities",
+          "description": "Capabilities of the Ansible module",
+          "properties": {
+            "supports_check_mode": {
+              "type": "boolean",
+              "default": true
+            },
+            "supports_diff": {
+              "type": "boolean",
+              "default": false
+            },
+            "supports_facts": {
+              "type": "boolean",
+              "default": false
+            },
+            "supports_idempotency": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,179 @@
+# Example DSC configuration using Pedantic.Ansible/Module adapter
+# This demonstrates various Ansible module integrations through DSC
+
+$schema: https://raw.githubusercontent.com/PowerShell/DSC/main/schemas/2024/04/config/document.json
+resources:
+  # Example 1: Basic file management using ansible.builtin.file
+  - name: Ensure config directory
+    type: Pedantic.Ansible/Module
+    properties:
+      name: config-directory
+      module: ansible.builtin.file
+      args:
+        path: /etc/myapp
+        state: directory
+        mode: '0755'
+      host: localhost
+      checkMode: true
+      diff: true
+      become: true
+      idempotencyMode: native
+
+  # Example 2: Manage a line in a file using ansible.builtin.lineinfile
+  - name: Configure app setting
+    type: Pedantic.Ansible/Module
+    properties:
+      name: app-config-line
+      module: ansible.builtin.lineinfile
+      args:
+        path: /etc/myapp/config.conf
+        line: 'setting=value'
+        state: present
+      host: localhost
+      become: true
+      idempotencyMode: checkmode
+
+  # Example 3: Windows Feature using ansible.windows.win_feature
+  - name: Install IIS on Windows
+    type: Pedantic.Ansible/Module
+    properties:
+      name: iis-feature
+      module: ansible.windows.win_feature
+      args:
+        name: Web-Server
+        state: present
+        include_management_tools: true
+      host: windows-server
+      inventory: ./inventory/windows-hosts.yml
+      connection:
+        type: winrm
+        user: Administrator
+        port: 5986
+      become: false
+      idempotencyMode: native
+
+  # Example 4: Network device configuration using cisco.nxos.nxos_vlan
+  - name: Configure VLAN on Cisco switch
+    type: Pedantic.Ansible/Module
+    properties:
+      name: vlan-100
+      module: cisco.nxos.nxos_vlan
+      args:
+        vlan_id: 100
+        name: production
+        state: present
+      host: cisco-switch-01
+      inventory:
+        hosts:
+          cisco-switch-01:
+            ansible_host: 192.168.1.10
+      connection:
+        type: network_cli
+        user: admin
+        timeout: 60
+      idempotencyMode: native
+
+  # Example 5: Package installation using ansible.builtin.package
+  - name: Install nginx
+    type: Pedantic.Ansible/Module
+    properties:
+      name: nginx-package
+      module: ansible.builtin.package
+      args:
+        name: nginx
+        state: present
+      host: webserver
+      inventory: ./inventory/linux-hosts.yml
+      become: true
+      becomeUser: root
+      becomeMethod: sudo
+      checkMode: true
+      diff: false
+      idempotencyMode: native
+
+  # Example 6: Copy file using ansible.builtin.copy
+  - name: Deploy application config
+    type: Pedantic.Ansible/Module
+    properties:
+      name: deploy-config
+      module: ansible.builtin.copy
+      args:
+        src: /local/app-config.yml
+        dest: /opt/myapp/config.yml
+        owner: appuser
+        group: appgroup
+        mode: '0640'
+      host: appserver
+      become: true
+      diff: true
+      vars:
+        app_environment: production
+      environment:
+        APP_ENV: production
+
+  # Example 7: Service management using ansible.builtin.service
+  - name: Ensure nginx is running
+    type: Pedantic.Ansible/Module
+    properties:
+      name: nginx-service
+      module: ansible.builtin.service
+      args:
+        name: nginx
+        state: started
+        enabled: true
+      host: webserver
+      become: true
+      idempotencyMode: native
+
+  # Example 8: Execute command (with always_set mode for non-idempotent tasks)
+  - name: Run custom script
+    type: Pedantic.Ansible/Module
+    properties:
+      name: custom-script
+      module: ansible.builtin.shell
+      args:
+        cmd: /opt/scripts/initialize.sh
+      host: localhost
+      become: false
+      checkMode: false
+      idempotencyMode: always_set
+
+  # Example 9: Template deployment using ansible.builtin.template
+  - name: Deploy nginx config from template
+    type: Pedantic.Ansible/Module
+    properties:
+      name: nginx-template
+      module: ansible.builtin.template
+      args:
+        src: templates/nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+        owner: root
+        group: root
+        mode: '0644'
+      host: webserver
+      become: true
+      diff: true
+      vars:
+        nginx_worker_processes: 4
+        nginx_worker_connections: 1024
+      idempotencyMode: native
+
+  # Example 10: APT package with specific version
+  - name: Install specific Python version
+    type: Pedantic.Ansible/Module
+    properties:
+      name: python-package
+      module: ansible.builtin.apt
+      args:
+        name: python3.11
+        state: present
+        update_cache: true
+      host: ubuntu-server
+      become: true
+      checkMode: true
+      idempotencyMode: native
+      capabilities:
+        supports_check_mode: true
+        supports_diff: false
+        supports_facts: false
+        supports_idempotency: true

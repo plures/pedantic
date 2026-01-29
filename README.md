@@ -13,6 +13,7 @@ The Pedantic PowerShell module (v0.9.0) provides:
 - **Remote Execution** - Secure remote DSC operations via SSH and WinRM
 - **Dual DSL Support** - Work with both simplified YAML syntax and SudoLang configurations
 - **Built-in Resource Mapping** - Pre-configured mappings for 30+ classic DSC resources
+- **Ansible Integration** - DSC v3 adapter for Ansible modules (Pedantic.Ansible/Module)
 - **Cross-Platform** - PowerShell 7.2+ on Windows, macOS, and Linux
 - **Utility Functions** - Text processing helpers like `Get-Head` and `Get-Tail`
 
@@ -169,6 +170,56 @@ Set-DscConfiguration -DscPath ./go-install-winget.dsc.yaml
 **Notes:**
 - Winget requires Windows 11/Server 2022 with Desktop Experience and the App Installer
 - For offline or restricted environments, use the transitional approach shown in Example 3
+
+### Using the Ansible Adapter
+
+The Pedantic.Ansible/Module resource enables you to use any Ansible module with DSC semantics. This allows you to target Windows, Linux, and network devices using a unified configuration language.
+
+**Prerequisites:**
+- Ansible installed and available in PATH
+- Required Ansible collections installed
+
+**Example: Managing files on Linux with ansible.builtin.file**
+
+```yaml
+resources:
+  - name: Ensure config directory
+    type: Pedantic.Ansible/Module
+    properties:
+      name: config-dir
+      module: ansible.builtin.file
+      args:
+        path: /etc/myapp
+        state: directory
+        mode: '0755'
+      host: localhost
+      become: true
+      idempotencyMode: native
+```
+
+**Example: Network device configuration with cisco.nxos.nxos_vlan**
+
+```yaml
+resources:
+  - name: Configure VLAN
+    type: Pedantic.Ansible/Module
+    properties:
+      name: vlan-100
+      module: cisco.nxos.nxos_vlan
+      args:
+        vlan_id: 100
+        name: production
+        state: present
+      host: switch-01
+      connection:
+        type: network_cli
+        user: admin
+      idempotencyMode: native
+```
+
+For more examples and detailed documentation, see:
+- [Ansible Adapter README](Resources/Pedantic.Ansible.Module/README.md)
+- [Example Configurations](examples/ansible-adapter-examples.yaml)
 
 ---
 
