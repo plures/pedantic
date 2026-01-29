@@ -405,6 +405,13 @@ $script:ResourceMapping = @{
         GalleryName  = "PSDscResources"
         Description  = "DSC Debug echo resource"
     }
+    # Ansible integration resources
+    "Pedantic.Ansible/Module"                                   = @{
+        ModuleName   = "Pedantic.Ansible.Module"
+        ResourceName = "Pedantic.Ansible.Module"
+        GalleryName  = "Pedantic"
+        Description  = "DSC v3 adapter for Ansible modules with Get/Test/Set semantics"
+    }
 }
 
 # PowerShell head and tail commandlets for Unix-like functionality
