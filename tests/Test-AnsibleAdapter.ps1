@@ -110,50 +110,162 @@ Describe 'Pedantic.Ansible.Module Resource Tests' {
     }
     
     Context 'Basic Functionality Tests' -Skip:(-not $script:ansibleAvailable) {
-        
+
         It 'Can execute get operation with valid config' {
             $config = @{
                 name = 'test-resource'
                 module = 'ansible.builtin.ping'
                 host = 'localhost'
             } | ConvertTo-Json
-            
+
             $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'get' 2>&1
             $LASTEXITCODE | Should -Be 0
         }
-        
+
         It 'Can execute test operation with valid config' {
             $config = @{
                 name = 'test-resource'
                 module = 'ansible.builtin.ping'
                 host = 'localhost'
             } | ConvertTo-Json
-            
+
             $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'test' 2>&1
             $LASTEXITCODE | Should -Be 0
         }
-        
+
         It 'Returns JSON output from get operation' {
             $config = @{
                 name = 'test-resource'
                 module = 'ansible.builtin.ping'
                 host = 'localhost'
             } | ConvertTo-Json
-            
+
             $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'get' 2>&1 | Out-String
             { $result | ConvertFrom-Json } | Should -Not -Throw
         }
-        
+
         It 'Returns inDesiredState from test operation' {
             $config = @{
                 name = 'test-resource'
                 module = 'ansible.builtin.ping'
                 host = 'localhost'
             } | ConvertTo-Json
-            
+
             $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'test' 2>&1 | Out-String
             $parsed = $result | ConvertFrom-Json
             $parsed.PSObject.Properties.Name | Should -Contain 'inDesiredState'
+        }
+
+        It 'Handles checkMode set to false explicitly' {
+            $config = @{
+                name = 'test-resource'
+                module = 'ansible.builtin.ping'
+                host = 'localhost'
+                checkMode = $false
+            } | ConvertTo-Json
+
+            $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'test' 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It 'Handles checkMode set to true explicitly' {
+            $config = @{
+                name = 'test-resource'
+                module = 'ansible.builtin.ping'
+                host = 'localhost'
+                checkMode = $true
+            } | ConvertTo-Json
+
+            $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'test' 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It 'Handles diff set to false explicitly' {
+            $config = @{
+                name = 'test-resource'
+                module = 'ansible.builtin.ping'
+                host = 'localhost'
+                diff = $false
+            } | ConvertTo-Json
+
+            $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'get' 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It 'Handles diff set to true explicitly' {
+            $config = @{
+                name = 'test-resource'
+                module = 'ansible.builtin.ping'
+                host = 'localhost'
+                diff = $true
+            } | ConvertTo-Json
+
+            $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'get' 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It 'Handles different idempotency modes - native' {
+            $config = @{
+                name = 'test-resource'
+                module = 'ansible.builtin.ping'
+                host = 'localhost'
+                idempotencyMode = 'native'
+            } | ConvertTo-Json
+
+            $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'test' 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It 'Handles different idempotency modes - checkmode' {
+            $config = @{
+                name = 'test-resource'
+                module = 'ansible.builtin.ping'
+                host = 'localhost'
+                idempotencyMode = 'checkmode'
+            } | ConvertTo-Json
+
+            $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'test' 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It 'Handles different idempotency modes - always_set' {
+            $config = @{
+                name = 'test-resource'
+                module = 'ansible.builtin.ping'
+                host = 'localhost'
+                idempotencyMode = 'always_set'
+            } | ConvertTo-Json
+
+            $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'test' 2>&1 | Out-String
+            $parsed = $result | ConvertFrom-Json
+            # always_set mode should always return false for inDesiredState
+            $parsed.inDesiredState | Should -Be $false
+        }
+
+        It 'Handles module args as object' {
+            $config = @{
+                name = 'test-resource'
+                module = 'ansible.builtin.debug'
+                host = 'localhost'
+                args = @{
+                    msg = 'test message'
+                }
+            } | ConvertTo-Json -Depth 5
+
+            $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'get' 2>&1
+            $LASTEXITCODE | Should -Be 0
+        }
+
+        It 'Handles empty args object' {
+            $config = @{
+                name = 'test-resource'
+                module = 'ansible.builtin.ping'
+                host = 'localhost'
+                args = @{}
+            } | ConvertTo-Json
+
+            $result = $config | & pwsh -NoProfile -File $script:resourceScript -Operation 'get' 2>&1
+            $LASTEXITCODE | Should -Be 0
         }
     }
     
