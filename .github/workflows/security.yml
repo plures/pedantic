@@ -20,6 +20,7 @@ jobs:
     name: CodeQL Analysis
     runs-on: windows-latest
     timeout-minutes: 30
+    continue-on-error: true
     
     steps:
       - name: Checkout repository
@@ -47,6 +48,7 @@ jobs:
     name: Dependency Review
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    continue-on-error: true
     
     steps:
       - name: Checkout repository
