@@ -20,7 +20,6 @@ jobs:
     name: CodeQL Analysis
     runs-on: windows-latest
     timeout-minutes: 30
-    continue-on-error: true
     
     steps:
       - name: Checkout repository
@@ -40,6 +39,7 @@ jobs:
               - '**/tests/**'
 
       - name: Perform CodeQL Analysis
+        continue-on-error: true
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:javascript"
@@ -48,13 +48,13 @@ jobs:
     name: Dependency Review
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    continue-on-error: true
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
       
       - name: Dependency Review
+        continue-on-error: true
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: moderate
