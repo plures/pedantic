@@ -22,7 +22,7 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       # Note: PowerShell setup step not needed - Windows runners have pwsh pre-installed
 
@@ -126,7 +126,7 @@ jobs:
           }
 
       - name: Upload test results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results-${{ matrix.os }}-ps${{ matrix.ps-version }}
@@ -178,7 +178,7 @@ jobs:
           Write-Host "Package created: $zipPath"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: module-dist-${{ matrix.os }}-ps${{ matrix.ps-version }}
           path: dist/*.zip
