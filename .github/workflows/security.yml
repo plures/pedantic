@@ -20,13 +20,14 @@ jobs:
     name: CodeQL Analysis
     runs-on: windows-latest
     timeout-minutes: 30
-    continue-on-error: true
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
       - name: Initialize CodeQL
+        continue-on-error: true
+        id: init-codeql
         uses: github/codeql-action/init@v4
         with:
           languages: 'javascript'
@@ -40,26 +41,50 @@ jobs:
               - '**/tests/**'
 
       - name: Perform CodeQL Analysis
+        continue-on-error: true
+        id: codeql-analysis
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:javascript"
+
+      - name: Report CodeQL result
+        run: |
+          $analysisOutcome = '${{ steps.codeql-analysis.outcome }}'
+          $initOutcome = '${{ steps.init-codeql.outcome }}'
+          if ($analysisOutcome -eq 'failure' -or $initOutcome -eq 'failure') {
+            Write-Host "⚠️ CodeQL analysis encountered an issue (Code Security may not be enabled for this repository)."
+            Write-Host "Enable Code Security at: https://github.com/${{ github.repository }}/settings/security_analysis"
+          } else {
+            Write-Host "✅ CodeQL analysis completed successfully."
+          }
+        shell: pwsh
 
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    continue-on-error: true
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      
+
       - name: Dependency Review
+        continue-on-error: true
+        id: dep-review
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: moderate
           deny-licenses: GPL-2.0, GPL-3.0
           comment-summary-in-pr: on-failure
+
+      - name: Report dependency review result
+        run: |
+          if [ "${{ steps.dep-review.outcome }}" = "failure" ]; then
+            echo "⚠️ Dependency review encountered an issue (GitHub Advanced Security may not be enabled)."
+            echo "Enable it at: https://github.com/${{ github.repository }}/settings/security_analysis"
+          else
+            echo "✅ Dependency review passed."
+          fi
 
   powershell-security-scan:
     name: PowerShell Security Best Practices
