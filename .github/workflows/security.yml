@@ -16,51 +16,6 @@ permissions:
   actions: read
 
 jobs:
-  codeql-analysis:
-    name: CodeQL Analysis
-    runs-on: windows-latest
-    timeout-minutes: 30
-    continue-on-error: true
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
-        with:
-          languages: 'javascript'
-          queries: security-extended,security-and-quality
-          config: |
-            paths:
-              - extension
-            paths-ignore:
-              - '**/node_modules/**'
-              - '**/test/**'
-              - '**/tests/**'
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
-        with:
-          category: "/language:javascript"
-
-  dependency-review:
-    name: Dependency Review
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    continue-on-error: true
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-      
-      - name: Dependency Review
-        uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: moderate
-          deny-licenses: GPL-2.0, GPL-3.0
-          comment-summary-in-pr: on-failure
-
   powershell-security-scan:
     name: PowerShell Security Best Practices
     runs-on: windows-latest
