@@ -24,7 +24,7 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -52,7 +52,7 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
       
       - name: Dependency Review
         uses: actions/dependency-review-action@v4
@@ -67,7 +67,7 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Install PSScriptAnalyzer
         shell: pwsh
@@ -110,7 +110,7 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -128,7 +128,7 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Check for package.json
         id: check-npm
@@ -141,7 +141,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.check-npm.outputs.has_package == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
@@ -156,7 +156,7 @@ jobs:
 
       - name: Upload npm audit results
         if: steps.check-npm.outputs.has_package == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: npm-audit-results
           path: extension/npm-audit.json
