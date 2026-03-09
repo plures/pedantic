@@ -20,7 +20,7 @@ jobs:
   validate-release:
     name: Validate Release
     runs-on: windows-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -35,19 +35,19 @@ jobs:
           } else {
             $env:GITHUB_REF -replace '^refs/tags/v', ''
           }
-          
+
           Write-Host "Validating version: $version"
-          
+
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
             throw "Invalid version format: $version. Expected: X.Y.Z"
           }
-          
+
           # Check if version in manifest matches
           $manifestVersion = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
           if ($manifestVersion -ne $version) {
             throw "Version mismatch: Manifest=$manifestVersion, Release=$version"
           }
-          
+
           Write-Host "Version validation passed: $version"
           echo "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
 
@@ -56,7 +56,7 @@ jobs:
         run: |
           $version = $env:RELEASE_VERSION
           $previousTag = git describe --tags --abbrev=0 HEAD^ 2>$null
-          
+
           if ($previousTag) {
             Write-Host "Generating changelog from $previousTag to v$version"
             $changes = git log "$previousTag..HEAD" --pretty=format:"- %s (%h)" --no-merges
@@ -64,18 +64,18 @@ jobs:
             Write-Host "No previous tag found. Using all commits."
             $changes = git log --pretty=format:"- %s (%h)" --no-merges
           }
-          
+
           $changelog = @"
           # Release v$version
-          
+
           ## Changes
-          
+
           $changes
-          
+
           ---
           *Generated on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')*
           "@
-          
+
           $changelog | Out-File -FilePath changelog.md -Encoding utf8
           Write-Host "Changelog generated:"
           Get-Content changelog.md
@@ -91,7 +91,7 @@ jobs:
     name: Build Release Package
     needs: validate-release
     runs-on: windows-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -115,15 +115,15 @@ jobs:
         run: |
           $out = Join-Path $PWD 'release'
           if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
-          
+
           $version = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
           $moduleName = 'Pedantic'
-          
+
           # Create release package directory structure
           $releaseDir = Join-Path $out $moduleName
           if (Test-Path $releaseDir) { Remove-Item -Recurse -Force $releaseDir }
           New-Item -ItemType Directory -Path $releaseDir | Out-Null
-          
+
           # Copy module files
           $filesToCopy = @(
             'Pedantic.psd1',
@@ -137,23 +137,23 @@ jobs:
             'docs',
             'LICENSE'
           )
-          
+
           foreach ($file in $filesToCopy) {
             if (Test-Path $file) {
               Copy-Item -Path $file -Destination $releaseDir -Recurse -Force
             }
           }
-          
+
           # Create ZIP archive
           $zipPath = Join-Path $out "$moduleName-v$version.zip"
           Compress-Archive -Path "$releaseDir\*" -DestinationPath $zipPath -Force
-          
+
           Write-Host "Release package created: $zipPath"
-          
+
           # Calculate hash
           $hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash
           $hash | Out-File -FilePath (Join-Path $out "$moduleName-v$version.zip.sha256") -Encoding utf8
-          
+
           Write-Host "SHA256: $hash"
 
       - name: Upload release artifacts
@@ -167,7 +167,7 @@ jobs:
     name: Create GitHub Release
     needs: build-release
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -201,7 +201,7 @@ jobs:
     needs: create-github-release
     runs-on: windows-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -221,14 +221,14 @@ jobs:
             Write-Warning "PSGALLERY_API_KEY secret not set. Skipping PowerShell Gallery publish."
             return
           }
-          
+
           $modulePath = Join-Path $PWD 'release' 'Pedantic'
-          
+
           if (-not (Test-Path $modulePath)) {
             throw "Module path not found: $modulePath"
           }
-          
+
           Write-Host "Publishing module to PowerShell Gallery..."
           Publish-Module -Path $modulePath -NuGetApiKey $env:PSGALLERY_API_KEY -Verbose
-          
+
           Write-Host "Module published successfully!"

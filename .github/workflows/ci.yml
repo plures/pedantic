@@ -2,8 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   build-test:
@@ -76,7 +79,7 @@ jobs:
             'Pedantic.psm1',
             'Pedantic.Reverse.psm1',
             'Resources',
-            
+
             'SimpleDSC.psd1',
             'Simple.DSC.psm1',
             'Simple.DSC.Basic.psm1',
@@ -94,5 +97,3 @@ jobs:
         with:
           name: module-dist
           path: dist/*.zip
-
-
