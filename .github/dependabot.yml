@@ -10,8 +10,6 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
-      - "github-actions"
-      - "automated"
     commit-message:
       prefix: "ci"
       include: "scope"
@@ -28,8 +26,6 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
-      - "javascript"
-      - "automated"
     commit-message:
       prefix: "deps(npm)"
       include: "scope"
