@@ -2,9 +2,9 @@ name: Build and Test
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -19,7 +19,7 @@ jobs:
       matrix:
         os: [windows-latest]
         ps-version: ['7.4']
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -75,17 +75,17 @@ jobs:
             Write-Host "Running PSScriptAnalyzer with default settings..."
             $results = Invoke-ScriptAnalyzer -Path . -Recurse -ReportSummary
           }
-          
+
           # Filter to only show Warnings and Errors
           $issues = $results | Where-Object { $_.Severity -in @('Warning', 'Error') }
-          
+
           if ($issues) {
             $issues | Format-Table -AutoSize
             $errorCount = ($issues | Where-Object { $_.Severity -eq 'Error' }).Count
             $warningCount = ($issues | Where-Object { $_.Severity -eq 'Warning' }).Count
-            
+
             Write-Host "`nSummary: $errorCount error(s), $warningCount warning(s)"
-            
+
             if ($errorCount -gt 0) {
               throw "PSScriptAnalyzer found $errorCount error(s). Please fix them."
             }
@@ -109,13 +109,13 @@ jobs:
             $config.TestResult.OutputFormat = 'NUnitXml'
             $config.TestResult.OutputPath = 'testResults.xml'
             $config.Output.Verbosity = 'Detailed'
-            
+
             $result = Invoke-Pester -Configuration $config
-            
+
             if ($result.FailedCount -gt 0) {
               throw "$($result.FailedCount) test(s) failed."
             }
-            
+
             Write-Host "`nTest Summary:"
             Write-Host "  Passed: $($result.PassedCount)"
             Write-Host "  Failed: $($result.FailedCount)"
@@ -150,12 +150,12 @@ jobs:
         run: |
           $out = Join-Path $PWD 'dist'
           if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
-          
+
           # Package Pedantic module
           $ver = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
           $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
           $folder = 'Pedantic'
-          
+
           $src = @(
             'Pedantic.psd1',
             'Pedantic.psm1',
@@ -166,15 +166,15 @@ jobs:
             'Simple.DSC.Basic.psm1',
             'docs'
           ) | Where-Object { Test-Path $_ }
-          
+
           $temp = Join-Path $env:TEMP $folder
           if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
           New-Item -ItemType Directory -Path $temp | Out-Null
           Copy-Item -Recurse -Force -Path $src -Destination $temp
-          
+
           $zipPath = Join-Path $out "$folder-$ver-$stamp.zip"
           Compress-Archive -Path (Join-Path $temp '*') -DestinationPath $zipPath -Force
-          
+
           Write-Host "Package created: $zipPath"
 
       - name: Upload build artifact

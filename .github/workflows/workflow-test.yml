@@ -17,7 +17,7 @@ jobs:
   validate-workflows:
     name: Validate Workflow Syntax
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -40,9 +40,9 @@ jobs:
             "release.yml"
             "workflow-test.yml"
           )
-          
+
           cd .github/workflows
-          
+
           for workflow in "${expected_workflows[@]}"; do
             if [ ! -f "$workflow" ]; then
               echo "ERROR: Expected workflow file not found: $workflow"
@@ -51,20 +51,20 @@ jobs:
               echo "✓ Found: $workflow"
             fi
           done
-          
+
           echo "All expected workflow files present."
 
       - name: Check for YAML syntax errors
         run: |
           sudo apt-get update && sudo apt-get install -y yamllint
-          
+
           echo "Checking YAML syntax..."
-          yamllint -c .github/yamllint-config.yml .github/workflows/ || true
+          yamllint -c .github/yamllint-config.yml .github/workflows/
 
   test-build-workflow:
     name: Test Build Workflow
     runs-on: windows-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -97,20 +97,20 @@ jobs:
           Write-Host "Testing module packaging..."
           $out = Join-Path $env:TEMP 'test-package'
           if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
-          
+
           $ver = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
           $folder = 'Pedantic'
-          
+
           $src = @('Pedantic.psd1', 'Pedantic.psm1') | Where-Object { Test-Path $_ }
-          
+
           $temp = Join-Path $env:TEMP $folder
           if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
           New-Item -ItemType Directory -Path $temp | Out-Null
           Copy-Item -Recurse -Force -Path $src -Destination $temp
-          
+
           $zipPath = Join-Path $out "$folder-test.zip"
           Compress-Archive -Path (Join-Path $temp '*') -DestinationPath $zipPath -Force
-          
+
           if (Test-Path $zipPath) {
             Write-Host "✓ Successfully created test package: $zipPath"
             $size = (Get-Item $zipPath).Length
@@ -123,7 +123,7 @@ jobs:
   test-security-workflow:
     name: Test Security Workflow Components
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -143,7 +143,7 @@ jobs:
   test-release-workflow:
     name: Test Release Workflow Components
     runs-on: windows-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -152,27 +152,27 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Testing version validation logic..."
-          
+
           $manifestVersion = (Import-PowerShellDataFile './Pedantic.psd1').ModuleVersion
-          
+
           if ($manifestVersion -notmatch '^\d+\.\d+\.\d+$') {
             throw "Invalid version format in manifest: $manifestVersion"
           }
-          
+
           Write-Host "✓ Version format is valid: $manifestVersion"
 
       - name: Test changelog generation
         shell: pwsh
         run: |
           Write-Host "Testing changelog generation capability..."
-          
+
           $previousTag = git describe --tags --abbrev=0 HEAD^ 2>$null
           if ($previousTag) {
             Write-Host "Previous tag: $previousTag"
           } else {
             Write-Host "No previous tags found (expected for new repo)"
           }
-          
+
           $changes = git log --pretty=format:"- %s (%h)" --no-merges -n 5
           if ($changes) {
             Write-Host "✓ Successfully generated sample changelog entries:"
@@ -184,7 +184,7 @@ jobs:
   test-ci-cd-integration:
     name: Test CI/CD Integration Points
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -192,7 +192,7 @@ jobs:
       - name: Verify required secrets documentation
         run: |
           echo "Checking documentation for required secrets..."
-          
+
           # Check if CI/CD documentation exists
           if [ -f "docs/CICD.md" ] || [ -f ".github/CICD.md" ]; then
             echo "✓ CI/CD documentation found"
@@ -203,7 +203,7 @@ jobs:
       - name: Test artifact retention policies
         run: |
           echo "Verifying artifact retention policies..."
-          
+
           # Check workflow files for artifact configuration
           grep -r "retention-days" .github/workflows/ && echo "✓ Artifact retention configured" || echo "⚠ No retention policies found"
 
@@ -212,7 +212,7 @@ jobs:
     needs: [validate-workflows, test-build-workflow, test-security-workflow, test-release-workflow, test-ci-cd-integration]
     runs-on: ubuntu-latest
     if: always()
-    
+
     steps:
       - name: Generate test summary
         run: |
