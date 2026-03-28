@@ -10,13 +10,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
+  issues: write
 
 jobs:
   lifecycle:
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
     if: >-
       github.event.pull_request.merged != true &&
       github.event.pull_request.user.login == 'Copilot'
@@ -29,15 +29,12 @@ jobs:
 
   queue-advance:
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      issues: write
     if: >-
-      (github.event_name == 'pull_request' &&
-      (github.event.action == 'closed' || github.event.action == 'synchronize' ||
-      github.event.action == 'opened' || github.event.action == 'ready_for_review') &&
-      github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event.action == 'closed' && github.event.pull_request.merged == true) ||
       github.event_name == 'check_suite' ||
+      github.event.action == 'synchronize' ||
+      github.event.action == 'opened' ||
+      github.event.action == 'ready_for_review' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
     steps:
@@ -58,15 +55,7 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const botLogin = 'Copilot';
-
-            // Dynamically resolve the Copilot bot's GraphQL node ID via REST API.
-            const botUserResp = await github.rest.users.getByUsername({ username: botLogin });
-            if (!botUserResp || !botUserResp.data || !botUserResp.data.node_id) {
-              core.setFailed(`Unable to resolve node ID for Copilot bot with login "${botLogin}".`);
-              return;
-            }
-            const botId = botUserResp.data.node_id;
+            const botId = 'BOT_kgDOC9w8XQ';
 
             // Phase 1: Check open Copilot PRs — approve+merge if ready
             const openPRs = await github.rest.pulls.list({
