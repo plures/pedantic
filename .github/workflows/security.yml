@@ -143,7 +143,7 @@ jobs:
         if: steps.check-npm.outputs.has_package == 'true'
         uses: actions/setup-node@v6
         with:
-          node-version: '18'
+          node-version: 'lts/*'
           cache: 'npm'
           cache-dependency-path: extension/package-lock.json
 
