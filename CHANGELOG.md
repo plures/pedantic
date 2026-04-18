@@ -1,3 +1,13 @@
+## [0.1.0] — 2026-04-18
+
+- feat(lifecycle v11): smart CI failure handling — infra vs code (26455fd)
+- fix(lifecycle): label-based retry counter + CI fix priority (131094a)
+- ci: inline lifecycle workflow — fix schedule failures (176b199)
+- chore: remove redundant workflow — handled by centralized ci-reusable.yml or obsolete (2102891)
+- chore: remove redundant workflow — handled by centralized ci-reusable.yml or obsolete (95ee360)
+- chore: remove redundant workflow — handled by centralized ci-reusable.yml or obsolete (4bf8634)
+- chore: remove redundant workflow — handled by centralized ci-reusable.yml or obsolete (d4dfcfc)
+
 ## [0.0.1] — 2026-04-07
 
 - chore: centralize release to org-wide reusable workflow (c896eff)
