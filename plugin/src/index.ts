@@ -43,14 +43,6 @@ const pedantic: RadixPlugin = {
       default: 50,
       group: 'Pedantic',
     },
-    {
-      key: 'pedantic.demo-mode',
-      type: 'toggle',
-      label: 'Demo Mode',
-      description: 'Use embedded demo data for dashboards and charts',
-      default: true,
-      group: 'Pedantic',
-    },
   ],
 
   dashboardWidgets: [

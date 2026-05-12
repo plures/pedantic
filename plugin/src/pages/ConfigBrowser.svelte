@@ -3,262 +3,212 @@
 
   const store = complianceStore;
 
-  async function copyToClipboard(payload: string) {
-    if (!payload) return;
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(payload);
-    }
+  let configPath = $state('');
+
+  async function handleLoad() {
+    if (!configPath.trim()) return;
+    await store.loadConfig(configPath.trim());
   }
 
-  function exportJunit() {
-    const payload = store.exportJunit();
-    copyToClipboard(payload);
+  async function handleExportJunit() {
+    await store.exportJunit();
   }
 
-  function exportSarif() {
-    const payload = store.exportSarif();
-    copyToClipboard(payload);
+  async function handleExportSarif() {
+    await store.exportSarif();
+  }
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text);
   }
 </script>
 
 <div class="page">
   <header class="page__header">
-    <div>
-      <h1>Config Browser</h1>
-      <p>Inspect, validate, and export compliance artifacts.</p>
-    </div>
-    <div class="select">
-      <label for="config-select">Config</label>
-      <select
-        id="config-select"
-        bind:value={store.selectedConfigId}
-        on:change={(event) => store.selectConfig((event.target as HTMLSelectElement).value)}
-      >
-        {#each store.configs as config}
-          <option value={config.id}>{config.name}</option>
-        {/each}
-      </select>
-    </div>
+    <h1>Config Browser</h1>
   </header>
 
-  <section class="grid">
-    <div class="panel">
-      <div class="panel__header">
-        <h2>Configuration YAML</h2>
-        <span class="badge">{store.selectedConfig?.status ?? 'unknown'}</span>
-      </div>
-      <pre class="code"><code>{store.selectedConfig?.yaml}</code></pre>
-    </div>
-
-    <div class="panel">
-      <div class="panel__header">
-        <h2>Validation Results</h2>
-        <span class="badge {store.validationReport?.status === 'ok' ? 'badge--ok' : 'badge--danger'}">
-          {store.validationReport?.status ?? 'unknown'}
-        </span>
-      </div>
-      {#if store.validationReport?.status === 'ok'}
-        <p class="ok">No errors detected.</p>
-      {:else}
-        <div class="errors">
-          {#each store.validationReport?.errors ?? [] as error}
-            <div class="error">
-              <div class="error__head">
-                <span class="error__code">{error.code}</span>
-                <span class="error__path">{error.path}</span>
-              </div>
-              <p>{error.message}</p>
-            </div>
-          {/each}
-        </div>
-      {/if}
-      <div class="actions">
-        <button class="btn" on:click={() => store.validate()}>Re-validate</button>
-      </div>
-    </div>
+  <!-- Load -->
+  <section class="load-row">
+    <input
+      class="input"
+      type="text"
+      placeholder="Path to DSC v3 YAML config..."
+      bind:value={configPath}
+      onkeydown={(e) => { if (e.key === 'Enter') handleLoad(); }}
+    />
+    <button class="btn btn--primary" onclick={handleLoad} disabled={store.isRunning}>Load</button>
   </section>
 
-  <section class="panel">
-    <div class="panel__header">
-      <h2>Execution Plan</h2>
-      <span class="panel__meta">{store.executionPlan?.summary}</span>
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th>Resource</th>
-          <th>Action</th>
-          <th>Detail</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each store.executionPlan?.steps ?? [] as step}
-          <tr>
-            <td>{step.id}</td>
-            <td><span class="tag">{step.action}</span></td>
-            <td>{step.detail}</td>
-          </tr>
+  {#if store.error}
+    <div class="error-banner">⚠️ {store.error}</div>
+  {/if}
+
+  <!-- Config selector -->
+  {#if store.configs.length > 0}
+    <section class="config-select">
+      <label class="label">Select config:</label>
+      <select class="select" bind:value={store.selectedConfigId} onchange={(e) => store.selectConfig(e.currentTarget.value)}>
+        {#each store.configs as cfg}
+          <option value={cfg.id}>{cfg.name} ({cfg.resourceCount} resources)</option>
         {/each}
-      </tbody>
-    </table>
-  </section>
+      </select>
+      <button class="btn" onclick={() => store.validate()} disabled={store.isRunning}>Validate</button>
+      <button class="btn" onclick={() => store.plan()} disabled={store.isRunning}>Plan</button>
+    </section>
+  {/if}
 
-  <section class="panel">
-    <div class="panel__header">
-      <h2>Export</h2>
-      <span class="panel__meta">Copy results to clipboard</span>
-    </div>
-    <div class="export-actions">
-      <button class="btn" on:click={exportJunit}>JUnit XML</button>
-      <button class="btn" on:click={exportSarif}>SARIF JSON</button>
-    </div>
-    {#if store.lastExport}
-      <pre class="code code--compact"><code>{store.lastExport}</code></pre>
-    {/if}
-  </section>
+  {#if store.selectedConfig}
+    <section class="grid">
+      <!-- YAML viewer -->
+      <div class="panel">
+        <div class="panel__header">
+          <h2>YAML</h2>
+          <span class="badge">{store.selectedConfig.name}</span>
+        </div>
+        <pre class="yaml-viewer"><code>{store.selectedConfig.yaml}</code></pre>
+      </div>
+
+      <!-- Validation + Plan -->
+      <div class="panel">
+        <div class="panel__header">
+          <h2>Results</h2>
+        </div>
+
+        <!-- Validation -->
+        <div class="section">
+          <h3>Validation</h3>
+          {#if store.validationReport === null}
+            <p class="meta">Not yet validated</p>
+          {:else if store.validationReport.status === 'ok'}
+            <div class="result ok">✅ All checks passed</div>
+          {:else}
+            {#each store.validationReport.errors as err}
+              <div class="result error">❌ {err.message}</div>
+            {/each}
+          {/if}
+        </div>
+
+        <!-- Plan -->
+        <div class="section">
+          <h3>Execution Plan</h3>
+          {#if store.executionPlan === null}
+            <p class="meta">Click "Plan" to compute execution order</p>
+          {:else}
+            <table class="plan-table">
+              <thead>
+                <tr><th>#</th><th>Resource</th><th>Type</th></tr>
+              </thead>
+              <tbody>
+                {#each store.executionPlan.steps as step, i}
+                  <tr>
+                    <td class="num">{i + 1}</td>
+                    <td>{step.resourceName}</td>
+                    <td class="mono">{step.resourceType}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+        </div>
+
+        <!-- Export -->
+        <div class="section">
+          <h3>Export</h3>
+          <div class="export-btns">
+            <button class="btn" onclick={handleExportJunit}>Export JUnit XML</button>
+            <button class="btn" onclick={handleExportSarif}>Export SARIF JSON</button>
+          </div>
+          {#if store.lastExport}
+            <div class="export-preview">
+              <div class="export-preview__header">
+                <span>Export Output</span>
+                <button class="btn btn--sm" onclick={() => copyToClipboard(store.lastExport)}>Copy</button>
+              </div>
+              <pre class="export-code"><code>{store.lastExport}</code></pre>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </section>
+  {:else}
+    <section class="empty">
+      <p>Load a config to browse, validate, plan, and export.</p>
+    </section>
+  {/if}
 </div>
 
 <style>
-  .page {
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    --radius-lg: 6px;
-  }
-  .page__header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    gap: 16px;
-  }
-  h1 {
-    margin: 0 0 4px;
-  }
-  p {
-    margin: 0;
-    color: var(--color-text-muted, #94a3b8);
-  }
-  .select {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  select {
-    border-radius: 6px;
+  .page { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+  h1 { margin: 0; font-size: 1.5rem; }
+  h2 { margin: 0; font-size: 1.1rem; }
+  h3 { margin: 0 0 8px; font-size: 0.95rem; color: var(--color-text, #e5e7eb); }
+  p { margin: 0; }
+
+  .load-row { display: flex; gap: 12px; }
+  .input {
+    flex: 1; padding: 10px 14px; border-radius: 6px;
     border: 1px solid var(--color-border, #1f2937);
     background: var(--color-surface, #111827);
-    color: var(--color-text, #e5e7eb);
-    padding: 6px 10px;
-  }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: 16px;
-  }
-  .panel {
-    background: var(--color-surface, #111827);
-    border: 1px solid var(--color-border, #1f2937);
-    border-radius: 6px;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .panel__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .badge {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: var(--color-hover, #1f2937);
-  }
-  .badge--ok {
-    color: #10b981;
-    background: #10b98120;
-  }
-  .badge--danger {
-    color: #f87171;
-    background: #f8717120;
-  }
-  .code {
-    background: #0b1120;
-    border-radius: 6px;
-    padding: 14px;
-    font-size: 0.82rem;
-    color: #cbd5f5;
-    overflow: auto;
-    max-height: 340px;
-  }
-  .code--compact {
-    max-height: 220px;
-  }
-  .errors {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .error {
-    border: 1px solid #f8717120;
-    border-radius: 6px;
-    padding: 10px;
-    background: #f8717110;
-  }
-  .error__head {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.75rem;
-    margin-bottom: 4px;
-  }
-  .error__code {
-    color: #f87171;
-    font-weight: 600;
-  }
-  .error__path {
-    color: var(--color-text-muted, #94a3b8);
-  }
-  .ok {
-    color: #34d399;
-  }
-  .actions {
-    margin-top: 8px;
+    color: var(--color-text, #e5e7eb); font-family: monospace; font-size: 0.9rem;
   }
   .btn {
-    border-radius: 6px;
-    border: 1px solid var(--color-border, #1f2937);
-    background: var(--color-surface, #111827);
-    color: var(--color-text, #e5e7eb);
-    padding: 6px 12px;
-    font-weight: 600;
-    cursor: pointer;
+    border-radius: 6px; border: 1px solid var(--color-border);
+    background: var(--color-surface); color: var(--color-text);
+    padding: 8px 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
   }
-  table {
-    width: 100%;
-    border-collapse: collapse;
+  .btn--primary { background: var(--color-accent, #2563eb); border-color: transparent; }
+  .btn--sm { padding: 4px 10px; font-size: 0.75rem; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .error-banner { padding: 10px; border-radius: 6px; background: #ef444420; color: #f87171; font-size: 0.9rem; }
+
+  .config-select { display: flex; gap: 12px; align-items: center; }
+  .label { font-size: 0.85rem; color: var(--color-text-muted); white-space: nowrap; }
+  .select {
+    flex: 1; padding: 8px; border-radius: 6px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface); color: var(--color-text);
   }
-  th,
-  td {
-    text-align: left;
-    padding: 8px;
-    border-bottom: 1px solid var(--color-border, #1f2937);
-    font-size: 0.85rem;
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 6px; padding: 16px; display: flex; flex-direction: column; gap: 16px;
+    overflow: hidden;
   }
-  th {
-    color: var(--color-text-muted, #94a3b8);
-    font-weight: 600;
+  .panel__header { display: flex; justify-content: space-between; align-items: center; }
+  .badge { font-size: 0.7rem; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: var(--color-hover); }
+
+  .yaml-viewer {
+    margin: 0; padding: 12px; border-radius: 6px;
+    background: var(--color-bg, #0f1117); color: var(--color-text);
+    font-size: 0.8rem; line-height: 1.5; overflow-x: auto; max-height: 600px;
   }
-  .tag {
-    font-size: 0.7rem;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: var(--color-hover, #1f2937);
+
+  .section { border-top: 1px solid var(--color-border); padding-top: 12px; }
+  .meta { font-size: 0.85rem; color: var(--color-text-muted); }
+  .result { margin-top: 6px; font-size: 0.9rem; }
+  .result.ok { color: #34d399; }
+  .result.error { color: #f87171; }
+
+  .plan-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .plan-table th { text-align: left; padding: 6px 8px; color: var(--color-text-muted); border-bottom: 1px solid var(--color-border); }
+  .plan-table td { padding: 6px 8px; }
+  .num { color: var(--color-text-muted); width: 30px; }
+  .mono { font-family: monospace; font-size: 0.8rem; color: var(--color-text-muted); }
+
+  .export-btns { display: flex; gap: 12px; margin-bottom: 12px; }
+  .export-preview { border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; }
+  .export-preview__header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 12px; background: var(--color-hover); font-size: 0.8rem;
   }
-  .export-actions {
-    display: flex;
-    gap: 12px;
+  .export-code {
+    margin: 0; padding: 12px; font-size: 0.75rem; line-height: 1.4;
+    background: var(--color-bg); overflow-x: auto; max-height: 300px;
   }
+
+  .empty { text-align: center; padding: 48px 24px; color: var(--color-text-muted); }
 </style>

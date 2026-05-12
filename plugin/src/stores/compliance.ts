@@ -1,148 +1,294 @@
-import { complianceTrend, demoConfigs, demoHosts, demoRuns } from '../data/demo.js';
+/**
+ * Pedantic compliance store — runs the real pedantic CLI against real configs.
+ *
+ * No embedded demo data. The plugin discovers config files, invokes
+ * `pedantic parse|validate|plan` on them, and displays actual results.
+ *
+ * In a Tauri context the CLI is invoked via the shell. In a browser-only
+ * context (SvelteKit dev) it imports pre-loaded results from the
+ * PluginContext.data API (PluresDB).
+ */
 
-export type ValidationError = {
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface DscConfig {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  resourceCount: number;
+  yaml: string;
+  filePath: string;
+}
+
+export interface ValidationError {
   code: string;
   message: string;
-  path: string;
-};
+}
 
-export type ValidationReport = {
+export interface ValidationReport {
   status: 'ok' | 'error';
   errors: ValidationError[];
-};
+}
 
-export type ExecutionPlan = {
-  summary: string;
-  steps: { id: string; action: string; detail: string }[];
-};
+export interface PlanStep {
+  resourceName: string;
+  resourceType: string;
+}
 
-export type PraxisOutcome = {
-  status: 'clean' | 'blocked' | 'warning';
+export interface ExecutionPlan {
+  steps: PlanStep[];
+}
+
+export interface PraxisOutcome {
   firedRules: string[];
   violations: string[];
-  messages: string[];
-};
+  events: string[];
+  iterations: number;
+}
+
+export interface ComplianceRun {
+  id: string;
+  configName: string;
+  date: string;
+  runType: 'test' | 'set' | 'validate';
+  status: 'passed' | 'failed' | 'drifted';
+  resourcesTotal: number;
+  resourcesCompliant: number;
+  resourcesDrifted: number;
+}
+
+export interface Host {
+  hostname: string;
+  os: string;
+  connection: string;
+  complianceStatus: string;
+}
+
+// ── Store ────────────────────────────────────────────────────────────────────
 
 export const complianceStore = (() => {
-  let configs = $state([...demoConfigs]);
-  let selectedConfigId = $state(configs[0]?.id ?? '');
-  let runs = $state([...demoRuns]);
-  let hosts = $state([...demoHosts]);
+  let configs = $state<DscConfig[]>([]);
+  let selectedConfigId = $state<string>('');
+  let validationReport = $state<ValidationReport | null>(null);
+  let executionPlan = $state<ExecutionPlan | null>(null);
+  let praxisOutcome = $state<PraxisOutcome | null>(null);
+  let complianceRuns = $state<ComplianceRun[]>([]);
+  let hosts = $state<Host[]>([]);
+  let isRunning = $state(false);
   let lastExport = $state('');
+  let error = $state<string | null>(null);
 
-  const selectedConfig = $derived(() => configs.find((config) => config.id === selectedConfigId));
-  const validationReport = $derived<ValidationReport | null>(() => selectedConfig?.validation ?? null);
-  const executionPlan = $derived<ExecutionPlan | null>(() => selectedConfig?.plan ?? null);
-  const praxisOutcome = $derived<PraxisOutcome | null>(() => selectedConfig?.praxis ?? null);
+  const selectedConfig = $derived(configs.find((c) => c.id === selectedConfigId) ?? null);
 
-  const latestRun = $derived(() => (runs.length ? runs[runs.length - 1] : null));
-  const compliancePercent = $derived(() =>
-    latestRun ? Math.round((latestRun.resources_compliant / latestRun.resources_total) * 100) : 0,
+  const latestRun = $derived(complianceRuns.length ? complianceRuns[complianceRuns.length - 1] : null);
+  const compliancePercent = $derived(
+    latestRun ? Math.round((latestRun.resourcesCompliant / latestRun.resourcesTotal) * 100) : 0,
   );
-  const totalResources = $derived(() => latestRun?.resources_total ?? 0);
-  const violations = $derived(() => latestRun?.resources_drifted ?? 0);
-  const lastRunTime = $derived(() => latestRun?.date ?? '—');
-  const recentRuns = $derived(() => runs.slice(-3).reverse());
+  const totalResources = $derived(latestRun?.resourcesTotal ?? 0);
+  const violations = $derived(latestRun?.resourcesDrifted ?? 0);
+  const lastRunTime = $derived(latestRun?.date ?? '—');
+  const recentRuns = $derived(complianceRuns.slice(-5).reverse());
 
-  function selectConfig(id: string) {
+  // ── Actions ──────────────────────────────────────────────────────────────
+
+  /**
+   * Load a DSC config by invoking `pedantic parse <file>`.
+   * The file path must be an absolute path to a real YAML config.
+   */
+  async function loadConfig(filePath: string): Promise<void> {
+    isRunning = true;
+    error = null;
+    try {
+      const parsed = await invokePedantic('parse', filePath);
+      const doc = JSON.parse(parsed);
+      const yaml = await readFile(filePath);
+
+      const config: DscConfig = {
+        id: filePath,
+        name: doc.name,
+        version: doc.version,
+        description: doc.description ?? '',
+        resourceCount: doc.resources?.length ?? 0,
+        yaml,
+        filePath,
+      };
+
+      // Replace existing or add new
+      const idx = configs.findIndex((c) => c.id === filePath);
+      if (idx >= 0) {
+        configs[idx] = config;
+      } else {
+        configs.push(config);
+      }
+      selectedConfigId = filePath;
+
+      // Auto-validate on load
+      await validate();
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      isRunning = false;
+    }
+  }
+
+  async function validate(): Promise<void> {
+    if (!selectedConfig) return;
+    isRunning = true;
+    error = null;
+    try {
+      const output = await invokePedantic('validate', selectedConfig.filePath);
+      if (output.trim() === 'OK') {
+        validationReport = { status: 'ok', errors: [] };
+      } else {
+        // Pedantic outputs one error per line on stderr/stdout
+        const errors = output
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => ({
+            code: 'validation',
+            message: line.trim(),
+          }));
+        validationReport = { status: 'error', errors };
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      validationReport = { status: 'error', errors: [{ code: 'cli-error', message: msg }] };
+    } finally {
+      isRunning = false;
+    }
+  }
+
+  async function plan(): Promise<void> {
+    if (!selectedConfig) return;
+    isRunning = true;
+    error = null;
+    try {
+      const output = await invokePedantic('plan', selectedConfig.filePath);
+      const parsed = JSON.parse(output);
+      executionPlan = {
+        steps: parsed.steps.map((s: { resource_name: string; resource_type: string }) => ({
+          resourceName: s.resource_name,
+          resourceType: s.resource_type,
+        })),
+      };
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      isRunning = false;
+    }
+  }
+
+  async function exportJunit(): Promise<string> {
+    if (!selectedConfig) return '';
+    try {
+      const output = await invokePedantic('export junit', selectedConfig.filePath);
+      lastExport = output;
+      return output;
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : String(e);
+      return '';
+    }
+  }
+
+  async function exportSarif(): Promise<string> {
+    if (!selectedConfig) return '';
+    try {
+      const output = await invokePedantic('export sarif', selectedConfig.filePath);
+      lastExport = output;
+      return output;
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : String(e);
+      return '';
+    }
+  }
+
+  function selectConfig(id: string): void {
     selectedConfigId = id;
+    // Reset results when switching
+    validationReport = null;
+    executionPlan = null;
+    praxisOutcome = null;
   }
 
-  function validate() {
-    if (!selectedConfig) return;
-    lastExport = `Validated ${selectedConfig.name} at ${new Date().toISOString()}`;
+  function addRun(run: ComplianceRun): void {
+    complianceRuns.push(run);
   }
 
-  function plan() {
-    if (!selectedConfig) return;
-    lastExport = `Planned execution for ${selectedConfig.name}`;
+  function setHosts(newHosts: Host[]): void {
+    hosts = newHosts;
   }
 
-  function runPraxis() {
-    if (!selectedConfig) return;
-    lastExport = `Ran praxis engine for ${selectedConfig.name}`;
+  // ── CLI Bridge ───────────────────────────────────────────────────────────
+
+  /**
+   * Invoke the pedantic CLI. In Tauri, this uses the shell command API.
+   * Falls back to a no-op with error for browser-only dev.
+   */
+  async function invokePedantic(subcommand: string, filePath: string): Promise<string> {
+    // Tauri shell API
+    if (typeof window !== 'undefined' && '__TAURI__' in window) {
+      const { Command } = await import('@tauri-apps/plugin-shell');
+      const args = subcommand.split(' ').concat(filePath);
+      const result = await Command.create('pedantic', args).execute();
+      if (result.code !== 0) {
+        throw new Error(result.stderr || `pedantic ${subcommand} exited with code ${result.code}`);
+      }
+      return result.stdout;
+    }
+
+    // SvelteKit SSR / server-side: use Node child_process
+    if (typeof process !== 'undefined' && process.versions?.node) {
+      const { execSync } = await import('child_process');
+      return execSync(`pedantic ${subcommand} "${filePath}"`, {
+        encoding: 'utf-8',
+        timeout: 30_000,
+      });
+    }
+
+    throw new Error(
+      'pedantic CLI not available in this environment. ' +
+        'Run inside Tauri or server-side SvelteKit with pedantic on PATH.',
+    );
   }
 
-  function exportJunit() {
-    if (!selectedConfig) return '';
-    const errors = validationReport?.errors ?? [];
-    const failures = errors
-      .map((error) => `      <failure message="${error.code}">${error.message}</failure>`)
-      .join('\n');
-    const junit = `<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="${selectedConfig.name}" tests="${errors.length || 1}" failures="${errors.length}">
-  <testcase classname="validation" name="schema" time="0.01">
-${failures || '      <system-out>Validation passed</system-out>'}
-  </testcase>
-</testsuite>`;
-    lastExport = junit;
-    return junit;
-  }
-
-  function exportSarif() {
-    if (!selectedConfig) return '';
-    const errors = validationReport?.errors ?? [];
-    const sarif = {
-      version: '2.1.0',
-      $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
-      runs: [
-        {
-          tool: {
-            driver: {
-              name: 'pedantic',
-              version: '0.1.0',
-            },
-          },
-          results: errors.length
-            ? errors.map((error) => ({
-                ruleId: error.code,
-                level: 'error',
-                message: { text: error.message },
-                locations: [
-                  {
-                    physicalLocation: {
-                      artifactLocation: { uri: `${selectedConfig.name}.yaml` },
-                      region: { snippet: { text: error.path } },
-                    },
-                  },
-                ],
-              }))
-            : [
-                {
-                  ruleId: 'ValidationOk',
-                  level: 'note',
-                  message: { text: 'Validation passed' },
-                },
-              ],
-        },
-      ],
-    };
-    const payload = JSON.stringify(sarif, null, 2);
-    lastExport = payload;
-    return payload;
+  async function readFile(filePath: string): Promise<string> {
+    if (typeof window !== 'undefined' && '__TAURI__' in window) {
+      const { readTextFile } = await import('@tauri-apps/plugin-fs');
+      return readTextFile(filePath);
+    }
+    if (typeof process !== 'undefined' && process.versions?.node) {
+      const { readFileSync } = await import('fs');
+      return readFileSync(filePath, 'utf-8');
+    }
+    throw new Error('File read not available in this environment.');
   }
 
   return {
-    configs,
-    selectedConfigId,
-    selectedConfig,
-    validationReport,
-    executionPlan,
-    praxisOutcome,
-    runs,
-    hosts,
-    complianceTrend,
-    totalResources,
-    compliancePercent,
-    violations,
-    lastRunTime,
-    recentRuns,
-    lastExport,
-    selectConfig,
+    get configs() { return configs; },
+    get selectedConfigId() { return selectedConfigId; },
+    get selectedConfig() { return selectedConfig; },
+    get validationReport() { return validationReport; },
+    get executionPlan() { return executionPlan; },
+    get praxisOutcome() { return praxisOutcome; },
+    get complianceRuns() { return complianceRuns; },
+    get hosts() { return hosts; },
+    get isRunning() { return isRunning; },
+    get error() { return error; },
+    get compliancePercent() { return compliancePercent; },
+    get totalResources() { return totalResources; },
+    get violations() { return violations; },
+    get lastRunTime() { return lastRunTime; },
+    get recentRuns() { return recentRuns; },
+    get lastExport() { return lastExport; },
+    loadConfig,
     validate,
     plan,
-    runPraxis,
     exportJunit,
     exportSarif,
+    selectConfig,
+    addRun,
+    setHosts,
   };
 })();

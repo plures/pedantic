@@ -2,77 +2,37 @@
   import { complianceStore } from '../../stores/compliance.js';
 
   const store = complianceStore;
-
-  let status = $derived(() => (store.violations === 0 ? 'compliant' : 'drifted'));
 </script>
 
 <div class="widget">
-  <div class="widget__header">
-    <h3>Compliance Status</h3>
-    <span class="badge {status === 'compliant' ? 'badge--ok' : 'badge--warn'}">{status}</span>
-  </div>
-  <div class="summary">
-    <div>
-      <strong>{store.totalResources}</strong>
-      <span>resources</span>
+  {#if store.selectedConfig}
+    <div class="status-indicator {store.validationReport?.status === 'ok' ? 'ok' : store.validationReport ? 'error' : 'unknown'}">
+      {store.validationReport?.status === 'ok' ? '✓' : store.validationReport ? '✗' : '?'}
     </div>
-    <div>
-      <strong>{store.totalResources - store.violations}</strong>
-      <span>compliant</span>
+    <div class="details">
+      <span class="config-name">{store.selectedConfig.name}</span>
+      <span class="meta">{store.selectedConfig.resourceCount} resources</span>
     </div>
-    <div>
-      <strong>{store.violations}</strong>
-      <span>drifted</span>
+  {:else}
+    <div class="status-indicator unknown">—</div>
+    <div class="details">
+      <span class="config-name">No config loaded</span>
+      <span class="meta">Load a DSC config to see status</span>
     </div>
-  </div>
-  <a class="link" href="/pedantic">View dashboard →</a>
+  {/if}
 </div>
 
 <style>
-  .widget {
-    background: var(--color-surface, #111827);
-    border: 1px solid var(--color-border, #1f2937);
-    border-radius: 6px;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+  .widget { display: flex; align-items: center; gap: 14px; padding: 4px 0; }
+  .status-indicator {
+    width: 48px; height: 48px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.4rem; font-weight: 700; flex-shrink: 0;
   }
-  .widget__header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .badge {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: var(--color-hover, #1f2937);
-  }
-  .badge--ok {
-    color: #10b981;
-    background: #10b98120;
-  }
-  .badge--warn {
-    color: #f59e0b;
-    background: #f59e0b20;
-  }
-  .summary {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    font-size: 0.85rem;
-    color: var(--color-text-muted, #94a3b8);
-  }
-  strong {
-    display: block;
-    color: var(--color-text, #e5e7eb);
-    font-size: 1.1rem;
-  }
-  .link {
-    color: var(--color-accent, #60a5fa);
-    text-decoration: none;
-    font-size: 0.85rem;
-  }
+  .status-indicator.ok { background: #10b98120; color: #34d399; }
+  .status-indicator.error { background: #ef444420; color: #f87171; }
+  .status-indicator.unknown { background: var(--color-hover, #1f2937); color: var(--color-text-muted); }
+  .details { display: flex; flex-direction: column; gap: 2px; }
+  .config-name { font-weight: 600; font-size: 0.95rem; color: var(--color-text, #e5e7eb); }
+  .meta { font-size: 0.8rem; color: var(--color-text-muted, #94a3b8); }
 </style>
