@@ -1,0 +1,48 @@
+$schema: https://aka.ms/dsc/schemas/v3/bundled/config/document.json
+
+name: AgentHostCluster
+version: 1.0.0
+parameters:
+- name: VmSwitchAdapter
+  type: string
+- name: CsvRoot
+  type: string
+resources:
+# --- Ensure Hyper-V role present ---
+- name: HyperVFeature
+  type: PSDesiredStateConfiguration/WindowsFeature
+  properties:
+    Name: Hyper-V
+    Ensure: Present
+    IncludeAllSubFeature: true
+# --- Ensure Failover-Clustering role (for clustered hosts) ---
+- name: ClusterFeature
+  type: PSDesiredStateConfiguration/WindowsFeature
+  properties:
+    Name: Failover-Clustering
+    Ensure: Present
+    IncludeAllSubFeature: false
+# --- Create external VMSwitch ---
+- name: ExternalVSwitch
+  type: HyperVDsc/VMSwitch
+  dependsOn:
+  - '[WindowsFeature]HyperVFeature'
+  properties:
+    Name: External
+    SwitchType: External
+    NetAdapterName: "[Parameter('VmSwitchAdapter')]"
+    EnableIov: true
+# --- Ensure CSV storage directories exist ---
+- name: CsvFolders
+  type: PSDesiredStateConfiguration/File
+  properties:
+    DestinationPath: "[Parameter('CsvRoot')]\\VMs"
+    Type: Directory
+    Ensure: Present
+# another directory
+- name: CsvHdFolders
+  type: PSDesiredStateConfiguration/File
+  properties:
+    DestinationPath: "[Parameter('CsvRoot')]\\VMHardDrives"
+    Type: Directory
+    Ensure: Present 

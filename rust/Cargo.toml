@@ -1,3 +1,26 @@
 [workspace]
-members = ["pedantic-core", "pedantic-node"]
-resolver = "2"
+resolver = "3"
+members = [
+  "crates/pedantic-core",
+  "crates/pedantic-executor",
+  "crates/pedantic-cli",
+  "crates/pedantic-node",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/plures/pedantic"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+clap = { version = "4.5", features = ["derive"] }
+thiserror = "2.0"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+minijinja = "2.8"
+tokio = { version = "1.46", features = ["rt-multi-thread", "macros", "process"] }
+tracing = "0.1"
+regex = "1.10"
+async-trait = "0.1"
