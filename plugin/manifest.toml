@@ -1,0 +1,164 @@
+[plugin]
+name = "pedantic"
+version = "0.1.0"
+description = "DSC v3 compliance and configuration validation with praxis-backed policy enforcement"
+author = "plures"
+license = "MIT"
+icon = "🛡️"
+entry = "src/index.ts"
+radix = ">=0.2.0"
+keywords = ["dsc", "compliance", "configuration", "praxis", "validation"]
+
+# ── Data Schema ────────────────────────────────────────────────
+
+[[schema.entities]]
+name = "config_document"
+display_name = "Config Document"
+icon = "📝"
+
+  [[schema.entities.fields]]
+  name = "name"
+  field_type = "String"
+  required = true
+  description = "Configuration name"
+
+  [[schema.entities.fields]]
+  name = "version"
+  field_type = "String"
+  required = true
+
+  [[schema.entities.fields]]
+  name = "description"
+  field_type = "String"
+  required = false
+
+  [[schema.entities.fields]]
+  name = "resource_count"
+  field_type = "Number"
+  required = true
+
+  [[schema.entities.fields]]
+  name = "status"
+  field_type = { Enum = ["draft", "validated", "deployed"] }
+  required = true
+
+[[schema.entities]]
+name = "compliance_run"
+display_name = "Compliance Run"
+icon = "📊"
+
+  [[schema.entities.fields]]
+  name = "run_type"
+  field_type = { Enum = ["test", "set", "validate"] }
+  required = true
+
+  [[schema.entities.fields]]
+  name = "status"
+  field_type = { Enum = ["passed", "failed", "drifted"] }
+  required = true
+
+  [[schema.entities.fields]]
+  name = "resources_total"
+  field_type = "Number"
+  required = true
+
+  [[schema.entities.fields]]
+  name = "resources_compliant"
+  field_type = "Number"
+  required = true
+
+  [[schema.entities.fields]]
+  name = "resources_drifted"
+  field_type = "Number"
+  required = true
+
+  [[schema.entities.fields]]
+  name = "started_at"
+  field_type = "Date"
+  required = true
+
+  [[schema.entities.fields]]
+  name = "completed_at"
+  field_type = "Date"
+  required = true
+
+[[schema.entities]]
+name = "host"
+display_name = "Host"
+icon = "🖥️"
+
+  [[schema.entities.fields]]
+  name = "hostname"
+  field_type = "String"
+  required = true
+
+  [[schema.entities.fields]]
+  name = "os"
+  field_type = { Enum = ["windows", "linux", "macos"] }
+  required = true
+
+  [[schema.entities.fields]]
+  name = "connection"
+  field_type = { Enum = ["local", "ssh", "winrm"] }
+  required = true
+
+  [[schema.entities.fields]]
+  name = "compliance_status"
+  field_type = { Enum = ["compliant", "drifted", "unknown"] }
+  required = true
+
+[[schema.relationships]]
+name = "compliance_run_config"
+from_entity = "compliance_run"
+to_entity = "config_document"
+cardinality = "many_to_one"
+
+[[schema.relationships]]
+name = "compliance_run_host"
+from_entity = "compliance_run"
+to_entity = "host"
+cardinality = "many_to_one"
+
+# ── Praxis Logic ────────────────────────────────────────────────
+
+[[logic.rules]]
+name = "overdue-compliance"
+description = "Flag hosts with no compliance run in 7 days"
+condition = "host.compliance_status == 'unknown' || last_compliance_run(host).age_days > 7"
+action = "emit warning: '{host.hostname} has no compliance run in the last 7 days'"
+
+[[logic.rules]]
+name = "drift-escalation"
+description = "If drift exceeds threshold, emit warning"
+condition = "compliance_run.resources_drifted / compliance_run.resources_total * 100 > settings('pedantic.drift-threshold')"
+action = "emit warning: 'Drift exceeds threshold for {host.hostname}'"
+
+[[logic.rules]]
+name = "failed-run-alert"
+description = "Failed run triggers recheck requirement"
+condition = "compliance_run.status == 'failed'"
+action = "create task: 'Recheck compliance for {host.hostname}'"
+
+[[logic.constraints]]
+name = "no-set-without-test"
+description = "Cannot set without prior test"
+check = "compliance_run.run_type != 'set' || last_run(host).run_type == 'test'"
+error_message = "Cannot run set without a prior test run."
+
+[[logic.constraints]]
+name = "draft-config-block"
+description = "Cannot deploy draft configs"
+check = "config_document.status != 'draft'"
+error_message = "Draft configs must be validated before deployment."
+
+# ── Permissions ────────────────────────────────────────────────
+
+[permissions]
+pluresdb_scopes = ["read", "write"]
+network = false
+tool_access = ["pedantic-cli"]
+
+# ── Dependencies ────────────────────────────────────────────────
+
+[dependencies]
+plugins = []
