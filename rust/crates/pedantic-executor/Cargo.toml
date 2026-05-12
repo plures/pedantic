@@ -8,7 +8,9 @@ license = "MIT"
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 chrono = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "time"] }
 tracing = { workspace = true }
 async-trait = { workspace = true }
+pedantic-core = { path = "../pedantic-core" }

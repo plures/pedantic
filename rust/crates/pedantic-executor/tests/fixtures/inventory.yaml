@@ -1,0 +1,15 @@
+all:
+  hosts:
+    server1:
+      hostname: 192.168.1.10
+      os: windows
+      connection: winrm
+    server2:
+      hostname: 192.168.1.11
+      os: linux
+      connection: ssh
+  groups:
+    hyperv_hosts:
+      hosts: [server1]
+      vars:
+        vm_switch_adapter: Ethernet

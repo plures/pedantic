@@ -1,215 +1,142 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-fn to_napi_err(err: pedantic_core::Error) -> napi::Error {
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn to_napi_err(err: impl std::fmt::Display) -> napi::Error {
     napi::Error::new(Status::GenericFailure, format!("{err}"))
 }
 
-#[napi(object)]
-pub struct MappingEntryJs {
-    pub ansible_module: Option<String>,
-    pub ansible_primitive: Option<String>,
-    pub dsc_command: String,
-    pub description: Option<String>,
-    pub supports_check: Option<bool>,
-    pub supports_diff: Option<bool>,
-    pub backend: Option<String>,
-}
+// ---------------------------------------------------------------------------
+// Parser bindings
+// ---------------------------------------------------------------------------
 
-impl From<pedantic_core::MappingEntry> for MappingEntryJs {
-    fn from(entry: pedantic_core::MappingEntry) -> Self {
-        Self {
-            ansible_module: entry.ansible_module,
-            ansible_primitive: entry.ansible_primitive,
-            dsc_command: entry.dsc_command,
-            description: entry.description,
-            supports_check: entry.supports_check,
-            supports_diff: entry.supports_diff,
-            backend: entry.backend,
-        }
-    }
-}
-
+/// Parse a DSC v3 YAML document and return the parsed model as JSON.
 #[napi]
-pub fn render_template(source: String, vars_json: String, strict: Option<bool>) -> Result<String> {
-    let vars: serde_json::Value = serde_json::from_str(&vars_json)
-        .map_err(|e| napi::Error::new(Status::InvalidArg, format!("Invalid vars JSON: {e}")))?;
-    let strict = strict.unwrap_or(true);
-    let result = pedantic_core::render_template(&source, &vars, strict).map_err(to_napi_err)?;
-    Ok(result.rendered)
+pub fn parse_dsc_v3(yaml: String) -> Result<String> {
+    let doc = pedantic_core::parse_dsc_v3(&yaml).map_err(to_napi_err)?;
+    serde_json::to_string_pretty(&doc).map_err(to_napi_err)
 }
 
+/// Parse a Simple DSL YAML document and return the parsed model as JSON.
 #[napi]
-pub fn render_scenario_report(report_json: String, template: Option<String>, format: Option<String>) -> Result<String> {
-    let report: pedantic_core::ScenarioReport = serde_json::from_str(&report_json)
-        .map_err(|e| napi::Error::new(Status::InvalidArg, format!("Invalid report JSON: {e}")))?;
-    let rendered = pedantic_core::render_scenario_report(
-        &report,
-        template.as_deref(),
-        format.as_deref().unwrap_or("markdown"),
-    )
-    .map_err(to_napi_err)?;
-    Ok(rendered)
+pub fn parse_simple_dsl(yaml: String) -> Result<String> {
+    let doc = pedantic_core::parse_simple_dsl(&yaml).map_err(to_napi_err)?;
+    serde_json::to_string_pretty(&doc).map_err(to_napi_err)
 }
 
-#[napi]
-pub fn load_mapping_yaml(yaml: String) -> Result<Vec<MappingEntryJs>> {
-    let entries = pedantic_core::load_mapping_from_str(&yaml).map_err(to_napi_err)?;
-    Ok(entries.into_iter().map(MappingEntryJs::from).collect())
-}
+// ---------------------------------------------------------------------------
+// Validator bindings
+// ---------------------------------------------------------------------------
 
 #[napi(object)]
-pub struct ScenarioInstanceJs {
-    pub id: String,
-    pub host: Option<String>,
-    pub vars_json: String,
+pub struct ValidationResultJs {
+    pub ok: bool,
+    pub errors: Vec<String>,
 }
 
+/// Validate a DSC v3 YAML document. Returns an object with `ok` and `errors`.
 #[napi]
-pub fn expand_scenario_yaml(scenario_yaml: String) -> Result<Vec<ScenarioInstanceJs>> {
-    let spec: pedantic_core::ScenarioSpec = serde_yaml::from_str(&scenario_yaml)
-        .map_err(|e| napi::Error::new(Status::InvalidArg, format!("Invalid scenario YAML: {e}")))?;
-    let instances = pedantic_core::expand_scenario(&spec).map_err(to_napi_err)?;
-    instances
-        .into_iter()
-        .map(|i| {
-            let vars_json = serde_json::to_string(&i.vars)
-                .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
-            Ok(ScenarioInstanceJs {
-                id: i.id,
-                host: i.host,
-                vars_json,
-            })
-        })
-        .collect()
-}
-
-#[napi(object)]
-pub struct PlanTaskJs {
-    pub id: String,
-    pub kind: String,
-    pub command: Option<String>,
-    pub params_json: Option<String>,
-    pub when: Option<String>,
-    pub register: Option<String>,
-    pub notify: Option<Vec<String>>,
-    pub listen: Option<String>,
-    pub changed_when: Option<String>,
-    pub failed_when: Option<String>,
-    pub is_handler: Option<bool>,
-    pub tags: Option<Vec<String>>,
-    pub loop_item_json: Option<String>,
-    pub skipped: Option<bool>,
-    pub when_result: Option<bool>,
-    pub error: Option<String>,
-    pub changed: Option<bool>,
-    pub diff: Option<String>,
-    pub diffs_json: Option<String>,
-    pub check: Option<bool>,
-    pub result_json: Option<String>,
-}
-
-fn task_instance_to_js(t: pedantic_core::TaskInstance) -> Result<PlanTaskJs> {
-    let (kind, command, params_json) = match t.kind {
-        pedantic_core::TaskKind::Resource { command, params } => {
-            let json = serde_json::to_string(&params)
-                .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
-            ("resource".into(), Some(command), Some(json))
-        }
-        pedantic_core::TaskKind::Runtime(op) => {
-            let json = serde_json::to_string(&op)
-                .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
-            ("runtime".into(), None, Some(json))
-        }
-    };
-
-    let loop_item_json = t
-        .loop_item
-        .map(|v| serde_json::to_string(&v))
-        .transpose()
-        .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
-
-    Ok(PlanTaskJs {
-        id: t.id,
-        kind,
-        command,
-        params_json,
-        when: t.when,
-        register: t.register,
-        notify: Some(t.notify.clone()),
-        listen: t.listen,
-        changed_when: t.changed_when,
-        failed_when: t.failed_when,
-        is_handler: Some(t.meta.is_handler),
-        tags: Some(t.meta.tags),
-        loop_item_json,
-        skipped: None,
-        when_result: None,
-        error: None,
-        changed: None,
-        diff: None,
-        diffs_json: None,
-        check: None,
-        result_json: None,
+pub fn validate_document(yaml: String) -> Result<ValidationResultJs> {
+    let doc = pedantic_core::parse_dsc_v3(&yaml).map_err(to_napi_err)?;
+    let report = pedantic_core::validate_document(&doc);
+    Ok(ValidationResultJs {
+        ok: report.is_ok(),
+        errors: report.errors.iter().map(|e| e.to_string()).collect(),
     })
 }
 
-#[napi]
-pub fn plan_from_resources(resources_json: String, manifest_yaml: String) -> Result<Vec<PlanTaskJs>> {
-    let resources: Vec<pedantic_core::Resource> = serde_json::from_str(&resources_json)
-        .map_err(|e| napi::Error::new(Status::InvalidArg, format!("Invalid resources JSON: {e}")))?;
-    let manifest = pedantic_core::load_mapping_from_str(&manifest_yaml).map_err(to_napi_err)?;
+// ---------------------------------------------------------------------------
+// Planner bindings
+// ---------------------------------------------------------------------------
 
-    let plan = pedantic_core::plan_from_resources(&resources, &manifest);
-    plan.tasks
-        .into_iter()
-        .map(task_instance_to_js)
-        .collect()
+/// Plan execution order for a DSC v3 YAML document. Returns the plan as JSON.
+#[napi]
+pub fn plan_execution(yaml: String) -> Result<String> {
+    let doc = pedantic_core::parse_dsc_v3(&yaml).map_err(to_napi_err)?;
+    let plan = pedantic_core::plan_execution(&doc).map_err(to_napi_err)?;
+    serde_json::to_string_pretty(&plan).map_err(to_napi_err)
 }
 
+// ---------------------------------------------------------------------------
+// Export bindings
+// ---------------------------------------------------------------------------
+
+/// Validate a DSC v3 YAML document and export the validation report as JUnit XML.
 #[napi]
-pub fn plan_with_facts(
-    resources_json: String,
-    manifest_yaml: String,
-    facts_json: String,
-) -> Result<Vec<PlanTaskJs>> {
-    let resources: Vec<pedantic_core::Resource> = serde_json::from_str(&resources_json)
-        .map_err(|e| napi::Error::new(Status::InvalidArg, format!("Invalid resources JSON: {e}")))?;
-    let manifest = pedantic_core::load_mapping_from_str(&manifest_yaml).map_err(to_napi_err)?;
-    let facts_value: serde_json::Value = serde_json::from_str(&facts_json)
-        .map_err(|e| napi::Error::new(Status::InvalidArg, format!("Invalid facts JSON: {e}")))?;
-    let facts_map = facts_value
-        .as_object()
-        .cloned()
-        .ok_or_else(|| napi::Error::new(Status::InvalidArg, "facts_json must be a JSON object"))?;
+pub fn export_junit(yaml: String, suite_name: Option<String>) -> Result<String> {
+    let doc = pedantic_core::parse_dsc_v3(&yaml).map_err(to_napi_err)?;
+    let report = pedantic_core::validate_document(&doc);
+    let name = suite_name.as_deref().unwrap_or("pedantic");
+    Ok(pedantic_core::export::export_junit(&report, name))
+}
 
-    let plan = pedantic_core::plan_from_resources(&resources, &manifest);
-    let decisions = pedantic_core::apply_when(&plan, &facts_map);
+/// Validate a DSC v3 YAML document and export the validation report as SARIF JSON.
+#[napi]
+pub fn export_sarif(yaml: String, tool_name: Option<String>) -> Result<String> {
+    let doc = pedantic_core::parse_dsc_v3(&yaml).map_err(to_napi_err)?;
+    let report = pedantic_core::validate_document(&doc);
+    let name = tool_name.as_deref().unwrap_or("pedantic");
+    Ok(pedantic_core::export::export_sarif(&report, name))
+}
 
-    decisions
+/// Export a parsed DSC v3 document back to YAML (round-trip).
+#[napi]
+pub fn export_dsc_v3(yaml: String) -> Result<String> {
+    let doc = pedantic_core::parse_dsc_v3(&yaml).map_err(to_napi_err)?;
+    pedantic_core::export::export_dsc_v3(&doc).map_err(to_napi_err)
+}
+
+// ---------------------------------------------------------------------------
+// Ansible mapping bindings
+// ---------------------------------------------------------------------------
+
+#[napi(object)]
+pub struct MappingEntryJs {
+    pub dsc_resource: String,
+    pub ansible_module: String,
+}
+
+/// Load the bundled Ansible mapping and return entries.
+#[napi]
+pub fn load_ansible_mapping() -> Result<Vec<MappingEntryJs>> {
+    let mapping = pedantic_core::load_ansible_mapping().map_err(to_napi_err)?;
+    Ok(mapping
+        .mappings
         .into_iter()
-        .map(|d| {
-            let mut t = task_instance_to_js(d.task)?;
-            t.skipped = Some(d.skipped);
-            t.when_result = d.when_result;
-            t.error = d.error;
-            if let Some(res) = d.result {
-                t.changed = Some(res.changed);
-                t.check = Some(res.check);
-                if let Some(diffs) = res.diffs {
-                    let diffs_json = serde_json::to_string(&diffs)
-                        .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
-                    t.diffs_json = Some(diffs_json.clone());
-                    // keep legacy diff as stringified diffs for now
-                    t.diff = Some(diffs_json);
-                }
-                t.result_json = res
-                    .data
-                    .map(|v| serde_json::to_string(&v))
-                    .transpose()
-                    .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
-            }
-            Ok(t)
+        .map(|e| MappingEntryJs {
+            dsc_resource: e.dsc_resource,
+            ansible_module: e.ansible_module,
         })
-        .collect()
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Praxis engine bindings
+// ---------------------------------------------------------------------------
+
+/// Run the praxis engine on a DSC v3 YAML document. Returns the engine
+/// outcome as JSON including fired rules, iteration count, facts, events,
+/// and any constraint violations.
+#[napi]
+pub fn run_praxis_engine(yaml: String) -> Result<String> {
+    use pedantic_core::praxis::*;
+
+    let doc = pedantic_core::parse_dsc_v3(&yaml).map_err(to_napi_err)?;
+
+    let engine = Engine::builder()
+        .add_rule(Box::new(ParseAndValidate))
+        .add_rule(Box::new(DetectDrift))
+        .add_rule(Box::new(EscalateFailure))
+        .add_rule(Box::new(PlanRemediation))
+        .add_constraint(Box::new(NoSetWithoutTest))
+        .add_constraint(Box::new(NoDeployDraft))
+        .build();
+
+    let facts = vec![Fact::ConfigDocument(doc)];
+    let outcome = engine.evaluate(facts);
+
+    serde_json::to_string_pretty(&outcome).map_err(to_napi_err)
 }

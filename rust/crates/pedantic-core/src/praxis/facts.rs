@@ -36,6 +36,8 @@ pub struct PlanTask {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExecutionResult {
+    pub resource_name: String,
+    pub action: PlanAction,
     pub success: bool,
     pub message: Option<String>,
 }
