@@ -237,6 +237,165 @@ YAML
   ok "Generated inventory: $INVENTORY_FILE (host: $hostname)"
 }
 
+# ── Report Generation ──────────────────────────────────────────────────────
+
+generate_report() {
+  local report="$DEMO_DIR/report.md"
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+  local hostname
+  hostname=$(hostname)
+
+  cat > "$report" << HEADER
+# Pedantic Compliance Report
+
+**Generated:** $timestamp
+**Host:** $hostname
+**DSC Host:** $DSC_HOST
+**Pedantic:** $($PEDANTIC_BIN --version 2>&1 || echo "unknown")
+
+---
+
+HEADER
+
+  # Summary table
+  local total=0 passed=0 failed=0 errors=0
+  echo "## Summary" >> "$report"
+  echo "" >> "$report"
+  echo "| Config | Resources | Validation | Plan Steps | Issues |" >> "$report"
+  echo "|--------|-----------|------------|------------|--------|" >> "$report"
+
+  for config in "$CONFIGS_DIR"/*.yaml; do
+    local name
+    name=$(basename "$config" .yaml)
+    total=$((total + 1))
+
+    # Resource count from parse
+    local resources="—"
+    if [[ -f "$RESULTS_DIR/${name}.parse.json" ]]; then
+      resources=$(jq '.resources | length' "$RESULTS_DIR/${name}.parse.json" 2>/dev/null || echo "—")
+    fi
+
+    # Validation status
+    local val_status="—" val_issues=""
+    if [[ -f "$RESULTS_DIR/${name}.validate.txt" ]]; then
+      local val_content
+      val_content=$(cat "$RESULTS_DIR/${name}.validate.txt")
+      if [[ "$val_content" == "OK" ]]; then
+        val_status="✅ Passed"
+        passed=$((passed + 1))
+      else
+        val_status="❌ Failed"
+        failed=$((failed + 1))
+        val_issues=$(echo "$val_content" | wc -l | tr -d ' ')
+      fi
+    fi
+
+    # Plan steps
+    local steps="—"
+    if [[ -f "$RESULTS_DIR/${name}.plan.json" ]]; then
+      steps=$(jq '.steps | length' "$RESULTS_DIR/${name}.plan.json" 2>/dev/null || echo "err")
+      [[ "$steps" == "null" ]] && steps="err"
+    fi
+
+    # Issues
+    local issue_text="—"
+    if [[ -n "$val_issues" && "$val_issues" != "0" ]]; then
+      issue_text="$val_issues error(s)"
+      errors=$((errors + val_issues))
+    elif [[ "$val_status" == "✅ Passed" ]]; then
+      issue_text="None"
+    fi
+
+    echo "| **$name** | $resources | $val_status | $steps | $issue_text |" >> "$report"
+  done
+
+  echo "" >> "$report"
+  echo "> **$total** configs evaluated — **$passed** passed, **$failed** failed, **$errors** total issue(s)" >> "$report"
+  echo "" >> "$report"
+
+  # Detail sections per config
+  echo "---" >> "$report"
+  echo "" >> "$report"
+  echo "## Details" >> "$report"
+  echo "" >> "$report"
+
+  for config in "$CONFIGS_DIR"/*.yaml; do
+    local name
+    name=$(basename "$config" .yaml)
+
+    echo "### $name" >> "$report"
+    echo "" >> "$report"
+    echo "**File:** \`$config\`" >> "$report"
+    echo "" >> "$report"
+
+    # Validation
+    if [[ -f "$RESULTS_DIR/${name}.validate.txt" ]]; then
+      local val_content
+      val_content=$(cat "$RESULTS_DIR/${name}.validate.txt")
+      if [[ "$val_content" == "OK" ]]; then
+        echo "✅ **Validation passed**" >> "$report"
+      else
+        echo "❌ **Validation errors:**" >> "$report"
+        echo "" >> "$report"
+        echo '```' >> "$report"
+        cat "$RESULTS_DIR/${name}.validate.txt" >> "$report"
+        echo '```' >> "$report"
+      fi
+      echo "" >> "$report"
+    fi
+
+    # Plan
+    if [[ -f "$RESULTS_DIR/${name}.plan.json" ]]; then
+      local step_count
+      step_count=$(jq '.steps | length' "$RESULTS_DIR/${name}.plan.json" 2>/dev/null || echo "0")
+      if [[ "$step_count" != "0" && "$step_count" != "null" ]]; then
+        echo "**Execution Plan** ($step_count steps):" >> "$report"
+        echo "" >> "$report"
+        echo "| # | Resource | Type |" >> "$report"
+        echo "|---|----------|------|" >> "$report"
+        jq -r '.steps | to_entries[] | "| " + ((.key + 1) | tostring) + " | " + .value.resource_name + " | " + .value.resource_type + " |"' \
+          "$RESULTS_DIR/${name}.plan.json" >> "$report" 2>/dev/null || echo "| — | (plan error) | — |" >> "$report"
+        echo "" >> "$report"
+      fi
+    fi
+
+    # Live DSC test
+    if [[ -f "$RESULTS_DIR/${name}.dsc-test.json" ]]; then
+      echo "**Live DSC Test:**" >> "$report"
+      echo "" >> "$report"
+      echo '```' >> "$report"
+      cat "$RESULTS_DIR/${name}.dsc-test.json" >> "$report"
+      echo '```' >> "$report"
+      echo "" >> "$report"
+    fi
+
+    echo "---" >> "$report"
+    echo "" >> "$report"
+  done
+
+  # Export artifacts listing
+  echo "## Artifacts" >> "$report"
+  echo "" >> "$report"
+  echo "| File | Size |" >> "$report"
+  echo "|------|------|" >> "$report"
+  for f in "$RESULTS_DIR"/*; do
+    local fname size
+    fname=$(basename "$f")
+    size=$(du -h "$f" | cut -f1)
+    echo "| \`$fname\` | $size |" >> "$report"
+  done
+  echo "" >> "$report"
+
+  ok "Report generated: $report"
+
+  # Print to terminal too
+  log ""
+  log "━━━ Compliance Report ━━━"
+  log ""
+  cat "$report"
+}
+
 # ── Run Pedantic ────────────────────────────────────────────────────────────
 
 run_pedantic() {
@@ -320,11 +479,12 @@ run_pedantic() {
     warn "Skipping live DSC test — DSC v3 not available"
   fi
 
-  log ""
-  log "━━━ Results ━━━"
-  ls -la "$RESULTS_DIR"/ | tail -n +2
+  # ── Generate Report ─────────────────────────────────────────────────────
+  generate_report
+
   log ""
   log "All results in: $RESULTS_DIR"
+  log "Report: $DEMO_DIR/report.md"
   log "Point the pedantic plugin at configs in: $CONFIGS_DIR"
 }
 
