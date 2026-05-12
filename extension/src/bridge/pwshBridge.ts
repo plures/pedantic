@@ -1,3 +1,5 @@
+/// <reference types="node" />
+import { setTimeout, clearTimeout } from 'node:timers';
 import { spawn } from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';

@@ -74,7 +74,7 @@ export class InventoryTreeProvider implements vscode.TreeDataProvider<InventoryT
   constructor() {}
 
   refresh(): void {
-    this._onDidChangeTreeData.fire();
+    this._onDidChangeTreeData.fire(undefined);
   }
 
   setInventory(inventory: Inventory): void {
