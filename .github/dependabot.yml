@@ -15,8 +15,10 @@ updates:
     commit-message:
       prefix: "ci"
       include: "scope"
-    reviewers:
-      - "plures/maintainers"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   # NPM dependencies (for extension)
   - package-ecosystem: "npm"
@@ -33,18 +35,12 @@ updates:
     commit-message:
       prefix: "deps(npm)"
       include: "scope"
-    reviewers:
-      - "plures/maintainers"
-    # Group security updates together
-    groups:
-      security-updates:
-        patterns:
-          - "*"
-        update-types:
-          - "patch"
-        dependency-type: "production"
-    # Ignore development dependencies with minor/patch updates
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-patch", "version-update:semver-minor"]
     versioning-strategy: increase
+    # Batch updates into two PRs (dev vs production) instead of one-per-dependency.
+    # This is the chronos model; it collapses the ~12-PR/week noise into 1-2 PRs
+    # that the dependabot-auto-merge workflow can auto-merge when green.
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+      production-dependencies:
+        dependency-type: "production"
