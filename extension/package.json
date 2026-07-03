@@ -136,7 +136,7 @@
     "test:build": "tsc -p tsconfig.test.json"
   },
   "devDependencies": {
-    "@types/node": "^25.0.9",
+    "@types/node": "^26.1.0",
     "@types/vscode": "^1.108.1",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.1",
