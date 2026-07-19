@@ -50,7 +50,7 @@ jobs:
           gh api repos/plures/qa/dispatches --method POST --input -
 
       - name: Process open PRs and advance queue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.COPILOT_PAT }}
           script: |
