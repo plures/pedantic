@@ -49,3 +49,27 @@ test('provider and executable conflict yields DSL006 diagnostic', () => {
   const { doc } = parseSudo('install package tool via winget using "tool.exe"');
   assert.ok(doc.diagnostics?.some(d => d.code === 'DSL006' && d.severity === 'error'));
 });
+
+// Chevrotain compatibility smoke tests — validate the integration boundary so that
+// major-version bumps are caught in CI rather than at extension activation time.
+
+test('chevrotain smoke: parseSudo does not throw on empty input', () => {
+  assert.doesNotThrow(() => parseSudo(''));
+  const { doc, tokens } = parseSudo('');
+  assert.equal(tokens.length, 0);
+  assert.equal(doc.blocks.length, 0);
+  assert.deepEqual(doc.diagnostics, []);
+});
+
+test('chevrotain smoke: lexer returns typed tokens for a simple statement', () => {
+  const { tokens } = parseSudo('install git');
+  assert.ok(tokens.length > 0, 'lexer should return at least one token');
+  assert.equal(typeof tokens[0].image, 'string');
+  assert.ok(tokens[0].tokenType, 'tokenType must be present on each token');
+});
+
+test('chevrotain smoke: parser produces no errors for a minimal valid statement', () => {
+  const { doc } = parseSudo('install git');
+  const errors = (doc.diagnostics ?? []).filter(d => d.severity === 'error');
+  assert.equal(errors.length, 0, 'no parse errors expected for a minimal valid statement');
+});
