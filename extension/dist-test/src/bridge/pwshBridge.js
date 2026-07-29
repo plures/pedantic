@@ -34,6 +34,8 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.invokePwsh = invokePwsh;
+/// <reference types="node" />
+const node_timers_1 = require("node:timers");
 const child_process_1 = require("child_process");
 const path = __importStar(require("path"));
 const vscode = __importStar(require("vscode"));
@@ -74,11 +76,11 @@ async function invokePwsh(request) {
         let stderr = '';
         let timedOut = false;
         // Manually implement timeout with process termination
-        const timer = setTimeout(() => {
+        const timer = (0, node_timers_1.setTimeout)(() => {
             timedOut = true;
             proc.kill('SIGTERM');
             // Force kill if SIGTERM doesn't work
-            setTimeout(() => {
+            (0, node_timers_1.setTimeout)(() => {
                 if (!proc.killed) {
                     proc.kill('SIGKILL');
                 }
@@ -87,7 +89,7 @@ async function invokePwsh(request) {
         proc.stdout.on('data', data => stdout += data.toString());
         proc.stderr.on('data', data => stderr += data.toString());
         proc.on('close', code => {
-            clearTimeout(timer);
+            (0, node_timers_1.clearTimeout)(timer);
             if (timedOut) {
                 resolve({
                     success: false,
@@ -118,7 +120,7 @@ async function invokePwsh(request) {
             }
         });
         proc.on('error', err => {
-            clearTimeout(timer);
+            (0, node_timers_1.clearTimeout)(timer);
             reject(new Error(`PowerShell bridge failed: ${err.message}`));
         });
     });

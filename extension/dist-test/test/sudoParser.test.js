@@ -47,3 +47,23 @@ const baselineSource = `install git via winget version latest\ninstall package "
     const { doc } = (0, sudoParser_1.parseSudo)('install package tool via winget using "tool.exe"');
     strict_1.default.ok(doc.diagnostics?.some(d => d.code === 'DSL006' && d.severity === 'error'));
 });
+// Chevrotain compatibility smoke tests — validate the integration boundary so that
+// major-version bumps are caught in CI rather than at extension activation time.
+(0, node_test_1.test)('chevrotain smoke: parseSudo does not throw on empty input', () => {
+    strict_1.default.doesNotThrow(() => (0, sudoParser_1.parseSudo)(''));
+    const { doc, tokens } = (0, sudoParser_1.parseSudo)('');
+    strict_1.default.equal(tokens.length, 0);
+    strict_1.default.equal(doc.blocks.length, 0);
+    strict_1.default.deepEqual(doc.diagnostics, []);
+});
+(0, node_test_1.test)('chevrotain smoke: lexer returns typed tokens for a simple statement', () => {
+    const { tokens } = (0, sudoParser_1.parseSudo)('install git');
+    strict_1.default.ok(tokens.length > 0, 'lexer should return at least one token');
+    strict_1.default.equal(typeof tokens[0].image, 'string');
+    strict_1.default.ok(tokens[0].tokenType, 'tokenType must be present on each token');
+});
+(0, node_test_1.test)('chevrotain smoke: parser produces no errors for a minimal valid statement', () => {
+    const { doc } = (0, sudoParser_1.parseSudo)('install git');
+    const errors = (doc.diagnostics ?? []).filter(d => d.severity === 'error');
+    strict_1.default.equal(errors.length, 0, 'no parse errors expected for a minimal valid statement');
+});

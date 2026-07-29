@@ -107,7 +107,7 @@ class InventoryTreeProvider {
     inventory;
     constructor() { }
     refresh() {
-        this._onDidChangeTreeData.fire();
+        this._onDidChangeTreeData.fire(undefined);
     }
     setInventory(inventory) {
         this.inventory = inventory;
