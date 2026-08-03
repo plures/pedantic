@@ -9,7 +9,7 @@ use pedantic_executor::dsc::{DscCommand, DscError, DscInput, DscRunOptions, run_
 use rmcp::schemars;
 use rmcp::{
     ErrorData as McpError, ServiceExt,
-    handler::server::tool::ToolRouter,
+    handler::server::{tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router,
     transport::stdio,
@@ -86,9 +86,7 @@ impl PedanticMcpServer {
     )]
     async fn resource_list(
         &self,
-        rmcp::handler::server::tool::Parameters(req): rmcp::handler::server::tool::Parameters<
-            ResourceListRequest,
-        >,
+        Parameters(req): Parameters<ResourceListRequest>,
     ) -> Result<CallToolResult, McpError> {
         let options = DscRunOptions::default();
         let output = if let Some(filter) = &req.filter {
@@ -115,9 +113,7 @@ impl PedanticMcpServer {
     )]
     async fn resource_get(
         &self,
-        rmcp::handler::server::tool::Parameters(req): rmcp::handler::server::tool::Parameters<
-            ResourceGetRequest,
-        >,
+        Parameters(req): Parameters<ResourceGetRequest>,
     ) -> Result<CallToolResult, McpError> {
         let options = DscRunOptions::default();
         let input = match &req.instance {
@@ -142,9 +138,7 @@ impl PedanticMcpServer {
     )]
     async fn resource_test(
         &self,
-        rmcp::handler::server::tool::Parameters(req): rmcp::handler::server::tool::Parameters<
-            ResourceTestRequest,
-        >,
+        Parameters(req): Parameters<ResourceTestRequest>,
     ) -> Result<CallToolResult, McpError> {
         let options = DscRunOptions::default();
         let output = run_dsc(
@@ -166,9 +160,7 @@ impl PedanticMcpServer {
     )]
     async fn resource_export(
         &self,
-        rmcp::handler::server::tool::Parameters(req): rmcp::handler::server::tool::Parameters<
-            ResourceExportRequest,
-        >,
+        Parameters(req): Parameters<ResourceExportRequest>,
     ) -> Result<CallToolResult, McpError> {
         let options = DscRunOptions::default();
         let output = run_dsc(
@@ -189,9 +181,7 @@ impl PedanticMcpServer {
     )]
     async fn config_export(
         &self,
-        rmcp::handler::server::tool::Parameters(req): rmcp::handler::server::tool::Parameters<
-            ConfigExportRequest,
-        >,
+        Parameters(req): Parameters<ConfigExportRequest>,
     ) -> Result<CallToolResult, McpError> {
         let output = run_dsc(
             DscCommand::ConfigExport {
@@ -211,9 +201,7 @@ impl PedanticMcpServer {
     )]
     async fn config_validate(
         &self,
-        rmcp::handler::server::tool::Parameters(req): rmcp::handler::server::tool::Parameters<
-            ConfigValidateRequest,
-        >,
+        Parameters(req): Parameters<ConfigValidateRequest>,
     ) -> Result<CallToolResult, McpError> {
         let options = DscRunOptions::default();
         let output = run_dsc(
@@ -294,17 +282,12 @@ async fn run_dsc_with_filter(
 #[tool_handler]
 impl rmcp::ServerHandler for PedanticMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            instructions: Some(
-                "Pedantic MCP server: exposes real DSC v3 resource discovery (resource_list), \
-                 read (resource_get), compliance testing (resource_test), drift export \
-                 (resource_export), config export (config_export), and validation (config_validate) tools backed by the \
-                 actual `dsc` CLI binary on this host."
-                    .into(),
-            ),
-            ..Default::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "Pedantic MCP server: exposes real DSC v3 resource discovery (resource_list), \
+             read (resource_get), compliance testing (resource_test), drift export \
+             (resource_export), config export (config_export), and validation (config_validate) tools backed by the \
+             actual `dsc` CLI binary on this host.",
+        )
     }
 }
 

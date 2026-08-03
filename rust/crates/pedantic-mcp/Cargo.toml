@@ -20,7 +20,7 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1.0"
 schemars = "1"
-rmcp = { version = "0.3", features = ["server", "transport-io", "macros", "schemars"] }
+rmcp = { version = "1.4.0", features = ["server", "transport-io", "macros", "schemars"] }
 
 [dev-dependencies]
 tokio = { version = "1.46", features = ["rt-multi-thread", "macros", "process", "io-util"] }
