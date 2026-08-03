@@ -7,6 +7,13 @@ if (-not (Get-Command dsc -ErrorAction SilentlyContinue)) {
 $dscVersion = (& dsc --version).Trim()
 Write-Host "Testing custom resources with dsc $dscVersion"
 
+# DSC v3 (3.1+) restricts BOTH manifest discovery and executable resolution to
+# DSC_RESOURCE_PATH when it is set, so setting it to a resource's own directory
+# (needed for manifest discovery) also breaks its ability to find `pwsh` on the
+# system PATH. Fix: append pwsh's real directory to DSC_RESOURCE_PATH instead of
+# replacing it, so both the manifest AND the pwsh executable are resolvable.
+$pwshDirectory = Split-Path (Get-Command pwsh).Source -Parent
+
 function Invoke-DscResourceCheck {
     param(
         [Parameter(Mandatory)] [string] $ResourceDirectory,
@@ -16,7 +23,7 @@ function Invoke-DscResourceCheck {
 
     $previousPath = $env:DSC_RESOURCE_PATH
     try {
-        $env:DSC_RESOURCE_PATH = $ResourceDirectory
+        $env:DSC_RESOURCE_PATH = "$ResourceDirectory$([IO.Path]::PathSeparator)$pwshDirectory"
         Push-Location $ResourceDirectory
 
         $manifest = (& dsc resource list $ResourceType | ConvertFrom-Json)
@@ -47,7 +54,7 @@ Invoke-DscResourceCheck -ResourceDirectory $ansibleDirectory -ResourceType 'Peda
 
 $previousPath = $env:DSC_RESOURCE_PATH
 try {
-    $env:DSC_RESOURCE_PATH = $simpleDirectory
+    $env:DSC_RESOURCE_PATH = "$simpleDirectory$([IO.Path]::PathSeparator)$pwshDirectory"
     Push-Location $simpleDirectory
     $desiredState = '{"name":"dsc-v3-ci","packages":["Git.Git"],"method":"winget","ensure":"Present"}'
     $result = & dsc resource get --resource SimpleDSC/PackageInstaller --input $desiredState | ConvertFrom-Json
