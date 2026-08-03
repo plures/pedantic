@@ -100,3 +100,82 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.pkg
+
+  # ── Linux DEB (x86_64) ──────────────────────────────────────────────
+  linux-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build CLI (release)
+        working-directory: rust
+        run: cargo build --release --package pedantic --target x86_64-unknown-linux-gnu
+
+      - name: Determine version
+        id: version
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          version="${tag#v}"
+          [ -z "$version" ] && version="0.0.0"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build DEB
+        run: |
+          chmod +x installers/linux/build-deb.sh
+          ./installers/linux/build-deb.sh \
+            "${{ steps.version.outputs.version }}" \
+            rust/target/x86_64-unknown-linux-gnu/release \
+            . \
+            dist
+
+      - name: Upload DEB to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.deb
+
+  # ── Linux RPM (x86_64) — Azure Linux, Fedora, RHEL ────────────────
+  linux-rpm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build CLI (release)
+        working-directory: rust
+        run: cargo build --release --package pedantic --target x86_64-unknown-linux-gnu
+
+      - name: Install rpm tools
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Determine version
+        id: version
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          version="${tag#v}"
+          [ -z "$version" ] && version="0.0.0"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build RPM
+        run: |
+          chmod +x installers/linux/build-rpm.sh
+          ./installers/linux/build-rpm.sh \
+            "${{ steps.version.outputs.version }}" \
+            rust/target/x86_64-unknown-linux-gnu/release \
+            . \
+            dist
+
+      - name: Upload RPM to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.rpm
