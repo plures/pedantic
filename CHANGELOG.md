@@ -1,3 +1,7 @@
+## [0.4.2] — 2026-08-03
+
+- fix(release): attach all installer packages to their release (#109) (bfa0d56)
+
 ## [0.4.1] — 2026-08-03
 
 - fix(ci): change installers trigger to workflow_run to fix release asset uploads (#107) (41a88bb)
