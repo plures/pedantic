@@ -1,19 +1,55 @@
 name: Installers
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
 
 permissions:
   contents: write
 
 jobs:
+  # ── Resolve release tag ─────────────────────────────────────────────
+  resolve:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    outputs:
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Get latest release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # Prefer the exact ref for tag-triggered runs; otherwise select the most recent non-draft release (includes prereleases).
+          ref="${{ github.event.workflow_run.head_branch }}"
+          if [[ "$ref" == v* ]]; then
+            tag="$ref"
+          else
+            tag=$(gh api repos/${{ github.repository }}/releases --jq '[.[] | select(.draft == false)][0].tag_name')
+          fi
+
+          if [[ -z "$tag" || "$tag" == "null" ]]; then
+            echo "Unable to resolve release tag for workflow_run ${{ github.event.workflow_run.id }}" >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   # ── Windows MSI (x86_64) ──────────────────────────────────────────
   windows-msi:
+    needs: resolve
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag_name }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -28,35 +64,31 @@ jobs:
         shell: pwsh
         run: dotnet tool install --global wix
 
-      - name: Determine version
-        id: version
-        shell: pwsh
-        run: |
-          $tag = "${{ github.event.release.tag_name }}" -replace '^v',''
-          if (-not $tag) { $tag = '0.0.0' }
-          echo "version=$tag" >> $env:GITHUB_OUTPUT
-
       - name: Build MSI
         shell: pwsh
         run: |
           wix build `
-            -d Version=${{ steps.version.outputs.version }} `
+            -d Version=${{ needs.resolve.outputs.version }} `
             -d BinSource=rust/target/release `
             -d ModuleSource=. `
-            -o dist/pedantic-${{ steps.version.outputs.version }}-windows-x86_64.msi `
+            -o dist/pedantic-${{ needs.resolve.outputs.version }}-windows-x86_64.msi `
             installers/windows/pedantic.wxs
 
       - name: Upload MSI to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve.outputs.tag_name }}
           files: dist/*.msi
 
   # ── macOS pkg (universal: x86_64 + aarch64) ───────────────────────
   macos-pkg:
+    needs: resolve
     runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag_name }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -79,19 +111,11 @@ jobs:
             rust/target/x86_64-apple-darwin/release/pedantic \
             -output dist/bin/pedantic
 
-      - name: Determine version
-        id: version
-        run: |
-          tag="${{ github.event.release.tag_name }}"
-          version="${tag#v}"
-          [ -z "$version" ] && version="0.0.0"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
       - name: Build pkg
         run: |
           chmod +x installers/macos/build-pkg.sh
           ./installers/macos/build-pkg.sh \
-            "${{ steps.version.outputs.version }}" \
+            "${{ needs.resolve.outputs.version }}" \
             dist/bin \
             . \
             dist
@@ -99,14 +123,18 @@ jobs:
       - name: Upload pkg to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve.outputs.tag_name }}
           files: dist/*.pkg
 
   # ── Linux DEB (x86_64) ──────────────────────────────────────────────
   linux-deb:
+    needs: resolve
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag_name }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -117,19 +145,11 @@ jobs:
         working-directory: rust
         run: cargo build --release --package pedantic --target x86_64-unknown-linux-gnu
 
-      - name: Determine version
-        id: version
-        run: |
-          tag="${{ github.event.release.tag_name }}"
-          version="${tag#v}"
-          [ -z "$version" ] && version="0.0.0"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
       - name: Build DEB
         run: |
           chmod +x installers/linux/build-deb.sh
           ./installers/linux/build-deb.sh \
-            "${{ steps.version.outputs.version }}" \
+            "${{ needs.resolve.outputs.version }}" \
             rust/target/x86_64-unknown-linux-gnu/release \
             . \
             dist
@@ -137,14 +157,18 @@ jobs:
       - name: Upload DEB to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve.outputs.tag_name }}
           files: dist/*.deb
 
   # ── Linux RPM (x86_64) — Azure Linux, Fedora, RHEL ────────────────
   linux-rpm:
+    needs: resolve
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag_name }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -158,19 +182,11 @@ jobs:
       - name: Install rpm tools
         run: sudo apt-get update && sudo apt-get install -y rpm
 
-      - name: Determine version
-        id: version
-        run: |
-          tag="${{ github.event.release.tag_name }}"
-          version="${tag#v}"
-          [ -z "$version" ] && version="0.0.0"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
       - name: Build RPM
         run: |
           chmod +x installers/linux/build-rpm.sh
           ./installers/linux/build-rpm.sh \
-            "${{ steps.version.outputs.version }}" \
+            "${{ needs.resolve.outputs.version }}" \
             rust/target/x86_64-unknown-linux-gnu/release \
             . \
             dist
@@ -178,4 +194,5 @@ jobs:
       - name: Upload RPM to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve.outputs.tag_name }}
           files: dist/*.rpm
