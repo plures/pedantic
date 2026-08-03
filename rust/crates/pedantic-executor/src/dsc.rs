@@ -98,9 +98,7 @@ pub fn build_dsc_args(command: &DscCommand, input: &DscInput) -> Vec<String> {
             ]
         }
         DscCommand::ResourceList => vec!["resource".into(), "list".into()],
-        DscCommand::ResourceGet { resource_type } => {
-            build_resource_args("get", resource_type, input)
-        }
+        DscCommand::ResourceGet { resource_type } => build_resource_get_args(resource_type, input),
         DscCommand::ResourceTest { resource_type } => {
             build_resource_args("test", resource_type, input)
         }
@@ -126,6 +124,27 @@ fn build_config_args(action: &str, input: &DscInput) -> Vec<String> {
             args.push("--input".into());
             args.push("-".into());
         }
+    }
+    args
+}
+
+fn build_resource_get_args(resource_type: &str, input: &DscInput) -> Vec<String> {
+    let mut args = vec![
+        "resource".into(),
+        "get".into(),
+        "--resource".into(),
+        resource_type.into(),
+    ];
+    match input {
+        DscInput::Path(path) => {
+            args.push("--input".into());
+            args.push(path.clone());
+        }
+        DscInput::Stdin(content) if !content.trim().is_empty() => {
+            args.push("--input".into());
+            args.push(content.clone());
+        }
+        DscInput::Stdin(_) => {}
     }
     args
 }
@@ -306,6 +325,46 @@ mod tests {
                 "SimpleDSC/PackageInstaller",
                 "--input",
                 "config.yaml"
+            ]
+        );
+    }
+
+    #[test]
+    fn build_resource_get_args_uses_inline_json_input() {
+        let args = build_dsc_args(
+            &DscCommand::ResourceGet {
+                resource_type: "SimpleDSC/PackageInstaller".into(),
+            },
+            &DscInput::Stdin(r#"{"name":"pkg"}"#.into()),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "resource",
+                "get",
+                "--resource",
+                "SimpleDSC/PackageInstaller",
+                "--input",
+                r#"{"name":"pkg"}"#
+            ]
+        );
+    }
+
+    #[test]
+    fn build_resource_get_args_omits_empty_stdin_input() {
+        let args = build_dsc_args(
+            &DscCommand::ResourceGet {
+                resource_type: "SimpleDSC/PackageInstaller".into(),
+            },
+            &DscInput::Stdin(String::new()),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "resource",
+                "get",
+                "--resource",
+                "SimpleDSC/PackageInstaller"
             ]
         );
     }
