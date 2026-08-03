@@ -22,7 +22,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag=$(gh api repos/${{ github.repository }}/releases/latest --jq '.tag_name')
+          set -euo pipefail
+
+          # Prefer the exact ref for tag-triggered runs; otherwise select the most recent non-draft release (includes prereleases).
+          ref="${{ github.event.workflow_run.head_branch }}"
+          if [[ "$ref" == v* ]]; then
+            tag="$ref"
+          else
+            tag=$(gh api repos/${{ github.repository }}/releases --jq '[.[] | select(.draft == false)][0].tag_name')
+          fi
+
+          if [[ -z "$tag" || "$tag" == "null" ]]; then
+            echo "Unable to resolve release tag for workflow_run ${{ github.event.workflow_run.id }}" >&2
+            exit 1
+          fi
+
           version="${tag#v}"
           echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
