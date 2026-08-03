@@ -1,3 +1,7 @@
+## [0.4.1] — 2026-08-03
+
+- fix(ci): change installers trigger to workflow_run to fix release asset uploads (#107) (41a88bb)
+
 ## [0.4.0] — 2026-08-03
 
 - feat(installers): add Linux DEB package installer (#106) (20c9210)
