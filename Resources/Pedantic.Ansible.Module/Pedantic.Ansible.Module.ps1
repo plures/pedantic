@@ -3,7 +3,7 @@
 
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('get', 'set', 'test')]
+    [ValidateSet('get', 'set', 'test', 'list', 'export')]
     [string] $Operation
 )
 
@@ -264,6 +264,43 @@ function Invoke-AnsibleModule {
 
 # Main script logic
 try {
+    if ($Operation.ToLower() -eq 'list') {
+        # Adapter 'list' command: enumerate installed Ansible modules and present them
+        # as DSC-discoverable child resources (per DSC v3 adapter manifest 'list' contract).
+        if (-not (Test-AnsibleAvailable)) {
+            Write-Warning "Ansible is not available; adapter cannot enumerate child resources."
+            exit 0
+        }
+
+        try {
+            $docOutput = ansible-doc -l --json 2>&1 | Out-String
+            $modules = $docOutput | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        }
+        catch {
+            Write-Verbose "ansible-doc --json unsupported or failed, falling back to plain list: $_"
+            $modules = @{}
+            $plain = ansible-doc -l 2>&1 | Out-String
+            foreach ($line in ($plain -split "`n")) {
+                if ($line -match '^(\S+)\s+(.*)$') {
+                    $modules[$Matches[1]] = $Matches[2]
+                }
+            }
+        }
+
+        foreach ($moduleName in $modules.Keys) {
+            $entry = @{
+                type = "Pedantic.Ansible/Module"
+                kind = "resource"
+                version = "1.0.0"
+                capabilities = @('get', 'set', 'test', 'export')
+                path = $moduleName
+                description = [string]$modules[$moduleName]
+            }
+            $entry | ConvertTo-Json -Depth 5 -Compress
+        }
+        exit 0
+    }
+
     # Read configuration from stdin
     $inputJson = [Console]::In.ReadToEnd()
 
@@ -272,6 +309,39 @@ try {
     }
 
     $config = $inputJson | ConvertFrom-Json -AsHashtable
+
+    if ($Operation.ToLower() -eq 'export') {
+        # Export current state as a DSC-resource-instance document (drift/reverse-engineering path).
+        if (-not $config.name) { $config.name = 'exported-ansible-resource' }
+        if (-not $config.module) { throw "Configuration must include 'module' property to export" }
+        if (-not $config.PSObject.Properties['checkMode']) { $config.checkMode = $true }
+        if (-not $config.PSObject.Properties['diff']) { $config.diff = $true }
+        if (-not $config.PSObject.Properties['idempotencyMode']) { $config.idempotencyMode = 'native' }
+        if (-not $config.PSObject.Properties['args']) { $config.args = @{} }
+
+        try {
+            $ansibleResult = Invoke-AnsibleModule -Config $config -Mode 'get'
+            $exported = @{
+                name = $config.name
+                module = $config.module
+                args = $config.args
+                host = $config.host
+                currentState = $ansibleResult
+            }
+        }
+        catch {
+            $exported = @{
+                name = $config.name
+                module = $config.module
+                args = $config.args
+                host = $config.host
+                currentState = @{ message = "Unable to retrieve state"; error = $_.Exception.Message }
+            }
+        }
+
+        $exported | ConvertTo-Json -Depth 10
+        exit 0
+    }
 
     # Validate required fields
     if (-not $config.name) {
