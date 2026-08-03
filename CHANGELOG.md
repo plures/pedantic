@@ -1,3 +1,13 @@
+## [0.3.0] — 2026-08-03
+
+- feat: add platform installers (Windows MSI, macOS pkg) with self-update CLI (#105) (bd58225)
+- deps(npm)(deps): bump brace-expansion from 5.0.7 to 5.0.9 in /extension (#104) (141f3c1)
+- deps(npm)(deps-dev): bump @types/node (#103) (b7047ef)
+- deps(npm)(deps): bump chevrotain from 12.0.0 to 13.0.0 in /extension in the production-dependencies group across 1 directory (#101) (ea54505)
+- chore: delegate dependabot-auto-merge.yml to org reusable template (#99) (32868ae)
+- deps(npm)(deps-dev): bump fast-uri from 3.1.2 to 3.1.4 in /extension (#102) (dcf621b)
+- deps(npm)(deps-dev): bump @vscode/test-electron (#100) (492b77b)
+
 ## [0.2.0] — 2026-07-24
 
 - ci(release): trigger release pipeline on merge to main (#98) (f9e48cf)
