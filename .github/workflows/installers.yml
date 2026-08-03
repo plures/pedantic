@@ -56,9 +56,12 @@ jobs:
         working-directory: rust
         run: cargo build --release --package pedantic
 
-      - name: Install WiX v4
+      - name: Install WiX v5
         shell: pwsh
-        run: dotnet tool install --global wix
+        # WiX v6+ requires an OSMF EULA acknowledgement. Pin the last
+        # pre-OSMF major so public CI can build the MSI without an implicit
+        # legal acceptance; update deliberately if the licensing choice changes.
+        run: dotnet tool install --global wix --version 5.0.2
 
       - name: Build MSI
         shell: pwsh
