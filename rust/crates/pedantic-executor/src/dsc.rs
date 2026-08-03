@@ -131,10 +131,21 @@ fn build_config_args(action: &str, input: &DscInput) -> Vec<String> {
 }
 
 fn build_resource_args(action: &str, resource_type: &str, input: &DscInput) -> Vec<String> {
-    let mut args = vec!["resource".into(), action.into(), resource_type.into()];
-    if matches!(input, DscInput::Stdin(_)) {
-        args.push("--input".into());
-        args.push("-".into());
+    let mut args = vec![
+        "resource".into(),
+        action.into(),
+        "--resource".into(),
+        resource_type.into(),
+    ];
+    match input {
+        DscInput::Path(path) => {
+            args.push("--input".into());
+            args.push(path.clone());
+        }
+        DscInput::Stdin(_) => {
+            args.push("--input".into());
+            args.push("-".into());
+        }
     }
     args
 }
@@ -286,7 +297,17 @@ mod tests {
             },
             &DscInput::Path("config.yaml".into()),
         );
-        assert_eq!(args, vec!["resource", "get", "SimpleDSC/PackageInstaller"]);
+        assert_eq!(
+            args,
+            vec![
+                "resource",
+                "get",
+                "--resource",
+                "SimpleDSC/PackageInstaller",
+                "--input",
+                "config.yaml"
+            ]
+        );
     }
 
     #[test]
@@ -316,6 +337,7 @@ mod tests {
             vec![
                 "resource",
                 "test",
+                "--resource",
                 "Pedantic.Ansible/Module",
                 "--input",
                 "-"

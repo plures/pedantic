@@ -282,6 +282,7 @@ async fn run_dsc_with_filter(
 #[tool_handler]
 impl rmcp::ServerHandler for PedanticMcpServer {
     fn get_info(&self) -> ServerInfo {
+        let _tool_router = &self.tool_router;
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "Pedantic MCP server: exposes real DSC v3 resource discovery (resource_list), \
              read (resource_get), compliance testing (resource_test), drift export \
