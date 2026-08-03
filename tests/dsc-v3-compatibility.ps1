@@ -49,8 +49,8 @@ $previousPath = $env:DSC_RESOURCE_PATH
 try {
     $env:DSC_RESOURCE_PATH = $simpleDirectory
     Push-Location $simpleDirectory
-    $input = '{"name":"dsc-v3-ci","packages":["Git.Git"],"method":"winget","ensure":"Present"}'
-    $result = $input | & dsc resource get --resource SimpleDSC/PackageInstaller --input - | ConvertFrom-Json
+    $desiredState = '{"name":"dsc-v3-ci","packages":["Git.Git"],"method":"winget","ensure":"Present"}'
+    $result = & dsc resource get --resource SimpleDSC/PackageInstaller --input $desiredState | ConvertFrom-Json
     if ($null -eq $result.actualState) {
         throw 'dsc resource get did not return actualState for SimpleDSC/PackageInstaller.'
     }
