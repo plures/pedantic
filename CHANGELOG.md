@@ -1,3 +1,7 @@
+## [0.4.0] — 2026-08-03
+
+- feat(installers): add Linux DEB package installer (#106) (20c9210)
+
 ## [0.3.0] — 2026-08-03
 
 - feat: add platform installers (Windows MSI, macOS pkg) with self-update CLI (#105) (bd58225)
