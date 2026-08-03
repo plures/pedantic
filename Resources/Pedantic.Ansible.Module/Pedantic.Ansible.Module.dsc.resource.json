@@ -1,13 +1,29 @@
 {
-  "$schema": "https://raw.githubusercontent.com/PowerShell/DSC/main/schemas/2024/04/bundled/resource/manifest.json",
+  "$schema": "https://raw.githubusercontent.com/PowerShell/DSC/main/schemas/v3.1.0/bundled/resource/manifest.json",
   "type": "Pedantic.Ansible/Module",
   "version": "1.0.0",
-  "description": "DSC v3 resource for executing Ansible modules with Get/Test/Set semantics",
+  "description": "DSC v3 adapter resource for executing Ansible modules with Get/Test/Set semantics",
+  "kind": "adapter",
+  "adapter": {
+    "list": {
+      "executable": "pwsh",
+      "args": [
+        "-NoLogo",
+        "-NonInteractive",
+        "-NoProfile",
+        "-File",
+        "Pedantic.Ansible.Module.ps1",
+        "-Operation",
+        "list"
+      ]
+    },
+    "config": "full"
+  },
   "tags": [
     "ansible",
     "configuration",
     "automation",
-    "cross-platform",
+    "crossplatform",
     "linux",
     "windows",
     "network"
@@ -48,6 +64,19 @@
       "Pedantic.Ansible.Module.ps1",
       "-Operation",
       "test"
+    ],
+    "input": "stdin"
+  },
+  "export": {
+    "executable": "pwsh",
+    "args": [
+      "-NoLogo",
+      "-NonInteractive",
+      "-NoProfile",
+      "-File",
+      "Pedantic.Ansible.Module.ps1",
+      "-Operation",
+      "export"
     ],
     "input": "stdin"
   },

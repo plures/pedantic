@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/PowerShell/DSC/main/schemas/2024/04/bundled/resource/manifest.json",
+  "$schema": "https://raw.githubusercontent.com/PowerShell/DSC/main/schemas/v3.1.0/bundled/resource/manifest.json",
   "type": "SimpleDSC/PackageInstaller",
   "version": "1.0.0",
   "description": "Simplified package management for multiple platforms and package managers",
@@ -50,6 +50,18 @@
       "-InputJson"
     ],
     "input": "stdin"
+  },
+  "export": {
+    "executable": "pwsh",
+    "args": [
+      "-NoLogo",
+      "-NonInteractive",
+      "-NoProfile",
+      "-File",
+      "SimpleDSC.PackageInstaller.ps1",
+      "-Operation",
+      "export"
+    ]
   },
   "schema": {
     "embedded": {

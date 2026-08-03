@@ -1,0 +1,27 @@
+{
+  "name": "network-vlan",
+  "module": "ansible.builtin.command",
+  "args": {
+    "argv": [
+      "ip",
+      "link",
+      "add",
+      "link",
+      "eth0",
+      "name",
+      "pedanticvlan42",
+      "type",
+      "vlan",
+      "id",
+      "42"
+    ],
+    "creates": "/sys/class/net/pedanticvlan42"
+  },
+  "host": "network-target",
+  "inventory": "network-target,",
+  "connection": {
+    "type": "ssh",
+    "user": "root",
+    "privateKey": "/keys/id_ed25519"
+  }
+}

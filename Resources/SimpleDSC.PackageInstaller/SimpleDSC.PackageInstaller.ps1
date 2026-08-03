@@ -183,8 +183,33 @@ function Install-Package {
     }
 }
 
+function Export-InstalledPackages {
+    $exported = @()
+    foreach ($packageKey in $PackageMap.Keys) {
+        $method = Get-InstallMethod -PreferredMethod 'auto'
+        if (Test-PackageInstalled -PackageName $packageKey -Method $method) {
+            $exported += @{
+                name = $packageKey
+                packages = @($packageKey)
+                method = $method
+                ensure = 'Present'
+                acceptLicense = $true
+                scope = 'machine'
+            }
+        }
+    }
+    foreach ($item in $exported) {
+        $item | ConvertTo-Json -Depth 10 -Compress
+    }
+}
+
 # Main script logic
 try {
+    if ($Operation.ToLower() -eq 'export') {
+        Export-InstalledPackages
+        exit 0
+    }
+
     if ($InputJson) {
         $config = $InputJson | ConvertFrom-Json
     } else {

@@ -63,6 +63,31 @@ jobs:
         run: |
           Invoke-Pester -Path 'tests' -Output Detailed -CI
 
+      - name: Install DSC v3 CLI
+        shell: pwsh
+        run: |
+          winget install --id Microsoft.DSC --exact --accept-source-agreements --accept-package-agreements --disable-interactivity
+          $dsc = Get-Command dsc -ErrorAction Stop
+          & $dsc.Source --version
+
+      - name: Verify custom resources with real DSC v3 CLI
+        shell: pwsh
+        run: |
+          ./tests/dsc-v3-compatibility.ps1
+
+      - name: Test Rust workspace and MCP server
+        shell: pwsh
+        run: |
+          Push-Location rust
+          cargo test --workspace
+          cargo build -p pedantic-mcp
+          Pop-Location
+          $env:Path = "${env:ProgramFiles}\PowerShell\7;${env:Path}"
+          $resourceDirectory = Join-Path $PWD 'Resources/SimpleDSC.PackageInstaller'
+          $pwshDirectory = Split-Path (Get-Command pwsh -ErrorAction Stop).Source -Parent
+          $env:DSC_RESOURCE_PATH = "$resourceDirectory$([IO.Path]::PathSeparator)$pwshDirectory"
+          node ./tests/mcp-smoke.mjs
+
       - name: Package module (zip)
         shell: pwsh
         run: |
@@ -94,5 +119,4 @@ jobs:
         with:
           name: module-dist
           path: dist/*.zip
-
 

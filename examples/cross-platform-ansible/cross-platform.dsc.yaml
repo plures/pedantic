@@ -1,0 +1,31 @@
+$schema: https://raw.githubusercontent.com/PowerShell/DSC/main/schemas/v3.1.0/config/document.json
+resources:
+  - name: linux-file
+    type: Pedantic.Ansible/Module
+    properties:
+      name: linux-file
+      module: ansible.builtin.file
+      args:
+        path: /var/tmp/pedantic-linux-demo.txt
+        state: touch
+        mode: '0644'
+      host: network-target
+      inventory: network-target,
+      connection:
+        type: ssh
+        user: root
+        privateKey: /keys/id_ed25519
+  - name: network-vlan
+    type: Pedantic.Ansible/Module
+    properties:
+      name: network-vlan
+      module: ansible.builtin.command
+      args:
+        argv: [ip, link, add, link, eth0, name, pedanticvlan42, type, vlan, id, '42']
+        creates: /sys/class/net/pedanticvlan42
+      host: network-target
+      inventory: network-target,
+      connection:
+        type: ssh
+        user: root
+        privateKey: /keys/id_ed25519

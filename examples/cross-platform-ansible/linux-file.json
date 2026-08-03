@@ -1,0 +1,16 @@
+{
+  "name": "linux-file",
+  "module": "ansible.builtin.file",
+  "args": {
+    "path": "/var/tmp/pedantic-linux-demo.txt",
+    "state": "touch",
+    "mode": "0644"
+  },
+  "host": "network-target",
+  "inventory": "network-target,",
+  "connection": {
+    "type": "ssh",
+    "user": "root",
+    "privateKey": "/keys/id_ed25519"
+  }
+}

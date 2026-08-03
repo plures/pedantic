@@ -1,0 +1,26 @@
+services:
+  network-target:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+    hostname: network-target
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./keys:/keys:ro
+
+  control:
+    build:
+      context: .
+      dockerfile: Dockerfile.control
+    depends_on:
+      - network-target
+    environment:
+      DSC_RESOURCE_PATH: /resources/Pedantic.Ansible.Module
+    volumes:
+      - ../../Resources:/resources:ro
+      - ./keys:/keys:ro
+      - ./run-demo.ps1:/demo/run-demo.ps1:ro
+      - ./linux-file.json:/demo/linux-file.json:ro
+      - ./network-vlan.json:/demo/network-vlan.json:ro
+      - ./cross-platform.dsc.yaml:/demo/cross-platform.dsc.yaml:ro
