@@ -83,7 +83,9 @@ jobs:
           cargo build -p pedantic-mcp
           Pop-Location
           $env:Path = "${env:ProgramFiles}\PowerShell\7;${env:Path}"
-          $env:DSC_RESOURCE_PATH = Join-Path $PWD 'Resources/SimpleDSC.PackageInstaller'
+          $resourceDirectory = Join-Path $PWD 'Resources/SimpleDSC.PackageInstaller'
+          $pwshDirectory = Split-Path (Get-Command pwsh -ErrorAction Stop).Source -Parent
+          $env:DSC_RESOURCE_PATH = "$resourceDirectory$([IO.Path]::PathSeparator)$pwshDirectory"
           node ./tests/mcp-smoke.mjs
 
       - name: Package module (zip)
@@ -117,5 +119,4 @@ jobs:
         with:
           name: module-dist
           path: dist/*.zip
-
 
