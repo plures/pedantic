@@ -20,14 +20,20 @@ TOPDIR="$(mktemp -d)"
 trap 'rm -rf "${TOPDIR}"' EXIT
 
 mkdir -p "${TOPDIR}"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-BUILDROOT="${TOPDIR}/BUILDROOT/${PACKAGE_NAME}-${VERSION}-1.${ARCH}"
+
+# Stage payload OUTSIDE the rpmbuild-managed BUILDROOT: rpmbuild removes and
+# recreates BUILDROOT/<name>-<version>-<release>.<arch> immediately before
+# running the %install scriptlet, so anything pre-staged there is wiped out
+# before the spec's own `cp` runs. Stage into a separate STAGE dir instead and
+# have %install copy STAGE -> %{buildroot}.
+STAGE="${TOPDIR}/STAGE"
 
 # --- Stage files ---
-mkdir -p "${BUILDROOT}/usr/local/bin"
-cp "${BIN_PATH}/pedantic" "${BUILDROOT}/usr/local/bin/pedantic"
-chmod 755 "${BUILDROOT}/usr/local/bin/pedantic"
+mkdir -p "${STAGE}/usr/local/bin"
+cp "${BIN_PATH}/pedantic" "${STAGE}/usr/local/bin/pedantic"
+chmod 755 "${STAGE}/usr/local/bin/pedantic"
 
-PS_MODULE_DIR="${BUILDROOT}/usr/local/share/powershell/Modules/Pedantic"
+PS_MODULE_DIR="${STAGE}/usr/local/share/powershell/Modules/Pedantic"
 mkdir -p "${PS_MODULE_DIR}"
 cp "${MODULE_PATH}/Pedantic.psm1" "${PS_MODULE_DIR}/"
 cp "${MODULE_PATH}/Pedantic.psd1" "${PS_MODULE_DIR}/"
@@ -48,7 +54,7 @@ validating, and applying DSC v3 configurations across systems.
 Supports Azure Linux, Fedora, RHEL, and other RPM-based distributions.
 
 %install
-cp -a %{_topdir}/BUILDROOT/%{name}-%{version}-1.%{_arch}/* %{buildroot}/
+cp -a ${STAGE}/. %{buildroot}/
 
 %files
 /usr/local/bin/pedantic
