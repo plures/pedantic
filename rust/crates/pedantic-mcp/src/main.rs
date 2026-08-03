@@ -16,6 +16,7 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct PedanticMcpServer {
@@ -115,20 +116,15 @@ impl PedanticMcpServer {
         &self,
         Parameters(req): Parameters<ResourceGetRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let options = DscRunOptions::default();
+        let resource_type = req.resource_type;
+        let options = options_for_resource(&resource_type);
         let input = match &req.instance {
             Some(value) => DscInput::Stdin(value.to_string()),
             None => DscInput::Stdin(String::new()),
         };
-        let output = run_dsc(
-            DscCommand::ResourceGet {
-                resource_type: req.resource_type,
-            },
-            input,
-            &options,
-        )
-        .await
-        .map_err(dsc_error_to_mcp)?;
+        let output = run_dsc(DscCommand::ResourceGet { resource_type }, input, &options)
+            .await
+            .map_err(dsc_error_to_mcp)?;
         Ok(text_result(output.stdout))
     }
 
@@ -140,11 +136,10 @@ impl PedanticMcpServer {
         &self,
         Parameters(req): Parameters<ResourceTestRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let options = DscRunOptions::default();
+        let resource_type = req.resource_type;
+        let options = options_for_resource(&resource_type);
         let output = run_dsc(
-            DscCommand::ResourceTest {
-                resource_type: req.resource_type,
-            },
+            DscCommand::ResourceTest { resource_type },
             DscInput::Stdin(req.instance.to_string()),
             &options,
         )
@@ -162,11 +157,10 @@ impl PedanticMcpServer {
         &self,
         Parameters(req): Parameters<ResourceExportRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let options = DscRunOptions::default();
+        let resource_type = req.resource_type;
+        let options = options_for_resource(&resource_type);
         let output = run_dsc(
-            DscCommand::ResourceExport {
-                resource_type: req.resource_type,
-            },
+            DscCommand::ResourceExport { resource_type },
             DscInput::Stdin(String::new()),
             &options,
         )
@@ -183,12 +177,12 @@ impl PedanticMcpServer {
         &self,
         Parameters(req): Parameters<ConfigExportRequest>,
     ) -> Result<CallToolResult, McpError> {
+        let resource_type = req.resource_type;
+        let options = options_for_resource(&resource_type);
         let output = run_dsc(
-            DscCommand::ConfigExport {
-                resource_type: req.resource_type,
-            },
+            DscCommand::ConfigExport { resource_type },
             DscInput::Stdin(String::new()),
-            &DscRunOptions::default(),
+            &options,
         )
         .await
         .map_err(dsc_error_to_mcp)?;
@@ -223,6 +217,48 @@ impl Default for PedanticMcpServer {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn options_for_resource(resource_type: &str) -> DscRunOptions {
+    let mut options = DscRunOptions::default();
+    if let Some(resource_path) = std::env::var_os("DSC_RESOURCE_PATH") {
+        options.working_dir = find_resource_manifest_dir_in_path(resource_type, &resource_path);
+    }
+    options
+}
+
+fn find_resource_manifest_dir_in_path(
+    resource_type: &str,
+    resource_path: &std::ffi::OsStr,
+) -> Option<PathBuf> {
+    std::env::split_paths(resource_path)
+        .find_map(|entry| find_resource_manifest_dir(&entry, resource_type))
+}
+
+fn find_resource_manifest_dir(entry: &Path, resource_type: &str) -> Option<PathBuf> {
+    let files = std::fs::read_dir(entry).ok()?;
+    for file in files.flatten() {
+        let path = file.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(".dsc.resource.json") {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&contents) else {
+            continue;
+        };
+        if manifest.get("type").and_then(|value| value.as_str()) == Some(resource_type) {
+            return Some(entry.to_path_buf());
+        }
+    }
+    None
 }
 
 async fn run_dsc_with_filter(
@@ -309,4 +345,69 @@ async fn main() -> anyhow::Result<()> {
 
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_resource_manifest_dir_in_path;
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn finds_matching_resource_manifest_dir_from_resource_path() {
+        let root = unique_temp_dir("manifest-match");
+        let resource_dir = root.join("SimpleDSC.PackageInstaller");
+        let executable_dir = root.join("pwsh");
+        std::fs::create_dir_all(&resource_dir).unwrap();
+        std::fs::create_dir_all(&executable_dir).unwrap();
+        std::fs::write(
+            resource_dir.join("SimpleDSC.PackageInstaller.dsc.resource.json"),
+            r#"{"type":"SimpleDSC/PackageInstaller"}"#,
+        )
+        .unwrap();
+
+        let resource_path = join_paths([executable_dir.as_path(), resource_dir.as_path()]);
+        let found =
+            find_resource_manifest_dir_in_path("SimpleDSC/PackageInstaller", &resource_path)
+                .unwrap();
+
+        assert_eq!(found, resource_dir);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ignores_non_matching_resource_manifests() {
+        let root = unique_temp_dir("manifest-miss");
+        let resource_dir = root.join("Other.Resource");
+        std::fs::create_dir_all(&resource_dir).unwrap();
+        std::fs::write(
+            resource_dir.join("Other.Resource.dsc.resource.json"),
+            r#"{"type":"Other/Resource"}"#,
+        )
+        .unwrap();
+
+        let resource_path = join_paths([resource_dir.as_path()]);
+        let found =
+            find_resource_manifest_dir_in_path("SimpleDSC/PackageInstaller", &resource_path);
+
+        assert!(found.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "pedantic-mcp-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn join_paths<'a>(paths: impl IntoIterator<Item = &'a Path>) -> OsString {
+        std::env::join_paths(paths).unwrap()
+    }
 }
