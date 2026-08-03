@@ -273,3 +273,49 @@ For detailed information about future plans and development roadmap, see:
 - [RELEASE-1.0-PLAN.md](RELEASE-1.0-PLAN.md) - 1.0 release targets
 - [FULL-ROADMAP-PLAN.md](FULL-ROADMAP-PLAN.md) - Long-term vision
 - [CHANGELOG.md](CHANGELOG.md) - Version history
+
+## Cross-platform Ansible adapter demo
+
+Pedantic ships a runnable Docker demo that drives two Linux targets through the same
+`Pedantic.Ansible/Module` DSC adapter: it creates a managed file and provisions a real
+802.1Q VLAN interface in a `NET_ADMIN`-capable network-target container. The control
+container installs the released DSC CLI and Ansible; no mocked Ansible commands or
+synthetic resource responses are used.
+
+```powershell
+pwsh -NoProfile -File ./examples/cross-platform-ansible/run-demo-host.ps1
+```
+
+The declarative configuration is in
+[`examples/cross-platform-ansible/cross-platform.dsc.yaml`](examples/cross-platform-ansible/cross-platform.dsc.yaml).
+The script reports `CROSS_PLATFORM_ANSIBLE_DEMO_OK` only after SSH verification sees
+both `/var/tmp/pedantic-linux-demo.txt` and the `pedanticvlan42` VLAN link. The target
+is a local Docker Linux container with `NET_ADMIN`, so it is a realistic Linux/network
+substitute rather than an external switch.
+
+## MCP server
+
+`pedantic-mcp` exposes Pedantic's real DSC v3 integration over the Model Context
+Protocol stdio transport. It does not emulate DSC: its tools execute the host `dsc`
+binary and return its output.
+
+```powershell
+cd rust
+cargo run -p pedantic-mcp
+```
+
+Configure an MCP client to launch `rust/target/debug/pedantic-mcp` (or the release
+binary) with `dsc` on `PATH`. The server provides:
+
+- `resource_list` — discover resources through `dsc resource list`
+- `resource_get`, `resource_test`, and `resource_export` — inspect, check, and export
+  concrete DSC resource instances
+- `config_validate` and `config_export` — validate and export DSC configuration
+
+Run the real stdio protocol smoke test after building to verify discovery and a read
+operation end-to-end:
+
+```powershell
+$env:DSC_RESOURCE_PATH = (Join-Path $PWD '..\Resources\SimpleDSC.PackageInstaller')
+node ../tests/mcp-smoke.mjs
+```

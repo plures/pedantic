@@ -1,0 +1,13 @@
+FROM mcr.microsoft.com/powershell:7.4-ubuntu-22.04
+
+ARG DSC_VERSION=3.2.3
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl openssh-client python3 python3-pip \
+    && pip3 install --no-cache-dir ansible \
+    && curl -fsSL "https://github.com/PowerShell/DSC/releases/download/v${DSC_VERSION}/dsc-${DSC_VERSION}-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/dsc.tar.gz \
+    && tar -xzf /tmp/dsc.tar.gz -C /usr/local/bin \
+    && chmod +x /usr/local/bin/dsc \
+    && rm -rf /var/lib/apt/lists/* /tmp/dsc.tar.gz
+
+WORKDIR /demo
