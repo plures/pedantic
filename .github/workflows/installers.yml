@@ -1,0 +1,102 @@
+name: Installers
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Windows MSI (x86_64) ──────────────────────────────────────────
+  windows-msi:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build CLI (release)
+        working-directory: rust
+        run: cargo build --release --package pedantic
+
+      - name: Install WiX v4
+        shell: pwsh
+        run: dotnet tool install --global wix
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}" -replace '^v',''
+          if (-not $tag) { $tag = '0.0.0' }
+          echo "version=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          wix build `
+            -d Version=${{ steps.version.outputs.version }} `
+            -d BinSource=rust/target/release `
+            -d ModuleSource=. `
+            -o dist/pedantic-${{ steps.version.outputs.version }}-windows-x86_64.msi `
+            installers/windows/pedantic.wxs
+
+      - name: Upload MSI to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.msi
+
+  # ── macOS pkg (universal: x86_64 + aarch64) ───────────────────────
+  macos-pkg:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Build CLI (aarch64)
+        working-directory: rust
+        run: cargo build --release --package pedantic --target aarch64-apple-darwin
+
+      - name: Build CLI (x86_64)
+        working-directory: rust
+        run: cargo build --release --package pedantic --target x86_64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          mkdir -p dist/bin
+          lipo -create \
+            rust/target/aarch64-apple-darwin/release/pedantic \
+            rust/target/x86_64-apple-darwin/release/pedantic \
+            -output dist/bin/pedantic
+
+      - name: Determine version
+        id: version
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          version="${tag#v}"
+          [ -z "$version" ] && version="0.0.0"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build pkg
+        run: |
+          chmod +x installers/macos/build-pkg.sh
+          ./installers/macos/build-pkg.sh \
+            "${{ steps.version.outputs.version }}" \
+            dist/bin \
+            . \
+            dist
+
+      - name: Upload pkg to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.pkg

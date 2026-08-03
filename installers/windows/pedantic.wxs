@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX v4 installer definition for Pedantic DSC toolkit.
+  Installs the Rust CLI binary and the PowerShell module.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Pedantic"
+    Manufacturer="Plures"
+    Version="$(var.Version)"
+    UpgradeCode="3A7C9B1E-5F2D-4E8A-B6C1-D9E0F1A2B3C4">
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of Pedantic is already installed."
+      AllowSameVersionUpgrades="yes" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Features -->
+    <Feature Id="CLI" Title="Pedantic CLI" Level="1">
+      <ComponentGroupRef Id="CLIComponents" />
+      <ComponentRef Id="PathEntry" />
+    </Feature>
+
+    <Feature Id="PSModule" Title="PowerShell Module" Level="1">
+      <ComponentGroupRef Id="PSModuleComponents" />
+    </Feature>
+
+    <!-- Install directories -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Pedantic">
+        <Directory Id="BinDir" Name="bin" />
+        <Directory Id="ModulesDir" Name="Modules">
+          <Directory Id="PedanticModuleDir" Name="Pedantic" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- CLI binary -->
+    <ComponentGroup Id="CLIComponents" Directory="BinDir">
+      <Component Id="PedanticExe" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+        <File Id="pedantic.exe" Source="$(var.BinSource)\pedantic.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Add bin to PATH -->
+    <Component Id="PathEntry" Directory="BinDir" Guid="B2C3D4E5-F6A7-8901-BCDE-F12345678901">
+      <Environment Id="PATH" Name="PATH" Value="[BinDir]" Permanent="no"
+                   Part="last" Action="set" System="yes" />
+    </Component>
+
+    <!-- PowerShell module files -->
+    <ComponentGroup Id="PSModuleComponents" Directory="PedanticModuleDir">
+      <Component Id="PedanticPsm1" Guid="C3D4E5F6-A7B8-9012-CDEF-123456789012">
+        <File Id="Pedantic.psm1" Source="$(var.ModuleSource)\Pedantic.psm1" KeyPath="yes" />
+      </Component>
+      <Component Id="PedanticPsd1" Guid="D4E5F6A7-B8C9-0123-DEF0-1234567890AB">
+        <File Id="Pedantic.psd1" Source="$(var.ModuleSource)\Pedantic.psd1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+  </Package>
+</Wix>
