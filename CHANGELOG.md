@@ -1,3 +1,9 @@
+## [0.5.0] — 2026-08-03
+
+- feat: modernize DSC v3 resources, cross-platform adapter demo, and MCP (#108) (4dfcb9d)
+- deps(npm)(deps-dev): bump undici from 7.28.0 to 7.29.0 in /extension (#111) (0a65fc9)
+- deps(npm)(deps-dev): bump fast-uri from 3.1.4 to 3.1.5 in /extension (#110) (94aa6f5)
+
 ## [0.4.2] — 2026-08-03
 
 - fix(release): attach all installer packages to their release (#109) (bfa0d56)
