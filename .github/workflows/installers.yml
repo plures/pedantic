@@ -74,7 +74,7 @@ jobs:
             installers/windows/pedantic.wxs
 
       - name: Upload MSI to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.resolve.outputs.tag_name }}
           files: dist/*.msi
@@ -120,7 +120,7 @@ jobs:
             dist
 
       - name: Upload pkg to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.resolve.outputs.tag_name }}
           files: dist/*.pkg
@@ -154,7 +154,7 @@ jobs:
             dist
 
       - name: Upload DEB to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.resolve.outputs.tag_name }}
           files: dist/*.deb
@@ -191,7 +191,7 @@ jobs:
             dist
 
       - name: Upload RPM to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.resolve.outputs.tag_name }}
           files: dist/*.rpm
