@@ -1,0 +1,58 @@
+# Pedantic configuration lifecycle: policy and evidence are PX-owned.
+
+entity ConfigurationRevision:
+  prefix: "pedantic:config:"
+  fields:
+    revision_id: String
+    profile_id: String
+    source_digest: String
+    validation_state: String
+
+entity ComplianceRequest:
+  prefix: "pedantic:compliance-request:"
+  fields:
+    request_id: String
+    revision_id: String
+    profile_id: String
+    actor_id: String
+
+entity EffectAuthorization:
+  prefix: "pedantic:effect-authorization:"
+  fields:
+    authorization_id: String
+    request_id: String
+    capability: String
+    decision: String
+
+constraint configuration_requires_source_digest:
+  scope: configuration_revision
+  phase: admission
+  require: revision.source_digest != ""
+  severity: error
+  message: "A configuration revision requires an immutable source digest."
+
+constraint compliance_requires_validated_revision:
+  scope: compliance_request
+  phase: admission
+  require: revision.validation_state == "validated"
+  severity: error
+  message: "Compliance requires a validated configuration revision."
+
+constraint set_requires_pedantic_authorization:
+  scope: effect_authorization
+  phase: execution
+  when: authorization.capability == "dsc_config_set"
+  require: authorization.decision == "accepted"
+  severity: error
+  message: "DSC set is allowed only after an accepted PX authorization."
+
+procedure admit_configuration_revision(revision: ConfigurationRevision from "configuration_revisions") -> AdmissionDecision into "admission_decisions":
+  given: "Admit a configuration revision only when its source and validation evidence are acceptable"
+  validate_configuration_revision revision -> $validation
+  return {revision_id: revision.revision_id, decision: $validation.decision, reason: $validation.reason}
+
+procedure authorize_compliance_request(request: ComplianceRequest from "compliance_requests") -> EffectAuthorization into "effect_authorizations":
+  given: "Authorize a DSC compliance effect only for an admitted request and validated revision"
+  resolve_revision request.revision_id -> $revision
+  evaluate_compliance_policy request $revision -> $decision
+  return {authorization_id: request.request_id, request_id: request.request_id, capability: "dsc_config_test", decision: $decision.value}
