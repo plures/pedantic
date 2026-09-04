@@ -181,8 +181,9 @@ fn create_server_pipe(
 ) -> Result<tokio::net::windows::named_pipe::NamedPipeServer, ServiceErrorKind> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    let mut options = ServerOptions::new();
+let mut options = ServerOptions::new();
     options.first_pipe_instance(first_instance);
+    options.reject_remote_clients(true);
     let mut attributes = pipe_security.attributes();
     // SAFETY: `attributes` and its security descriptor remain valid throughout
     // the synchronous CreateNamedPipe call; Windows copies the descriptor.
