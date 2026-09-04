@@ -1,0 +1,45 @@
+# Pedantic local service boundary: transport authenticates and routes only;
+# PX procedures own every domain decision exposed through the service.
+
+entity LocalServiceCommand:
+  prefix: "pedantic:service-command:"
+  fields:
+    command_id: String
+    profile_id: String
+    method: String
+    actor_id: String
+    authorization_id: String
+    capability: String
+
+constraint service_command_requires_profile:
+  scope: local_service_command
+  phase: admission
+  require: command.profile_id != ""
+  severity: error
+  message: "Every local service command requires a profile identifier."
+
+constraint effect_command_requires_px_authorization:
+  scope: local_service_command
+  phase: execution
+  when: command.method == "effect.execute"
+  require: command.authorization_id != ""
+  severity: error
+  message: "An effect command requires a PX-issued authorization identifier."
+
+entity EffectAuthorization:
+  prefix: "pedantic:effect-authorization:"
+  fields:
+    authorization_id: String
+    profile_id: String
+    capability: String
+    decision: String
+
+procedure route_local_service_command(command: LocalServiceCommand from "local_service_commands") -> ServiceRoute into "service_routes":
+  given: "Route an authenticated command without reproducing domain policy in the transport"
+  resolve_command_contract command -> $contract
+  resolve_effect_authorization command.authorization_id -> $authorization
+  when: command.method == "effect.execute"
+  require: $authorization.decision == "accepted"
+  require: $authorization.profile_id == command.profile_id
+  require: $authorization.capability == command.capability
+  return {command_id: command.command_id, method: command.method, contract: $contract.name}
