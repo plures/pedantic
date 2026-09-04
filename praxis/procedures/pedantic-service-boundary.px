@@ -38,8 +38,5 @@ procedure route_local_service_command(command: LocalServiceCommand from "local_s
   given: "Route an authenticated command without reproducing domain policy in the transport"
   resolve_command_contract command -> $contract
   resolve_effect_authorization command.authorization_id -> $authorization
-  when: command.method == "effect.execute"
-  require: $authorization.decision == "accepted"
-  require: $authorization.profile_id == command.profile_id
-  require: $authorization.capability == command.capability
-  return {command_id: command.command_id, method: command.method, contract: $contract.name}
+  validate_effect_authorization $authorization command -> $validated
+  return {command_id: command.command_id, method: command.method, contract: $contract.name, authorization: $validated.authorization_id}

@@ -1,8 +1,17 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::io;
 use thiserror::Error;
 #[cfg(windows)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::LocalFree,
+    Security::{
+        Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1},
+        SECURITY_ATTRIBUTES,
+    },
+};
 
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
@@ -39,22 +48,34 @@ pub enum ServiceErrorKind {
     Io(#[from] io::Error),
 }
 
-pub fn pipe_name_for_profile(profile_id: &str) -> Result<String, ServiceErrorKind> {
+pub fn pipe_name_for_profile(
+    profile_id: &str,
+    authorization_token: &str,
+) -> Result<String, ServiceErrorKind> {
     if !is_valid_profile_id(profile_id) {
         return Err(ServiceErrorKind::InvalidRequest(
             "Profile identifiers must be 1-64 characters of letters, numbers, underscores, or hyphens."
                 .into(),
         ));
     }
+    validate_token(authorization_token)?;
 
     #[cfg(windows)]
     {
         let sid = current_user_sid()?;
-        return Ok(format!(r"\\.\pipe\pedantic-{sid}-{profile_id}"));
+        Ok(pipe_name_for_identity(
+            profile_id,
+            authorization_token,
+            &sid,
+        ))
     }
 
     #[cfg(not(windows))]
-    Ok(format!("/tmp/pedantic-{profile_id}"))
+    Ok(pipe_name_for_identity(
+        profile_id,
+        authorization_token,
+        "local",
+    ))
 }
 
 pub fn handle_request(
@@ -137,21 +158,41 @@ pub async fn run(
     token: &str,
     version: &str,
 ) -> Result<(), ServiceErrorKind> {
-    use tokio::net::windows::named_pipe::ServerOptions;
-
-    let mut server = ServerOptions::new()
-        .first_pipe_instance(true)
-        .create(pipe_name)?;
+    let mut pipe_security = PipeSecurity::for_current_user()?;
+    let mut server = create_server_pipe(pipe_name, true, &mut pipe_security)?;
     loop {
         server.connect().await?;
         let connection = server;
-        server = ServerOptions::new().create(pipe_name)?;
+        server = create_server_pipe(pipe_name, false, &mut pipe_security)?;
         let profile_id = profile_id.to_owned();
         let token = token.to_owned();
         let version = version.to_owned();
         tokio::spawn(async move {
             let _ = serve_connection(connection, &profile_id, &token, &version).await;
         });
+    }
+}
+
+#[cfg(windows)]
+fn create_server_pipe(
+    pipe_name: &str,
+    first_instance: bool,
+    pipe_security: &mut PipeSecurity,
+) -> Result<tokio::net::windows::named_pipe::NamedPipeServer, ServiceErrorKind> {
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    let mut options = ServerOptions::new();
+    options.first_pipe_instance(first_instance);
+    let mut attributes = pipe_security.attributes();
+    // SAFETY: `attributes` and its security descriptor remain valid throughout
+    // the synchronous CreateNamedPipe call; Windows copies the descriptor.
+    unsafe {
+        options
+            .create_with_security_attributes_raw(
+                pipe_name,
+                (&mut attributes as *mut SECURITY_ATTRIBUTES).cast(),
+            )
+            .map_err(ServiceErrorKind::Io)
     }
 }
 
@@ -216,12 +257,69 @@ fn is_valid_profile_id(profile_id: &str) -> bool {
         })
 }
 
+fn pipe_name_for_identity(profile_id: &str, authorization_token: &str, identity: &str) -> String {
+    let digest = Sha256::digest(authorization_token.as_bytes());
+    let token_hint = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+
+    #[cfg(windows)]
+    return format!(r"\\.\pipe\pedantic-{identity}-{profile_id}-{token_hint}");
+
+    #[cfg(not(windows))]
+    format!("/tmp/pedantic-{identity}-{profile_id}-{token_hint}")
+}
+
 fn constant_time_equal(left: &str, right: &str) -> bool {
     let mut difference = left.len() ^ right.len();
     for (a, b) in left.bytes().zip(right.bytes()) {
         difference |= usize::from(a ^ b);
     }
     difference == 0
+}
+
+#[cfg(windows)]
+struct PipeSecurity {
+    descriptor: *mut core::ffi::c_void,
+}
+
+#[cfg(windows)]
+impl PipeSecurity {
+    fn for_current_user() -> Result<Self, ServiceErrorKind> {
+        let sddl = "D:P(A;;GA;;;OW)\0";
+        let wide = sddl.encode_utf16().collect::<Vec<_>>();
+        let mut descriptor = std::ptr::null_mut();
+        let converted = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                wide.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                std::ptr::null_mut(),
+            )
+        };
+        if converted == 0 {
+            return Err(ServiceErrorKind::Io(io::Error::last_os_error()));
+        }
+        Ok(Self { descriptor })
+    }
+
+    fn attributes(&mut self) -> SECURITY_ATTRIBUTES {
+        SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: self.descriptor,
+            bInheritHandle: 0,
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for PipeSecurity {
+    fn drop(&mut self) {
+        if !self.descriptor.is_null() {
+            unsafe { LocalFree(self.descriptor) };
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -234,14 +332,18 @@ fn current_user_sid() -> Result<String, ServiceErrorKind> {
             "Unable to determine the current Windows user SID.".into(),
         ));
     }
-    let line = String::from_utf8_lossy(&output.stdout);
-    let sid = line
+    parse_current_user_sid(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(windows)]
+fn parse_current_user_sid(output: &str) -> Result<String, ServiceErrorKind> {
+    output
         .split(',')
         .nth(1)
-        .map(|value| value.trim_matches('"').trim())
+        .map(|value| value.trim().trim_matches('"'))
         .filter(|value| value.starts_with("S-"))
-        .ok_or_else(|| ServiceErrorKind::InvalidRequest("Invalid Windows user SID.".into()))?;
-    Ok(sid.to_owned())
+        .map(str::to_owned)
+        .ok_or_else(|| ServiceErrorKind::InvalidRequest("Invalid Windows user SID.".into()))
 }
 
 #[cfg(test)]
@@ -268,5 +370,29 @@ mod tests {
             "0.1.0",
         );
         assert_eq!(response.error.unwrap().code, "method_not_found");
+    }
+
+    #[test]
+    fn pipe_name_is_bound_to_the_service_secret() {
+        let first = pipe_name_for_identity(
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "S-1-5-21-test",
+        );
+        let second = pipe_name_for_identity(
+            "default",
+            "fedcba9876543210fedcba9876543210",
+            "S-1-5-21-test",
+        );
+        assert_ne!(first, second);
+        assert!(first.contains("S-1-5-21-test-default-"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parses_the_sid_from_whoami_csv_output() {
+        let sid = parse_current_user_sid("\"redmond\\kbristol\",\"S-1-12-1-123-456-789-101\"\r\n")
+            .expect("valid whoami CSV output");
+        assert_eq!(sid, "S-1-12-1-123-456-789-101");
     }
 }
