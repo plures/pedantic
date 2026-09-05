@@ -27,7 +27,7 @@ const SERVICE_ACTOR: &str = "pedantic-service";
 ///
 /// The projection deliberately excludes data hashes, store keys, causal links,
 /// rationales, constraint details, and operation payloads.
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct EvidenceSummary {
     #[serde(rename = "eventId")]
     pub event_id: String,
@@ -112,14 +112,18 @@ impl ServiceFoundation {
     }
 
     pub fn recent_evidence(&self) -> EvidencePage {
-        let entries = self
-            .timeline
-            .history(&self.evidence_key(), MAX_EVIDENCE_RESULTS)
-            .into_iter()
-            .map(EvidenceSummary::from)
-            .collect::<Vec<_>>();
+        let count = self.evidence_count();
+        let first = count.saturating_sub(MAX_EVIDENCE_RESULTS);
+        let entries = (first..count)
+            .rev()
+            .filter_map(|index| {
+                self._store
+                    .get(self.evidence_entry_key(index))
+                    .and_then(|record| serde_json::from_value(record.data).ok())
+            })
+            .collect::<Vec<EvidenceSummary>>();
         EvidencePage {
-            truncated: self.evidence_count() > entries.len(),
+            truncated: count > entries.len(),
             entries,
         }
     }
@@ -142,16 +146,26 @@ impl ServiceFoundation {
         let _ = self.timeline.record(&entry);
         self._store
             .put(self.evidence_key(), SERVICE_ACTOR, metadata.clone());
-        let count = self.evidence_count() + 1;
+        let count = self.evidence_count();
+        self._store.put(
+            self.evidence_entry_key(count),
+            SERVICE_ACTOR,
+            serde_json::to_value(EvidenceSummary::from(entry))
+                .expect("evidence summary serializes"),
+        );
         self._store.put(
             self.evidence_counter_key(),
             SERVICE_ACTOR,
             serde_json::json!({
                 "profileId": self.profile_id,
-                "count": count,
+                "count": count + 1,
                 "key": self.evidence_key(),
             }),
         );
+    }
+
+    fn evidence_entry_key(&self, index: usize) -> String {
+        format!("pedantic:service:evidence:{}:{index}", self.profile_id)
     }
 
     fn evidence_key(&self) -> String {
@@ -249,14 +263,17 @@ pub fn pipe_name_for_profile(
     ))
 }
 
-pub fn handle_request(
+pub fn handle_request<F>(
     frame: &str,
     expected_profile: &str,
     expected_token: &str,
     version: &str,
     chronos_entries: usize,
-    evidence: &EvidencePage,
-) -> LocalServiceResponse {
+    evidence: F,
+) -> LocalServiceResponse
+where
+    F: FnOnce() -> EvidencePage,
+{
     let request = match serde_json::from_str::<LocalServiceRequest>(frame) {
         Ok(request) => request,
         Err(error) => {
@@ -306,15 +323,18 @@ pub fn handle_request(
             })),
             None,
         ),
-        "evidence.list" => response(
-            Some(request.id),
-            true,
-            Some(serde_json::json!({
-                "entries": evidence.entries,
-                "truncated": evidence.truncated,
-            })),
-            None,
-        ),
+        "evidence.list" => {
+            let evidence = evidence();
+            response(
+                Some(request.id),
+                true,
+                Some(serde_json::json!({
+                    "entries": evidence.entries,
+                    "truncated": evidence.truncated,
+                })),
+                None,
+            )
+        }
         _ => response(
             Some(request.id),
             false,
@@ -421,7 +441,7 @@ async fn serve_connection(
                 token,
                 version,
                 foundation.evidence_count(),
-                &foundation.recent_evidence(),
+                || foundation.recent_evidence(),
             );
             let encoded = serde_json::to_vec(&response).map_err(|error| {
                 ServiceErrorKind::InvalidRequest(format!("Response encoding failed: {error}"))
@@ -569,7 +589,7 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             1,
-            &EvidencePage {
+            || EvidencePage {
                 entries: Vec::new(),
                 truncated: false,
             },
@@ -585,7 +605,7 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             1,
-            &EvidencePage {
+            || EvidencePage {
                 entries: Vec::new(),
                 truncated: false,
             },
@@ -672,7 +692,7 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             1,
-            &evidence,
+            move || evidence,
         );
         assert!(response.ok);
     }
@@ -689,7 +709,7 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             1,
-            &evidence,
+            move || evidence,
         );
         assert_eq!(
             response.error.expect("unauthorized response").code,
