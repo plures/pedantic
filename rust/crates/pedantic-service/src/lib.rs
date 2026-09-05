@@ -642,11 +642,13 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary profile store");
         let foundation = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
             .expect("open profile store");
-        foundation.record_start("0.1.0");
+        for _ in 0..=MAX_EVIDENCE_RESULTS {
+            foundation.record_start("0.1.0");
+        }
 
         let page = foundation.recent_evidence();
-        assert_eq!(page.entries.len(), 1);
-        assert!(!page.truncated);
+        assert_eq!(page.entries.len(), MAX_EVIDENCE_RESULTS);
+        assert!(page.truncated);
 
         let serialized = serde_json::to_value(&page).expect("serialize evidence projection");
         assert!(serialized.get("key").is_none());
