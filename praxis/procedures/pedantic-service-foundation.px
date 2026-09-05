@@ -34,4 +34,4 @@ procedure record_service_startup(startup: ServiceStartup from "service_startups"
   given: "Persist only profile lifecycle metadata after service admission"
   persist_profile_store startup -> $profile
   record_chronos_evidence $profile -> $evidence
-  return {profile_id: startup.profile_id, event_kind: "service.started", redaction_class: "metadata_only", evidence: $evidence.id}
+  return {profile_id: startup.profile_id, event_kind: "service.started", redaction_class: "metadata_only", evidence_id: $evidence.id}

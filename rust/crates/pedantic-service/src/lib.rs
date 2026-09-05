@@ -41,9 +41,10 @@ impl ServiceFoundation {
     pub fn open_at(
         profile_id: &str,
         store_path: &Path,
-        version: &str,
+        _version: &str,
     ) -> Result<Self, ServiceErrorKind> {
-        if !is_valid_profile_id(profile_id) {
+        let profile_id = normalize_profile_id(profile_id);
+        if !is_valid_profile_id(&profile_id) {
             return Err(ServiceErrorKind::InvalidRequest(
                 "Profile identifiers must be 1-64 characters of letters, numbers, underscores, or hyphens."
                     .into(),
@@ -57,18 +58,24 @@ impl ServiceFoundation {
             Arc::new(CrdtStore::default().with_persistence(storage as Arc<dyn StorageEngine>));
         let timeline = ChronosTimeline::new(Arc::clone(&store));
         let foundation = Self {
-            profile_id: profile_id.to_owned(),
+            profile_id: profile_id.clone(),
             timeline,
             _store: store,
         };
-        foundation.record_start(version);
         Ok(foundation)
     }
 
     pub fn evidence_count(&self) -> usize {
-        self.timeline
-            .history(&self.evidence_key(), usize::MAX)
-            .len()
+        self._store
+            .get(&self.evidence_counter_key())
+            .and_then(|record| {
+                record
+                    .data
+                    .get("count")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|count| count as usize)
+            })
+            .unwrap_or(0)
     }
 
     fn record_start(&self, version: &str) {
@@ -86,15 +93,30 @@ impl ServiceFoundation {
             Some("Authenticated local service started; metadata only.".into()),
         );
         let _ = self.timeline.record(&entry);
+        let count = self.evidence_count() + 1;
+        self._store.put(
+            self.evidence_counter_key(),
+            SERVICE_ACTOR,
+            serde_json::json!({
+                "profileId": self.profile_id,
+                "count": count,
+                "key": self.evidence_key(),
+            }),
+        );
     }
 
     fn evidence_key(&self) -> String {
         format!("pedantic:service:{}", self.profile_id)
     }
+
+    fn evidence_counter_key(&self) -> String {
+        format!("pedantic:service:count:{}", self.profile_id)
+    }
 }
 
 pub fn profile_store_path(profile_id: &str) -> Result<PathBuf, ServiceErrorKind> {
-    if !is_valid_profile_id(profile_id) {
+    let profile_id = normalize_profile_id(profile_id);
+    if !is_valid_profile_id(&profile_id) {
         return Err(ServiceErrorKind::InvalidRequest(
             "Profile identifiers must be 1-64 characters of letters, numbers, underscores, or hyphens."
                 .into(),
@@ -108,7 +130,7 @@ pub fn profile_store_path(profile_id: &str) -> Result<PathBuf, ServiceErrorKind>
     Ok(PathBuf::from(local_app_data)
         .join("Pedantic")
         .join("profiles")
-        .join(profile_id)
+        .join(&profile_id)
         .join("pluresdb"))
 }
 
@@ -151,7 +173,8 @@ pub fn pipe_name_for_profile(
     profile_id: &str,
     authorization_token: &str,
 ) -> Result<String, ServiceErrorKind> {
-    if !is_valid_profile_id(profile_id) {
+    let profile_id = normalize_profile_id(profile_id);
+    if !is_valid_profile_id(&profile_id) {
         return Err(ServiceErrorKind::InvalidRequest(
             "Profile identifiers must be 1-64 characters of letters, numbers, underscores, or hyphens."
                 .into(),
@@ -163,7 +186,7 @@ pub fn pipe_name_for_profile(
     {
         let sid = current_user_sid()?;
         Ok(pipe_name_for_identity(
-            profile_id,
+            &profile_id,
             authorization_token,
             &sid,
         ))
@@ -171,7 +194,7 @@ pub fn pipe_name_for_profile(
 
     #[cfg(not(windows))]
     Ok(pipe_name_for_identity(
-        profile_id,
+        &profile_id,
         authorization_token,
         "local",
     ))
@@ -199,6 +222,9 @@ pub fn handle_request(
         }
     };
 
+    let expected_profile = normalize_profile_id(expected_profile);
+    let request_profile_id = normalize_profile_id(&request.profile_id);
+
     if !constant_time_equal(&request.authorization, expected_token) {
         return response(
             Some(request.id),
@@ -207,7 +233,7 @@ pub fn handle_request(
             Some(("unauthorized", "Local service authorization failed.".into())),
         );
     }
-    if request.profile_id != expected_profile {
+    if request_profile_id != expected_profile {
         return response(
             Some(request.id),
             false,
@@ -263,6 +289,7 @@ pub async fn run(
     let foundation = Arc::new(foundation);
     let mut pipe_security = PipeSecurity::for_current_user()?;
     let mut server = create_server_pipe(pipe_name, true, &mut pipe_security)?;
+    foundation.record_start(version);
     loop {
         server.connect().await?;
         let connection = server;
@@ -360,6 +387,10 @@ fn response(
         result,
         error: error.map(|(code, message)| ServiceError { code, message }),
     }
+}
+
+fn normalize_profile_id(profile_id: &str) -> String {
+    profile_id.trim().to_ascii_lowercase()
 }
 
 fn is_valid_profile_id(profile_id: &str) -> bool {
@@ -509,7 +540,20 @@ mod tests {
         );
         assert_ne!(first, second);
         assert!(first.contains("-default-"));
+        #[cfg(windows)]
         assert!(!first.contains("S-1-5-21-test"));
+        #[cfg(not(windows))]
+        assert!(first.contains("S-1-5-21-test"));
+    }
+
+    #[test]
+    fn profile_ids_are_canonicalized_before_the_store_key_and_pipe_name() {
+        let normalized = normalize_profile_id("Default");
+        assert_eq!(normalized, "default");
+        assert_eq!(
+            pipe_name_for_profile("Default", "0123456789abcdef0123456789abcdef").unwrap(),
+            pipe_name_for_profile("default", "0123456789abcdef0123456789abcdef").unwrap()
+        );
     }
 
     #[test]
@@ -517,12 +561,13 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary profile store");
         let first = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
             .expect("open first profile store");
+        first.record_start("0.1.0");
         assert_eq!(first.evidence_count(), 1);
         drop(first);
 
         let reopened = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
             .expect("reopen profile store");
-        assert_eq!(reopened.evidence_count(), 2);
+        assert_eq!(reopened.evidence_count(), 1);
     }
 
     #[cfg(windows)]
