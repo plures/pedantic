@@ -16,7 +16,7 @@ pub use parser::*;
 pub use planner::*;
 pub use praxis::{
     Constraint, ConstraintViolation, Engine, EngineOutcome, Event, ExecutionResult, Fact,
-    HostInventory, PlanAction, PlanTask, ResourceDesired, ResourceState, Rule, RuleOutput,
-    ResourceStatus as PraxisResourceStatus,
+    HostInventory, PlanAction, PlanTask, ResourceDesired, ResourceState,
+    ResourceStatus as PraxisResourceStatus, Rule, RuleOutput,
 };
 pub use validator::*;

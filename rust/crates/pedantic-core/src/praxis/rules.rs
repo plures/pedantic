@@ -29,8 +29,12 @@ impl Rule for ParseAndValidate {
 
     fn apply(&self, facts: &[Fact], _events: &[Event]) -> RuleOutput {
         let mut output = RuleOutput::default();
-        if let Some(Fact::ConfigDocument(doc)) = facts.iter().find(|f| matches!(f, Fact::ConfigDocument(_))) {
-            output.new_events.push(Event::ConfigParsed { name: doc.name.clone() });
+        if let Some(Fact::ConfigDocument(doc)) =
+            facts.iter().find(|f| matches!(f, Fact::ConfigDocument(_)))
+        {
+            output.new_events.push(Event::ConfigParsed {
+                name: doc.name.clone(),
+            });
         }
         output
     }
@@ -49,11 +53,14 @@ impl Rule for ValidateParameters {
 
     fn apply(&self, facts: &[Fact], _events: &[Event]) -> RuleOutput {
         let mut output = RuleOutput::default();
-        let Some(Fact::ConfigDocument(doc)) = facts.iter().find(|f| matches!(f, Fact::ConfigDocument(_))) else {
+        let Some(Fact::ConfigDocument(doc)) =
+            facts.iter().find(|f| matches!(f, Fact::ConfigDocument(_)))
+        else {
             return output;
         };
 
-        let param_names: std::collections::HashSet<_> = doc.parameters.iter().map(|p| p.name.as_str()).collect();
+        let param_names: std::collections::HashSet<_> =
+            doc.parameters.iter().map(|p| p.name.as_str()).collect();
         let re = Regex::new(r"(?i)\[parameters?\('([^']+)'\)\]").unwrap();
 
         for resource in &doc.resources {
@@ -77,7 +84,9 @@ impl Rule for ResolveExecutionOrder {
 
     fn apply(&self, facts: &[Fact], _events: &[Event]) -> RuleOutput {
         let mut output = RuleOutput::default();
-        let Some(Fact::ConfigDocument(doc)) = facts.iter().find(|f| matches!(f, Fact::ConfigDocument(_))) else {
+        let Some(Fact::ConfigDocument(doc)) =
+            facts.iter().find(|f| matches!(f, Fact::ConfigDocument(_)))
+        else {
             return output;
         };
 

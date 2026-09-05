@@ -17,9 +17,10 @@ pub fn parse_dsc_v3(yaml: &str) -> Result<DscDocument, DscParseError> {
     let mut doc: DscDocument = serde_yaml::from_str(yaml)?;
 
     if let Some(schema) = doc.schema.as_deref()
-        && !is_valid_schema(schema) {
-            return Err(DscParseError::InvalidSchema(schema.to_string()));
-        }
+        && !is_valid_schema(schema)
+    {
+        return Err(DscParseError::InvalidSchema(schema.to_string()));
+    }
 
     normalize_parameters(&mut doc);
     doc.resources = normalize_resources(doc.resources)?;
@@ -72,9 +73,10 @@ fn normalize_dependencies(resource: &mut DscResource) {
 
 fn normalize_dependency(dep: &str) -> String {
     if dep.starts_with('[')
-        && let Some(idx) = dep.rfind(']') {
-            return dep[idx + 1..].to_string();
-        }
+        && let Some(idx) = dep.rfind(']')
+    {
+        return dep[idx + 1..].to_string();
+    }
     dep.to_string()
 }
 
@@ -89,7 +91,9 @@ fn extract_nested_resources(
         return Ok(None);
     };
 
-    let array = value.as_array().ok_or(DscParseError::InvalidNestedResources)?;
+    let array = value
+        .as_array()
+        .ok_or(DscParseError::InvalidNestedResources)?;
     let mut nested = Vec::new();
     for item in array {
         let nested_resource: DscResource = serde_json::from_value(item.clone())?;

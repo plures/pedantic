@@ -31,12 +31,16 @@ impl Constraint for NoSetWithoutTest {
 
     fn check(&self, facts: &[Fact], _events: &[Event]) -> Result<(), ConstraintViolation> {
         let has_test = facts.iter().any(|fact| match fact {
-            Fact::PlanTasks(tasks) => tasks.iter().any(|task| task.action == crate::praxis::PlanAction::Test),
+            Fact::PlanTasks(tasks) => tasks
+                .iter()
+                .any(|task| task.action == crate::praxis::PlanAction::Test),
             _ => false,
         });
 
         let has_set = facts.iter().any(|fact| match fact {
-            Fact::PlanTasks(tasks) => tasks.iter().any(|task| task.action == crate::praxis::PlanAction::Set),
+            Fact::PlanTasks(tasks) => tasks
+                .iter()
+                .any(|task| task.action == crate::praxis::PlanAction::Set),
             _ => false,
         });
 
@@ -56,7 +60,10 @@ impl Constraint for NoDeployDraft {
     }
 
     fn check(&self, facts: &[Fact], _events: &[Event]) -> Result<(), ConstraintViolation> {
-        let Some(Fact::ConfigDocument(doc)) = facts.iter().find(|fact| matches!(fact, Fact::ConfigDocument(_))) else {
+        let Some(Fact::ConfigDocument(doc)) = facts
+            .iter()
+            .find(|fact| matches!(fact, Fact::ConfigDocument(_)))
+        else {
             return Ok(());
         };
 
@@ -120,7 +127,10 @@ impl Constraint for MaxDriftThreshold {
             .filter(|fact| matches!(fact, Fact::ResourceState(state) if state.status == crate::praxis::ResourceStatus::Drifted))
             .count();
 
-        let total = if let Some(Fact::ConfigDocument(doc)) = facts.iter().find(|fact| matches!(fact, Fact::ConfigDocument(_))) {
+        let total = if let Some(Fact::ConfigDocument(doc)) = facts
+            .iter()
+            .find(|fact| matches!(fact, Fact::ConfigDocument(_)))
+        {
             doc.resources.len()
         } else {
             facts

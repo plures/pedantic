@@ -15,11 +15,23 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    Parse { file: String },
-    Validate { file: String },
-    Plan { file: String },
-    Export { #[command(subcommand)] kind: ExportKind },
-    Resources { #[command(subcommand)] kind: ResourceKind },
+    Parse {
+        file: String,
+    },
+    Validate {
+        file: String,
+    },
+    Plan {
+        file: String,
+    },
+    Export {
+        #[command(subcommand)]
+        kind: ExportKind,
+    },
+    Resources {
+        #[command(subcommand)]
+        kind: ResourceKind,
+    },
     /// Check for updates and optionally install the latest version
     Update {
         /// Only check for updates without installing
@@ -127,7 +139,9 @@ fn run_update(check_only: bool) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn load_document(path: &str) -> Result<pedantic_core::model::DscDocument, Box<dyn std::error::Error>> {
+fn load_document(
+    path: &str,
+) -> Result<pedantic_core::model::DscDocument, Box<dyn std::error::Error>> {
     let content = fs::read_to_string(path)?;
     let doc = parse_dsc_v3(&content)?;
     Ok(doc)

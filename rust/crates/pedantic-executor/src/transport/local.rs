@@ -1,13 +1,11 @@
-use crate::dsc::{run_dsc, DscCommand, DscError, DscInput, DscOutput, DscRunOptions};
+use crate::dsc::{DscCommand, DscError, DscInput, DscOutput, DscRunOptions, run_dsc};
 use crate::transport::Transport;
 use async_trait::async_trait;
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct LocalTransport {
     pub options: DscRunOptions,
 }
-
 
 #[async_trait]
 impl Transport for LocalTransport {
