@@ -7,7 +7,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = std::env::var("PEDANTIC_LOCAL_TOKEN")
         .map_err(|_| "PEDANTIC_LOCAL_TOKEN is required to start the local Pedantic service")?;
     validate_token(&token)?;
-    let pipe_name = pipe_name_for_profile(&profile_id)?;
+    let pipe_name = pipe_name_for_profile(&profile_id, &token)?;
     tracing::info!(pipe = %pipe_name, profile = %profile_id, "starting pedantic service");
     run(&pipe_name, &profile_id, &token, env!("CARGO_PKG_VERSION")).await?;
     Ok(())
