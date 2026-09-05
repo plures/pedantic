@@ -1,8 +1,11 @@
 # Pedantic local service
 
-`pedantic-service` is the Windows-local transport host for Pedantic. It only
-serves authenticated `service.health` requests today; it does not own data,
-evaluate PX, write Chronos events, or execute effects.
+`pedantic-service` is the Windows-local transport host and the sole owner of a
+profile-scoped embedded PluresDB store. On startup it opens
+`%LOCALAPPDATA%\Pedantic\profiles\<profile>\pluresdb` and records a
+metadata-only `service.started` event in its PluresDB-backed Chronos timeline.
+The health response exposes only the bounded evidence count, never store data,
+pipe names, or credentials.
 
 The service derives a user-SID- and secret-bound pipe name, creates every
 named-pipe instance with a protected DACL granting access only to that user,
@@ -10,8 +13,8 @@ and rejects remote clients. This prevents another local account from binding
 the discoverable service endpoint or reading requests to a running service.
 
 The token is transport authentication only. Effect authorization remains a PX
-and PluresDB decision; no effect endpoint is registered until that evaluator
-and store boundary are live.
+and PluresDB decision; no effect endpoint is registered until the PX evaluator
+and its admission boundary are live. This host does not reproduce that policy.
 
 ## Run
 

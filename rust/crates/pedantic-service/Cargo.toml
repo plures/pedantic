@@ -5,6 +5,8 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
+pluresdb = { git = "https://github.com/plures/pluresdb.git", rev = "82fb4f341856166b0da4cf220daa41e4697a1a2b" }
+pluresdb-chronos = { git = "https://github.com/plures/pluresdb.git", rev = "82fb4f341856166b0da4cf220daa41e4697a1a2b" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
@@ -16,3 +18,6 @@ tracing-subscriber = "0.3"
 [target.'cfg(windows)'.dependencies]
 tokio = { workspace = true, features = ["net"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
+
+[dev-dependencies]
+tempfile = "3"

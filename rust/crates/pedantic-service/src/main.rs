@@ -1,4 +1,4 @@
-use pedantic_service::{pipe_name_for_profile, run, validate_token};
+use pedantic_service::{ServiceFoundation, pipe_name_for_profile, run, validate_token};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -8,8 +8,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "PEDANTIC_LOCAL_TOKEN is required to start the local Pedantic service")?;
     validate_token(&token)?;
     let pipe_name = pipe_name_for_profile(&profile_id, &token)?;
+    let foundation = ServiceFoundation::open(&profile_id, env!("CARGO_PKG_VERSION"))?;
     tracing::info!(pipe = %pipe_name, profile = %profile_id, "starting pedantic service");
-    run(&pipe_name, &profile_id, &token, env!("CARGO_PKG_VERSION")).await?;
+    run(
+        &pipe_name,
+        &profile_id,
+        &token,
+        env!("CARGO_PKG_VERSION"),
+        foundation,
+    )
+    .await?;
     Ok(())
 }
 
