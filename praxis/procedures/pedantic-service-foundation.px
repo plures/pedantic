@@ -16,6 +16,20 @@ entity ServiceEvidence:
     event_kind: String
     redaction_class: String
 
+entity EvidenceQuery:
+  prefix: "pedantic:evidence-query:"
+  fields:
+    profile_id: String
+    actor_id: String
+    max_results: int
+
+entity EvidenceProjection:
+  prefix: "pedantic:evidence-projection:"
+  fields:
+    profile_id: String
+    entry_count: int
+    redaction_class: String
+
 constraint startup_requires_profile:
   scope: service_startup
   phase: admission
@@ -30,8 +44,28 @@ constraint service_evidence_is_metadata_only:
   severity: error
   message: "Service lifecycle evidence must exclude transport secrets and effect payloads."
 
+constraint evidence_query_is_bounded:
+  scope: evidence_query
+  phase: projection
+  require: query.max_results > 0 AND query.max_results <= 100
+  severity: error
+  message: "A local evidence query must return no more than 100 redacted entries."
+
+constraint evidence_projection_is_redacted:
+  scope: evidence_projection
+  phase: projection
+  require: projection.redaction_class == "metadata_only"
+  severity: error
+  message: "Evidence projections must exclude store keys, payloads, hashes, and rationale."
+
 procedure record_service_startup(startup: ServiceStartup from "service_startups") -> ServiceEvidence into "service_evidence":
   given: "Persist only profile lifecycle metadata after service admission"
   persist_profile_store startup -> $profile
   record_chronos_evidence $profile -> $evidence
   return {profile_id: startup.profile_id, event_kind: "service.started", redaction_class: "metadata_only", evidence_id: $evidence.id}
+
+procedure project_service_evidence(query: EvidenceQuery from "evidence_queries") -> EvidenceProjection into "evidence_projections":
+  given: "Return a bounded metadata-only Chronos projection for the authenticated profile"
+  query_chronos_evidence query -> $entries
+  redact_evidence_metadata $entries -> $projection
+  return {profile_id: query.profile_id, entry_count: $projection.count, redaction_class: "metadata_only"}

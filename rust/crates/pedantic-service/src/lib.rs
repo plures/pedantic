@@ -1,5 +1,5 @@
 use pluresdb::{CrdtStore, SledStorage, StorageEngine};
-use pluresdb_chronos::{ChronosAction, ChronosTimeline};
+use pluresdb_chronos::{ChronosAction, ChronosEntry, ChronosTimeline};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -20,7 +20,40 @@ use windows_sys::Win32::{
 };
 
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+pub const MAX_EVIDENCE_RESULTS: usize = 100;
 const SERVICE_ACTOR: &str = "pedantic-service";
+
+/// A bounded, redacted projection of a Chronos entry for local clients.
+///
+/// The projection deliberately excludes data hashes, store keys, causal links,
+/// rationales, constraint details, and operation payloads.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct EvidenceSummary {
+    #[serde(rename = "eventId")]
+    pub event_id: String,
+    pub timestamp: u64,
+    pub actor: String,
+    pub action: String,
+    pub level: String,
+}
+
+impl From<ChronosEntry> for EvidenceSummary {
+    fn from(entry: ChronosEntry) -> Self {
+        Self {
+            event_id: entry.id,
+            timestamp: entry.timestamp,
+            actor: entry.actor,
+            action: entry.action.to_string(),
+            level: entry.level.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct EvidencePage {
+    pub entries: Vec<EvidenceSummary>,
+    pub truncated: bool,
+}
 
 /// The local service is the sole owner of a profile's embedded PluresDB store.
 ///
@@ -67,7 +100,7 @@ impl ServiceFoundation {
 
     pub fn evidence_count(&self) -> usize {
         self._store
-            .get(&self.evidence_counter_key())
+            .get(self.evidence_counter_key())
             .and_then(|record| {
                 record
                     .data
@@ -76,6 +109,19 @@ impl ServiceFoundation {
                     .map(|count| count as usize)
             })
             .unwrap_or(0)
+    }
+
+    pub fn recent_evidence(&self) -> EvidencePage {
+        let entries = self
+            .timeline
+            .history(&self.evidence_key(), MAX_EVIDENCE_RESULTS)
+            .into_iter()
+            .map(EvidenceSummary::from)
+            .collect::<Vec<_>>();
+        EvidencePage {
+            truncated: self.evidence_count() > entries.len(),
+            entries,
+        }
     }
 
     fn record_start(&self, version: &str) {
@@ -94,7 +140,8 @@ impl ServiceFoundation {
             Some("Authenticated local service started; metadata only.".into()),
         );
         let _ = self.timeline.record(&entry);
-        self._store.put(self.evidence_key(), SERVICE_ACTOR, metadata.clone());
+        self._store
+            .put(self.evidence_key(), SERVICE_ACTOR, metadata.clone());
         let count = self.evidence_count() + 1;
         self._store.put(
             self.evidence_counter_key(),
@@ -208,6 +255,7 @@ pub fn handle_request(
     expected_token: &str,
     version: &str,
     chronos_entries: usize,
+    evidence: &EvidencePage,
 ) -> LocalServiceResponse {
     let request = match serde_json::from_str::<LocalServiceRequest>(frame) {
         Ok(request) => request,
@@ -246,8 +294,28 @@ pub fn handle_request(
             )),
         );
     }
-    if request.method != "service.health" {
-        return response(
+    match request.method.as_str() {
+        "service.health" => response(
+            Some(request.id),
+            true,
+            Some(serde_json::json!({
+                "profileId": expected_profile,
+                "service": "pedantic-service",
+                "version": version,
+                "chronosEntries": chronos_entries,
+            })),
+            None,
+        ),
+        "evidence.list" => response(
+            Some(request.id),
+            true,
+            Some(serde_json::json!({
+                "entries": evidence.entries,
+                "truncated": evidence.truncated,
+            })),
+            None,
+        ),
+        _ => response(
             Some(request.id),
             false,
             None,
@@ -255,20 +323,8 @@ pub fn handle_request(
                 "method_not_found",
                 format!("Method '{}' is not registered.", request.method),
             )),
-        );
+        ),
     }
-
-    response(
-        Some(request.id),
-        true,
-        Some(serde_json::json!({
-            "profileId": expected_profile,
-            "service": "pedantic-service",
-            "version": version,
-            "chronosEntries": chronos_entries,
-        })),
-        None,
-    )
 }
 
 pub fn validate_token(token: &str) -> Result<(), ServiceErrorKind> {
@@ -365,6 +421,7 @@ async fn serve_connection(
                 token,
                 version,
                 foundation.evidence_count(),
+                &foundation.recent_evidence(),
             );
             let encoded = serde_json::to_vec(&response).map_err(|error| {
                 ServiceErrorKind::InvalidRequest(format!("Response encoding failed: {error}"))
@@ -512,6 +569,10 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             1,
+            &EvidencePage {
+                entries: Vec::new(),
+                truncated: false,
+            },
         );
         assert!(response.ok);
     }
@@ -524,6 +585,10 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             1,
+            &EvidencePage {
+                entries: Vec::new(),
+                truncated: false,
+            },
         );
         assert_eq!(response.error.unwrap().code, "method_not_found");
     }
@@ -570,6 +635,62 @@ mod tests {
         let reopened = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
             .expect("reopen profile store");
         assert_eq!(reopened.evidence_count(), 1);
+    }
+
+    #[test]
+    fn evidence_query_is_bounded_and_redacted() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let foundation = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("open profile store");
+        foundation.record_start("0.1.0");
+
+        let page = foundation.recent_evidence();
+        assert_eq!(page.entries.len(), 1);
+        assert!(!page.truncated);
+
+        let serialized = serde_json::to_value(&page).expect("serialize evidence projection");
+        assert!(serialized.get("key").is_none());
+        assert!(serialized.get("data_hash").is_none());
+        assert!(serialized.get("rationale").is_none());
+        assert!(serialized.get("constraint_results").is_none());
+        assert!(serialized.get("operation").is_none());
+    }
+
+    #[test]
+    fn evidence_list_is_available_to_the_authenticated_profile() {
+        let evidence = EvidencePage {
+            entries: Vec::new(),
+            truncated: false,
+        };
+        let response = handle_request(
+            r#"{"id":"1","method":"evidence.list","profileId":"default","authorization":"0123456789abcdef0123456789abcdef"}"#,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            1,
+            &evidence,
+        );
+        assert!(response.ok);
+    }
+
+    #[test]
+    fn evidence_list_rejects_an_invalid_token() {
+        let evidence = EvidencePage {
+            entries: Vec::new(),
+            truncated: false,
+        };
+        let response = handle_request(
+            r#"{"id":"1","method":"evidence.list","profileId":"default","authorization":"incorrect-token"}"#,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            1,
+            &evidence,
+        );
+        assert_eq!(
+            response.error.expect("unauthorized response").code,
+            "unauthorized"
+        );
     }
 
     #[cfg(windows)]
