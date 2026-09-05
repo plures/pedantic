@@ -651,11 +651,13 @@ mod tests {
         assert!(page.truncated);
 
         let serialized = serde_json::to_value(&page).expect("serialize evidence projection");
-        assert!(serialized.get("key").is_none());
-        assert!(serialized.get("data_hash").is_none());
-        assert!(serialized.get("rationale").is_none());
-        assert!(serialized.get("constraint_results").is_none());
-        assert!(serialized.get("operation").is_none());
+        let entry = serialized["entries"][0]
+            .as_object()
+            .expect("serialized evidence entry");
+        assert_eq!(entry.len(), 5);
+        for field in ["eventId", "timestamp", "actor", "action", "level"] {
+            assert!(entry.contains_key(field), "missing {field}");
+        }
     }
 
     #[test]
