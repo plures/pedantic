@@ -14,9 +14,13 @@ named-pipe instance with a protected DACL granting access only to that user,
 and rejects remote clients. This prevents another local account from binding
 the discoverable service endpoint or reading requests to a running service.
 
-The token is transport authentication only. Effect authorization remains a PX
-and PluresDB decision; no effect endpoint is registered until the PX evaluator
-and its admission boundary are live. This host does not reproduce that policy.
+The token is transport authentication only. `configuration.admit` is the first
+live PX Lang admission boundary: it evaluates the canonical
+`configuration_requires_source_digest` constraint, persists the resulting
+configuration projection, and records a Chronos entry. It does not yet claim
+full PX procedure/dataflow execution, DSC-document validation, or effect
+authorization; those remain PX and PluresDB decisions rather than imperative
+host policy.
 
 ## Run
 

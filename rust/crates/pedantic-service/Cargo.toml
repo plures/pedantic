@@ -7,6 +7,9 @@ license = "MIT"
 [dependencies]
 pluresdb = { git = "https://github.com/plures/pluresdb.git", rev = "82fb4f341856166b0da4cf220daa41e4697a1a2b" }
 pluresdb-chronos = { git = "https://github.com/plures/pluresdb.git", rev = "82fb4f341856166b0da4cf220daa41e4697a1a2b" }
+px-ast = { git = "https://github.com/plures/praxis-lang.git", rev = "6d367fe673756dabaa6085bc6b5202debaaabe6f" }
+px-compiler = { git = "https://github.com/plures/praxis-lang.git", rev = "6d367fe673756dabaa6085bc6b5202debaaabe6f" }
+px-eval = { git = "https://github.com/plures/praxis-lang.git", rev = "6d367fe673756dabaa6085bc6b5202debaaabe6f" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
