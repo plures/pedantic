@@ -79,20 +79,22 @@ impl ServiceFoundation {
     }
 
     fn record_start(&self, version: &str) {
+        let metadata = serde_json::json!({
+            "profileId": self.profile_id,
+            "service": SERVICE_ACTOR,
+            "version": version,
+            "event": "service.started",
+        });
         let entry = self.timeline.build_entry(
             &self.evidence_key(),
             SERVICE_ACTOR,
             ChronosAction::Create,
-            &serde_json::json!({
-                "profileId": self.profile_id,
-                "service": SERVICE_ACTOR,
-                "version": version,
-                "event": "service.started",
-            }),
+            &metadata,
             Vec::new(),
             Some("Authenticated local service started; metadata only.".into()),
         );
         let _ = self.timeline.record(&entry);
+        self._store.put(self.evidence_key(), SERVICE_ACTOR, metadata.clone());
         let count = self.evidence_count() + 1;
         self._store.put(
             self.evidence_counter_key(),
