@@ -1943,6 +1943,7 @@ dependencies = [
 name = "pedantic-service"
 version = "0.1.0"
 dependencies = [
+ "pedantic-executor",
  "pluresdb",
  "pluresdb-chronos",
  "px-ast",

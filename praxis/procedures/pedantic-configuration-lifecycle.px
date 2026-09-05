@@ -6,6 +6,7 @@ entity ConfigurationRevision:
     revision_id: String
     profile_id: String
     source_digest: String
+    admission_state: String
     validation_state: String
 
 entity ComplianceRequest:
@@ -37,6 +38,20 @@ constraint compliance_requires_validated_revision:
   require: revision.validation_state == "validated"
   severity: error
   message: "Compliance requires a validated configuration revision."
+
+constraint configuration_validation_requires_accepted_admission:
+  scope: configuration_validation
+  phase: admission
+  require: revision.admission_state == "accepted"
+  severity: error
+  message: "Configuration validation requires an admitted configuration revision."
+
+constraint configuration_validation_requires_matching_source_digest:
+  scope: configuration_validation
+  phase: admission
+  require: revision.source_digest == validation.source_digest
+  severity: error
+  message: "Configuration validation requires the admitted source digest."
 
 constraint set_requires_pedantic_authorization:
   scope: effect_authorization
