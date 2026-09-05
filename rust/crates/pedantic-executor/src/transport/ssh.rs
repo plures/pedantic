@@ -97,7 +97,16 @@ impl Transport for SshTransport {
 fn build_remote_command(command: &DscCommand, input: &DscInput) -> String {
     let args = build_dsc_args(command, input);
     let mut pieces = Vec::with_capacity(args.len() + 1);
-    pieces.push("dsc".to_string());
-    pieces.extend(args);
+    pieces.push(shell_escape("dsc"));
+    pieces.extend(args.iter().map(|arg| shell_escape(arg)));
     pieces.join(" ")
+}
+
+fn shell_escape(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_string();
+    }
+
+    let escaped = arg.replace('\'', "'\"'\"'");
+    format!("'{}'", escaped)
 }
