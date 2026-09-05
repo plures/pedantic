@@ -4,8 +4,10 @@
 profile-scoped embedded PluresDB store. On startup it opens
 `%LOCALAPPDATA%\Pedantic\profiles\<profile>\pluresdb` and records a
 metadata-only `service.started` event in its PluresDB-backed Chronos timeline.
-The health response exposes only the bounded evidence count, never store data,
-pipe names, or credentials.
+The health response exposes only the bounded evidence count. Authenticated
+`evidence.list` returns at most 100 redacted Chronos summaries (event ID,
+timestamp, actor, action, and level), never store data, pipe names, or
+credentials.
 
 The service derives a user-SID- and secret-bound pipe name, creates every
 named-pipe instance with a protected DACL granting access only to that user,
