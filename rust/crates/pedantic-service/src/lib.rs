@@ -101,6 +101,26 @@ pub struct ConfigurationValidation {
     pub reason: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ComplianceRequest {
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "revisionId")]
+    pub revision_id: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct ComplianceDecision {
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "revisionId")]
+    pub revision_id: String,
+    pub decision: String,
+    #[serde(rename = "constraintId")]
+    pub constraint_id: String,
+    pub reason: String,
+}
+
 /// The local service is the sole owner of a profile's embedded PluresDB store.
 ///
 /// It owns authenticated transport, profile-local persistence, and Chronos
@@ -299,6 +319,67 @@ impl ServiceFoundation {
         Ok(validation)
     }
 
+    pub async fn request_compliance(
+        &self,
+        request: ComplianceRequest,
+    ) -> Result<ComplianceDecision, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let revision = self
+            ._store
+            .get(self.configuration_key(&request.revision_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest(
+                    "Configuration revision was not admitted for this profile.".into(),
+                )
+            })?;
+        let variables = HashMap::from([(
+            "revision".to_owned(),
+            serde_json::json!({ "validation_state": revision.data["validationState"] }),
+        )]);
+        let policy = evaluate_configuration_constraint(
+            "compliance_requires_validated_revision",
+            &variables,
+        )?;
+        let decision = ComplianceDecision {
+            request_id: request.request_id,
+            revision_id: request.revision_id,
+            decision: if policy.accepted {
+                "accepted".into()
+            } else {
+                "rejected".into()
+            },
+            constraint_id: policy.constraint_id,
+            reason: policy.reason,
+        };
+        self._store.put(
+            self.compliance_key(&decision.request_id),
+            SERVICE_ACTOR,
+            serde_json::json!({
+                "profileId": self.profile_id,
+                "requestId": decision.request_id,
+                "revisionId": decision.revision_id,
+                "decision": decision.decision,
+                "constraintId": decision.constraint_id,
+            }),
+        );
+        let entry = self.timeline.build_entry(
+            &self.compliance_key(&decision.request_id),
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &serde_json::json!({
+                "profileId": self.profile_id,
+                "requestId": decision.request_id,
+                "revisionId": decision.revision_id,
+                "decision": decision.decision,
+                "constraintId": decision.constraint_id,
+            }),
+            Vec::new(),
+            Some("Compliance request evaluated without executing a DSC effect.".into()),
+        );
+        self.record_evidence_summary(entry);
+        Ok(decision)
+    }
+
     pub fn record_start(&self, version: &str) {
         let metadata = serde_json::json!({
             "profileId": self.profile_id,
@@ -400,6 +481,13 @@ impl ServiceFoundation {
 
     fn configuration_key(&self, revision_id: &str) -> String {
         format!("pedantic:configuration:{}:{revision_id}", self.profile_id)
+    }
+
+    fn compliance_key(&self, request_id: &str) -> String {
+        format!(
+            "pedantic:compliance-request:{}:{request_id}",
+            self.profile_id
+        )
     }
 
     fn evidence_entry_key(&self, index: usize) -> String {
@@ -614,26 +702,29 @@ pub fn pipe_name_for_profile(
     ))
 }
 
-pub struct RequestHandlers<F, G, H> {
+pub struct RequestHandlers<F, G, H, I> {
     pub evidence: F,
     pub admission: G,
     pub validation: H,
+    pub compliance: I,
 }
 
-pub async fn handle_request<F, G, H, AdmissionFuture, ValidationFuture>(
+pub async fn handle_request<F, G, H, I, AdmissionFuture, ValidationFuture, ComplianceFuture>(
     frame: &str,
     expected_profile: &str,
     expected_token: &str,
     version: &str,
     chronos_entries: usize,
-    handlers: RequestHandlers<F, G, H>,
+    handlers: RequestHandlers<F, G, H, I>,
 ) -> LocalServiceResponse
 where
     F: FnOnce() -> EvidencePage,
     G: FnOnce(ConfigurationAdmissionRequest) -> AdmissionFuture,
     H: FnOnce(ConfigurationValidationRequest) -> ValidationFuture,
+    I: FnOnce(ComplianceRequest) -> ComplianceFuture,
     AdmissionFuture: Future<Output = Result<ConfigurationAdmission, ServiceErrorKind>>,
     ValidationFuture: Future<Output = Result<ConfigurationValidation, ServiceErrorKind>>,
+    ComplianceFuture: Future<Output = Result<ComplianceDecision, ServiceErrorKind>>,
 {
     let request = match serde_json::from_str::<LocalServiceRequest>(frame) {
         Ok(request) => request,
@@ -768,6 +859,42 @@ where
                 ),
             }
         }
+        "compliance.request" => {
+            let compliance_request = match serde_json::from_value(request.params) {
+                Ok(compliance_request) => compliance_request,
+                Err(error) => {
+                    return response(
+                        Some(request.id),
+                        false,
+                        None,
+                        Some((
+                            "invalid_request",
+                            format!("compliance.request parameters are invalid: {error}"),
+                        )),
+                    );
+                }
+            };
+            match (handlers.compliance)(compliance_request).await {
+                Ok(result) if result.decision == "rejected" => response(
+                    Some(request.id),
+                    false,
+                    Some(serde_json::json!(result)),
+                    Some(("compliance_rejected", result.reason.clone())),
+                ),
+                Ok(result) => response(
+                    Some(request.id),
+                    true,
+                    Some(serde_json::json!(result)),
+                    None,
+                ),
+                Err(error) => response(
+                    Some(request.id),
+                    false,
+                    None,
+                    Some(("compliance_failed", error.to_string())),
+                ),
+            }
+        }
         _ => response(
             Some(request.id),
             false,
@@ -878,6 +1005,7 @@ async fn serve_connection(
                     evidence: || foundation.recent_evidence(),
                     admission: |request| foundation.admit_configuration(request),
                     validation: |request| foundation.validate_configuration(request),
+                    compliance: |request| foundation.request_compliance(request),
                 },
             )
             .await;
@@ -1027,6 +1155,9 @@ mod tests {
         impl FnOnce(
             ConfigurationValidationRequest,
         ) -> std::future::Ready<Result<ConfigurationValidation, ServiceErrorKind>>,
+        impl FnOnce(
+            ComplianceRequest,
+        ) -> std::future::Ready<Result<ComplianceDecision, ServiceErrorKind>>,
     > {
         RequestHandlers {
             evidence: || EvidencePage {
@@ -1037,6 +1168,9 @@ mod tests {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
             validation: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            compliance: |_| {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
         }
@@ -1153,6 +1287,7 @@ mod tests {
                 evidence: move || evidence,
                 admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -1175,6 +1310,7 @@ mod tests {
                 evidence: move || evidence,
                 admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -1250,6 +1386,7 @@ mod tests {
                 },
                 admission: |request| std::future::ready(evaluate_configuration_admission(&request, None)),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -1289,6 +1426,9 @@ mod tests {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
                 validation: move |_| std::future::ready(Ok(validation("validated"))),
+                compliance: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
             },
         )
         .await;
@@ -1309,6 +1449,9 @@ mod tests {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
                 validation: move |_| std::future::ready(Ok(validation("invalid"))),
+                compliance: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
             },
         )
         .await;
@@ -1330,6 +1473,9 @@ mod tests {
                 },
                 validation: |_| {
                     std::future::ready(Err(ServiceErrorKind::Foundation("adapter failed".into())))
+                },
+                compliance: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
             },
         )
@@ -1367,6 +1513,66 @@ mod tests {
             "configuration_validation_requires_matching_source_digest"
         );
         assert_eq!(foundation.evidence_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn compliance_request_is_rejected_until_px_observes_a_validated_revision() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let foundation = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("open profile store");
+        foundation
+            .admit_configuration(ConfigurationAdmissionRequest {
+                revision_id: "revision-compliance".into(),
+                source_digest: "sha256:admitted-source".into(),
+            })
+            .await
+            .expect("admit configuration");
+
+        let decision = foundation
+            .request_compliance(ComplianceRequest {
+                request_id: "request-compliance".into(),
+                revision_id: "revision-compliance".into(),
+            })
+            .await
+            .expect("evaluate compliance request");
+        assert_eq!(decision.decision, "rejected");
+        assert_eq!(
+            decision.constraint_id,
+            "compliance_requires_validated_revision"
+        );
+        assert_eq!(foundation.evidence_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn compliance_request_returns_a_stable_px_rejection_code() {
+        let response = handle_request(
+            r#"{"id":"1","method":"compliance.request","profileId":"default","authorization":"0123456789abcdef0123456789abcdef","params":{"requestId":"request-1","revisionId":"revision-1"}}"#,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            RequestHandlers {
+                evidence: || EvidencePage {
+                    entries: Vec::new(),
+                    truncated: false,
+                },
+                admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                compliance: |request: ComplianceRequest| std::future::ready(Ok(ComplianceDecision {
+                    request_id: request.request_id,
+                    revision_id: request.revision_id,
+                    decision: "rejected".into(),
+                    constraint_id: "compliance_requires_validated_revision".into(),
+                    reason: "PX rejected the request.".into(),
+                })),
+            },
+        )
+        .await;
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.expect("PX rejection response").code,
+            "compliance_rejected"
+        );
     }
 
     #[cfg(windows)]
