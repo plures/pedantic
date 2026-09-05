@@ -1,11 +1,14 @@
 use pluresdb::{CrdtStore, SledStorage, StorageEngine};
 use pluresdb_chronos::{ChronosAction, ChronosEntry, ChronosTimeline};
+use px_ast::{ConstraintDecl, Statement};
+use px_eval::{ConstraintOutcome, PureFunctionRegistry};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 use thiserror::Error;
 #[cfg(windows)]
@@ -22,6 +25,12 @@ use windows_sys::Win32::{
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 pub const MAX_EVIDENCE_RESULTS: usize = 100;
 const SERVICE_ACTOR: &str = "pedantic-service";
+const CONFIGURATION_LIFECYCLE_SOURCE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../praxis/procedures/pedantic-configuration-lifecycle.px"
+));
+static CONFIGURATION_SOURCE_DIGEST_CONSTRAINT: OnceLock<Result<ConstraintDecl, String>> =
+    OnceLock::new();
 
 /// A bounded, redacted projection of a Chronos entry for local clients.
 ///
@@ -55,11 +64,29 @@ pub struct EvidencePage {
     pub truncated: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ConfigurationAdmissionRequest {
+    #[serde(rename = "revisionId")]
+    pub revision_id: String,
+    #[serde(rename = "sourceDigest")]
+    pub source_digest: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct ConfigurationAdmission {
+    #[serde(rename = "revisionId")]
+    pub revision_id: String,
+    pub decision: String,
+    #[serde(rename = "constraintId")]
+    pub constraint_id: String,
+    pub reason: String,
+}
+
 /// The local service is the sole owner of a profile's embedded PluresDB store.
 ///
-/// It records transport lifecycle evidence only. PX admission, policy, and
-/// effect authorization remain outside this host until a PX evaluator is wired
-/// in at the service boundary.
+/// It owns authenticated transport, profile-local persistence, and Chronos
+/// evidence. PX Lang evaluates the configuration-admission constraint; this
+/// host does not reproduce that policy imperatively.
 pub struct ServiceFoundation {
     profile_id: String,
     timeline: ChronosTimeline,
@@ -128,6 +155,43 @@ impl ServiceFoundation {
         }
     }
 
+    pub fn admit_configuration(
+        &self,
+        request: ConfigurationAdmissionRequest,
+    ) -> Result<ConfigurationAdmission, ServiceErrorKind> {
+        let admission = evaluate_configuration_admission(&request)?;
+        let revision_key = format!(
+            "pedantic:configuration:{}:{}",
+            self.profile_id, admission.revision_id
+        );
+        self._store.put(
+            revision_key.clone(),
+            SERVICE_ACTOR,
+            serde_json::json!({
+                "profileId": self.profile_id,
+                "revisionId": admission.revision_id,
+                "sourceDigest": request.source_digest,
+                "validationState": admission.decision,
+                "constraintId": admission.constraint_id,
+            }),
+        );
+        let evidence = self.timeline.build_entry(
+            &revision_key,
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &serde_json::json!({
+                "profileId": self.profile_id,
+                "revisionId": admission.revision_id,
+                "decision": admission.decision,
+                "constraintId": admission.constraint_id,
+            }),
+            Vec::new(),
+            Some("PX configuration source-digest admission evaluated.".into()),
+        );
+        self.record_evidence_summary(evidence);
+        Ok(admission)
+    }
+
     fn record_start(&self, version: &str) {
         let metadata = serde_json::json!({
             "profileId": self.profile_id,
@@ -143,9 +207,13 @@ impl ServiceFoundation {
             Vec::new(),
             Some("Authenticated local service started; metadata only.".into()),
         );
-        let _ = self.timeline.record(&entry);
+        self.record_evidence_summary(entry);
         self._store
             .put(self.evidence_key(), SERVICE_ACTOR, metadata.clone());
+    }
+
+    fn record_evidence_summary(&self, entry: ChronosEntry) {
+        let _ = self.timeline.record(&entry);
         let count = self.evidence_count();
         self._store.put(
             self.evidence_entry_key(count),
@@ -177,6 +245,69 @@ impl ServiceFoundation {
     }
 }
 
+fn evaluate_configuration_admission(
+    request: &ConfigurationAdmissionRequest,
+) -> Result<ConfigurationAdmission, ServiceErrorKind> {
+    let constraint = configuration_source_digest_constraint()?;
+    let mut variables = HashMap::new();
+    variables.insert(
+        "revision".to_owned(),
+        serde_json::json!({
+            "revision_id": request.revision_id,
+            "source_digest": request.source_digest,
+        }),
+    );
+    let registry = PureFunctionRegistry;
+    let outcome = px_eval::eval_constraint(constraint, &variables, &registry).map_err(|error| {
+        ServiceErrorKind::Foundation(format!(
+            "PX configuration admission evaluation failed: {error}"
+        ))
+    })?;
+    let constraint_id = constraint.name.name.clone();
+    let (decision, reason) = match outcome {
+        ConstraintOutcome::Satisfied => (
+            "accepted".to_owned(),
+            "PX constraint accepted the configuration revision.".to_owned(),
+        ),
+        ConstraintOutcome::Violated { message, .. } => (
+            "rejected".to_owned(),
+            message.unwrap_or_else(|| "PX constraint rejected the configuration revision.".into()),
+        ),
+        ConstraintOutcome::NotApplicable => (
+            "rejected".to_owned(),
+            "PX configuration admission constraint was not applicable.".to_owned(),
+        ),
+    };
+    Ok(ConfigurationAdmission {
+        revision_id: request.revision_id.clone(),
+        decision,
+        constraint_id,
+        reason,
+    })
+}
+
+fn configuration_source_digest_constraint() -> Result<&'static ConstraintDecl, ServiceErrorKind> {
+    let result = CONFIGURATION_SOURCE_DIGEST_CONSTRAINT.get_or_init(|| {
+        let document = px_compiler::parse(CONFIGURATION_LIFECYCLE_SOURCE)
+            .map_err(|error| format!("PX configuration lifecycle parse failed: {error}"))?;
+        document
+            .statements
+            .into_iter()
+            .find_map(|statement| match statement {
+                Statement::Constraint(constraint)
+                    if constraint.name.name == "configuration_requires_source_digest" =>
+                {
+                    Some(constraint)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| "PX configuration source-digest constraint is missing.".to_owned())
+    });
+    result
+        .as_ref()
+        .map_err(|error| ServiceErrorKind::Foundation(error.clone()))
+}
+
 pub fn profile_store_path(profile_id: &str) -> Result<PathBuf, ServiceErrorKind> {
     let profile_id = normalize_profile_id(profile_id);
     if !is_valid_profile_id(&profile_id) {
@@ -204,6 +335,8 @@ pub struct LocalServiceRequest {
     #[serde(rename = "profileId")]
     pub profile_id: String,
     pub authorization: String,
+    #[serde(default)]
+    pub params: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -263,16 +396,18 @@ pub fn pipe_name_for_profile(
     ))
 }
 
-pub fn handle_request<F>(
+pub fn handle_request<F, G>(
     frame: &str,
     expected_profile: &str,
     expected_token: &str,
     version: &str,
     chronos_entries: usize,
     evidence: F,
+    admission: G,
 ) -> LocalServiceResponse
 where
     F: FnOnce() -> EvidencePage,
+    G: FnOnce(ConfigurationAdmissionRequest) -> Result<ConfigurationAdmission, ServiceErrorKind>,
 {
     let request = match serde_json::from_str::<LocalServiceRequest>(frame) {
         Ok(request) => request,
@@ -334,6 +469,42 @@ where
                 })),
                 None,
             )
+        }
+        "configuration.admit" => {
+            let admission_request = match serde_json::from_value(request.params) {
+                Ok(admission_request) => admission_request,
+                Err(error) => {
+                    return response(
+                        Some(request.id),
+                        false,
+                        None,
+                        Some((
+                            "invalid_request",
+                            format!("configuration.admit parameters are invalid: {error}"),
+                        )),
+                    );
+                }
+            };
+            match admission(admission_request) {
+                Ok(result) if result.decision == "accepted" => response(
+                    Some(request.id),
+                    true,
+                    Some(serde_json::json!(result)),
+                    None,
+                ),
+                Ok(result) => response(
+                    Some(request.id),
+                    false,
+                    Some(serde_json::json!(result)),
+                    Some(("configuration_rejected", result.reason.clone())),
+                ),
+                Err(error) => response(
+                    Some(request.id),
+                    false,
+                    None,
+                    Some(("px_evaluation_failed", error.to_string())),
+                ),
+            }
         }
         _ => response(
             Some(request.id),
@@ -442,6 +613,7 @@ async fn serve_connection(
                 version,
                 foundation.evidence_count(),
                 || foundation.recent_evidence(),
+                |request| foundation.admit_configuration(request),
             );
             let encoded = serde_json::to_vec(&response).map_err(|error| {
                 ServiceErrorKind::InvalidRequest(format!("Response encoding failed: {error}"))
@@ -593,6 +765,7 @@ mod tests {
                 entries: Vec::new(),
                 truncated: false,
             },
+            |_| Err(ServiceErrorKind::InvalidRequest("not invoked".into())),
         );
         assert!(response.ok);
     }
@@ -609,6 +782,7 @@ mod tests {
                 entries: Vec::new(),
                 truncated: false,
             },
+            |_| Err(ServiceErrorKind::InvalidRequest("not invoked".into())),
         );
         assert_eq!(response.error.unwrap().code, "method_not_found");
     }
@@ -693,6 +867,7 @@ mod tests {
             "0.1.0",
             1,
             move || evidence,
+            |_| Err(ServiceErrorKind::InvalidRequest("not invoked".into())),
         );
         assert!(response.ok);
     }
@@ -710,10 +885,61 @@ mod tests {
             "0.1.0",
             1,
             move || evidence,
+            |_| Err(ServiceErrorKind::InvalidRequest("not invoked".into())),
         );
         assert_eq!(
             response.error.expect("unauthorized response").code,
             "unauthorized"
+        );
+    }
+
+    #[test]
+    fn configuration_admission_is_evaluated_by_px_and_recorded_as_evidence() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let foundation = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("open profile store");
+
+        let accepted = foundation
+            .admit_configuration(ConfigurationAdmissionRequest {
+                revision_id: "revision-accepted".into(),
+                source_digest: "sha256:accepted".into(),
+            })
+            .expect("evaluate accepted configuration");
+        assert_eq!(accepted.decision, "accepted");
+        assert_eq!(
+            accepted.constraint_id,
+            "configuration_requires_source_digest"
+        );
+
+        let rejected = foundation
+            .admit_configuration(ConfigurationAdmissionRequest {
+                revision_id: "revision-rejected".into(),
+                source_digest: String::new(),
+            })
+            .expect("evaluate rejected configuration");
+        assert_eq!(rejected.decision, "rejected");
+        assert_eq!(foundation.evidence_count(), 2);
+        assert_eq!(foundation.recent_evidence().entries.len(), 2);
+    }
+
+    #[test]
+    fn configuration_admit_returns_a_stable_px_rejection_code() {
+        let response = handle_request(
+            r#"{"id":"1","method":"configuration.admit","profileId":"default","authorization":"0123456789abcdef0123456789abcdef","params":{"revisionId":"revision-rejected","sourceDigest":""}}"#,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            || EvidencePage {
+                entries: Vec::new(),
+                truncated: false,
+            },
+            |request| evaluate_configuration_admission(&request),
+        );
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.expect("PX rejection response").code,
+            "configuration_rejected"
         );
     }
 
