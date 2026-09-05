@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitStatus;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::time::timeout;
 
@@ -197,27 +197,51 @@ pub async fn run_dsc(
         }
     })?;
 
-    if let Some(stdin_content) = input.stdin()
-        && let Some(mut stdin) = child.stdin.take()
-    {
-        stdin.write_all(stdin_content.as_bytes()).await?;
-    }
-
-    let output = if let Some(timeout_duration) = options.timeout {
-        match timeout(timeout_duration, child.wait_with_output()).await {
+    let mut stdout = child.stdout.take().expect("stdout was piped");
+    let mut stderr = child.stderr.take().expect("stderr was piped");
+    let stdout_task = tokio::spawn(async move {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).await.map(|_| output)
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut output = Vec::new();
+        stderr.read_to_end(&mut output).await.map(|_| output)
+    });
+    let operation = async {
+        if let Some(stdin_content) = input.stdin()
+            && let Some(mut stdin) = child.stdin.take()
+        {
+            stdin.write_all(stdin_content.as_bytes()).await?;
+        }
+        child.wait().await
+    };
+    let status = if let Some(timeout_duration) = options.timeout {
+        match timeout(timeout_duration, operation).await {
             Ok(result) => result?,
-            Err(_) => return Err(DscError::Timeout(timeout_duration)),
+            Err(_) => {
+                child.kill().await?;
+                let _ = child.wait().await;
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                return Err(DscError::Timeout(timeout_duration));
+            }
         }
     } else {
-        child.wait_with_output().await?
+        operation.await?
     };
+    let stdout = stdout_task
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))??;
+    let stderr = stderr_task
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))??;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&stdout).to_string();
+    let stderr = String::from_utf8_lossy(&stderr).to_string();
 
-    if !output.status.success() {
+    if !status.success() {
         return Err(DscError::Execution {
-            status: output.status,
+            status,
             stdout,
             stderr,
         });
@@ -230,7 +254,7 @@ pub async fn run_dsc(
     };
 
     Ok(DscOutput {
-        status: output.status,
+        status,
         stdout,
         stderr,
         json,

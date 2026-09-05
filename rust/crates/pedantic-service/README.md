@@ -18,9 +18,8 @@ The token is transport authentication only. `configuration.admit` is the first
 live PX Lang admission boundary: it evaluates the canonical
 `configuration_requires_source_digest` constraint, persists the resulting
 configuration projection, and records a Chronos entry. It does not yet claim
-full PX procedure/dataflow execution, DSC-document validation, or effect
-authorization; those remain PX and PluresDB decisions rather than imperative
-host policy.
+full PX procedure/dataflow execution or effect authorization; those remain PX
+and PluresDB decisions rather than imperative host policy.
 
 `configuration.validate` accepts only an admitted revision whose supplied
 document hashes to the admitted source digest. Those preconditions are live PX

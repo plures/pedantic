@@ -32,6 +32,14 @@ constraint configuration_requires_source_digest:
   severity: error
   message: "A configuration revision requires an immutable source digest."
 
+constraint configuration_admission_requires_immutable_source_digest:
+  scope: configuration_revision
+  phase: admission
+  when: revision.prior_source_digest != ""
+  require: revision.prior_source_digest == revision.source_digest
+  severity: error
+  message: "An admitted configuration revision cannot change its source digest."
+
 constraint compliance_requires_validated_revision:
   scope: compliance_request
   phase: admission

@@ -110,6 +110,7 @@ pub struct ServiceFoundation {
     profile_id: String,
     timeline: ChronosTimeline,
     _store: Arc<CrdtStore>,
+    revision_lock: tokio::sync::Mutex<()>,
 }
 
 impl ServiceFoundation {
@@ -140,6 +141,7 @@ impl ServiceFoundation {
             profile_id: profile_id.clone(),
             timeline,
             _store: store,
+            revision_lock: tokio::sync::Mutex::new(()),
         };
         Ok(foundation)
     }
@@ -174,27 +176,34 @@ impl ServiceFoundation {
         }
     }
 
-    pub fn admit_configuration(
+    pub async fn admit_configuration(
         &self,
         request: ConfigurationAdmissionRequest,
     ) -> Result<ConfigurationAdmission, ServiceErrorKind> {
-        let admission = evaluate_configuration_admission(&request)?;
+        let _revision_guard = self.revision_lock.lock().await;
+        let prior_source_digest = self
+            ._store
+            .get(self.configuration_key(&request.revision_id))
+            .and_then(|record| record.data["sourceDigest"].as_str().map(str::to_owned));
+        let admission = evaluate_configuration_admission(&request, prior_source_digest.as_deref())?;
         let revision_key = format!(
             "pedantic:configuration:{}:{}",
             self.profile_id, admission.revision_id
         );
-        self._store.put(
-            revision_key.clone(),
-            SERVICE_ACTOR,
-            serde_json::json!({
-                "profileId": self.profile_id,
-                "revisionId": admission.revision_id,
-                "sourceDigest": request.source_digest,
-                "admissionState": admission.decision,
-                "validationState": "pending",
-                "constraintId": admission.constraint_id,
-            }),
-        );
+        if admission.decision == "accepted" {
+            self._store.put(
+                revision_key.clone(),
+                SERVICE_ACTOR,
+                serde_json::json!({
+                    "profileId": self.profile_id,
+                    "revisionId": admission.revision_id,
+                    "sourceDigest": request.source_digest,
+                    "admissionState": admission.decision,
+                    "validationState": "pending",
+                    "constraintId": admission.constraint_id,
+                }),
+            );
+        }
         let evidence = self.timeline.build_entry(
             &revision_key,
             SERVICE_ACTOR,
@@ -213,6 +222,14 @@ impl ServiceFoundation {
     }
 
     pub async fn validate_configuration(
+        &self,
+        request: ConfigurationValidationRequest,
+    ) -> Result<ConfigurationValidation, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        self.validate_configuration_locked(request).await
+    }
+
+    async fn validate_configuration_locked(
         &self,
         request: ConfigurationValidationRequest,
     ) -> Result<ConfigurationValidation, ServiceErrorKind> {
@@ -248,7 +265,7 @@ impl ServiceFoundation {
                     constraint_id: decision.constraint_id,
                     reason: decision.reason,
                 };
-                self.record_configuration_validation(&revision_key, &validation);
+                self.record_configuration_validation_evidence(&revision_key, &validation);
                 return Ok(validation);
             }
         }
@@ -282,7 +299,7 @@ impl ServiceFoundation {
         Ok(validation)
     }
 
-    fn record_start(&self, version: &str) {
+    pub fn record_start(&self, version: &str) {
         let metadata = serde_json::json!({
             "profileId": self.profile_id,
             "service": SERVICE_ACTOR,
@@ -360,6 +377,27 @@ impl ServiceFoundation {
         self.record_evidence_summary(entry);
     }
 
+    fn record_configuration_validation_evidence(
+        &self,
+        revision_key: &str,
+        validation: &ConfigurationValidation,
+    ) {
+        let entry = self.timeline.build_entry(
+            revision_key,
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &serde_json::json!({
+                "profileId": self.profile_id,
+                "revisionId": validation.revision_id,
+                "decision": validation.decision,
+                "constraintId": validation.constraint_id,
+            }),
+            Vec::new(),
+            Some("Configuration validation rejection recorded without changing the admitted projection.".into()),
+        );
+        self.record_evidence_summary(entry);
+    }
+
     fn configuration_key(&self, revision_id: &str) -> String {
         format!("pedantic:configuration:{}:{revision_id}", self.profile_id)
     }
@@ -379,16 +417,24 @@ impl ServiceFoundation {
 
 fn evaluate_configuration_admission(
     request: &ConfigurationAdmissionRequest,
+    prior_source_digest: Option<&str>,
 ) -> Result<ConfigurationAdmission, ServiceErrorKind> {
     let variables = HashMap::from([(
         "revision".to_owned(),
         serde_json::json!({
             "revision_id": request.revision_id,
             "source_digest": request.source_digest,
+        "prior_source_digest": prior_source_digest.unwrap_or_default(),
         }),
     )]);
-    let decision =
-        evaluate_configuration_constraint("configuration_requires_source_digest", &variables)?;
+    let decision = evaluate_configuration_constraint(
+        if prior_source_digest.is_some() {
+            "configuration_admission_requires_immutable_source_digest"
+        } else {
+            "configuration_requires_source_digest"
+        },
+        &variables,
+    )?;
     Ok(ConfigurationAdmission {
         revision_id: request.revision_id.clone(),
         decision: if decision.accepted {
@@ -568,16 +614,19 @@ pub fn pipe_name_for_profile(
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
+pub struct RequestHandlers<F, G, H> {
+    pub evidence: F,
+    pub admission: G,
+    pub validation: H,
+}
+
 pub async fn handle_request<F, G, H, AdmissionFuture, ValidationFuture>(
     frame: &str,
     expected_profile: &str,
     expected_token: &str,
     version: &str,
     chronos_entries: usize,
-    evidence: F,
-    admission: G,
-    validation: H,
+    handlers: RequestHandlers<F, G, H>,
 ) -> LocalServiceResponse
 where
     F: FnOnce() -> EvidencePage,
@@ -636,7 +685,7 @@ where
             None,
         ),
         "evidence.list" => {
-            let evidence = evidence();
+            let evidence = (handlers.evidence)();
             response(
                 Some(request.id),
                 true,
@@ -662,7 +711,7 @@ where
                     );
                 }
             };
-            match admission(admission_request).await {
+            match (handlers.admission)(admission_request).await {
                 Ok(result) if result.decision == "accepted" => response(
                     Some(request.id),
                     true,
@@ -698,7 +747,7 @@ where
                     );
                 }
             };
-            match validation(validation_request).await {
+            match (handlers.validation)(validation_request).await {
                 Ok(result) if result.decision == "rejected" => response(
                     Some(request.id),
                     false,
@@ -825,9 +874,11 @@ async fn serve_connection(
                 token,
                 version,
                 foundation.evidence_count(),
-                || foundation.recent_evidence(),
-                |request| std::future::ready(foundation.admit_configuration(request)),
-                |request| foundation.validate_configuration(request),
+                RequestHandlers {
+                    evidence: || foundation.recent_evidence(),
+                    admission: |request| foundation.admit_configuration(request),
+                    validation: |request| foundation.validate_configuration(request),
+                },
             )
             .await;
             let encoded = serde_json::to_vec(&response).map_err(|error| {
@@ -968,6 +1019,29 @@ fn parse_current_user_sid(output: &str) -> Result<String, ServiceErrorKind> {
 mod tests {
     use super::*;
 
+    fn test_handlers() -> RequestHandlers<
+        impl FnOnce() -> EvidencePage,
+        impl FnOnce(
+            ConfigurationAdmissionRequest,
+        ) -> std::future::Ready<Result<ConfigurationAdmission, ServiceErrorKind>>,
+        impl FnOnce(
+            ConfigurationValidationRequest,
+        ) -> std::future::Ready<Result<ConfigurationValidation, ServiceErrorKind>>,
+    > {
+        RequestHandlers {
+            evidence: || EvidencePage {
+                entries: Vec::new(),
+                truncated: false,
+            },
+            admission: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            validation: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+        }
+    }
+
     #[tokio::test]
     async fn health_requires_the_profile_and_token() {
         let response = handle_request(
@@ -976,12 +1050,7 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             1,
-            || EvidencePage {
-                entries: Vec::new(),
-                truncated: false,
-            },
-            |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
-            |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+            test_handlers(),
         )
         .await;
         assert!(response.ok);
@@ -995,12 +1064,7 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             1,
-            || EvidencePage {
-                entries: Vec::new(),
-                truncated: false,
-            },
-            |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
-            |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+            test_handlers(),
         )
         .await;
         assert_eq!(response.error.unwrap().code, "method_not_found");
@@ -1085,9 +1149,11 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             1,
-            move || evidence,
-            |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
-            |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+            RequestHandlers {
+                evidence: move || evidence,
+                admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+            },
         )
         .await;
         assert!(response.ok);
@@ -1105,9 +1171,11 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             1,
-            move || evidence,
-            |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
-            |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+            RequestHandlers {
+                evidence: move || evidence,
+                admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+            },
         )
         .await;
         assert_eq!(
@@ -1116,8 +1184,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn configuration_admission_is_evaluated_by_px_and_recorded_as_evidence() {
+    #[tokio::test]
+    async fn configuration_admission_is_evaluated_by_px_and_recorded_as_evidence() {
         let directory = tempfile::tempdir().expect("temporary profile store");
         let foundation = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
             .expect("open profile store");
@@ -1127,11 +1195,32 @@ mod tests {
                 revision_id: "revision-accepted".into(),
                 source_digest: "sha256:accepted".into(),
             })
+            .await
             .expect("evaluate accepted configuration");
         assert_eq!(accepted.decision, "accepted");
         assert_eq!(
             accepted.constraint_id,
             "configuration_requires_source_digest"
+        );
+        let changed = foundation
+            .admit_configuration(ConfigurationAdmissionRequest {
+                revision_id: "revision-accepted".into(),
+                source_digest: "sha256:changed".into(),
+            })
+            .await
+            .expect("evaluate changed configuration");
+        assert_eq!(changed.decision, "rejected");
+        assert_eq!(
+            changed.constraint_id,
+            "configuration_admission_requires_immutable_source_digest"
+        );
+        assert_eq!(
+            foundation
+                ._store
+                .get(&foundation.configuration_key("revision-accepted"))
+                .expect("original projection")
+                .data["sourceDigest"],
+            "sha256:accepted"
         );
 
         let rejected = foundation
@@ -1139,10 +1228,11 @@ mod tests {
                 revision_id: "revision-rejected".into(),
                 source_digest: String::new(),
             })
+            .await
             .expect("evaluate rejected configuration");
         assert_eq!(rejected.decision, "rejected");
-        assert_eq!(foundation.evidence_count(), 2);
-        assert_eq!(foundation.recent_evidence().entries.len(), 2);
+        assert_eq!(foundation.evidence_count(), 3);
+        assert_eq!(foundation.recent_evidence().entries.len(), 3);
     }
 
     #[tokio::test]
@@ -1153,18 +1243,101 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
             0,
-            || EvidencePage {
-                entries: Vec::new(),
-                truncated: false,
+            RequestHandlers {
+                evidence: || EvidencePage {
+                    entries: Vec::new(),
+                    truncated: false,
+                },
+                admission: |request| std::future::ready(evaluate_configuration_admission(&request, None)),
+                validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
-            |request| std::future::ready(evaluate_configuration_admission(&request)),
-            |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
         )
         .await;
         assert!(!response.ok);
         assert_eq!(
             response.error.expect("PX rejection response").code,
             "configuration_rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn configuration_validate_maps_validation_outcomes_at_the_protocol_boundary() {
+        let request = |id| {
+            format!(
+                r#"{{"id":"{id}","method":"configuration.validate","profileId":"default","authorization":"0123456789abcdef0123456789abcdef","params":{{"revisionId":"revision-1","document":"document"}}}}"#
+            )
+        };
+        let validation = |decision: &'static str| ConfigurationValidation {
+            revision_id: "revision-1".into(),
+            decision: decision.into(),
+            constraint_id: "test".into(),
+            reason: "test result".into(),
+        };
+
+        let success = handle_request(
+            &request("success"),
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            RequestHandlers {
+                evidence: || EvidencePage {
+                    entries: Vec::new(),
+                    truncated: false,
+                },
+                admission: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                validation: move |_| std::future::ready(Ok(validation("validated"))),
+            },
+        )
+        .await;
+        assert!(success.ok);
+
+        let invalid = handle_request(
+            &request("invalid"),
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            RequestHandlers {
+                evidence: || EvidencePage {
+                    entries: Vec::new(),
+                    truncated: false,
+                },
+                admission: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                validation: move |_| std::future::ready(Ok(validation("invalid"))),
+            },
+        )
+        .await;
+        assert!(invalid.ok);
+
+        let failed = handle_request(
+            &request("failed"),
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            RequestHandlers {
+                evidence: || EvidencePage {
+                    entries: Vec::new(),
+                    truncated: false,
+                },
+                admission: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                validation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::Foundation("adapter failed".into())))
+                },
+            },
+        )
+        .await;
+        assert!(!failed.ok);
+        assert_eq!(
+            failed.error.expect("validation failure").code,
+            "validation_failed"
         );
     }
 
@@ -1178,6 +1351,7 @@ mod tests {
                 revision_id: "revision-validated".into(),
                 source_digest: "sha256:admitted-source".into(),
             })
+            .await
             .expect("admit configuration");
 
         let validation = foundation
