@@ -23,7 +23,7 @@ fn builds_ssh_command_with_port_and_config() {
             "-F".to_string(),
             "/home/user/.ssh/config".to_string(),
             "server1".to_string(),
-            "dsc config test --input -".to_string(),
+            "dsc config test --file -".to_string(),
         ]
     );
 }

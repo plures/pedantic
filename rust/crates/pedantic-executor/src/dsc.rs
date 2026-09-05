@@ -119,9 +119,12 @@ pub fn build_dsc_args(command: &DscCommand, input: &DscInput) -> Vec<String> {
 fn build_config_args(action: &str, input: &DscInput) -> Vec<String> {
     let mut args = vec!["config".into(), action.into()];
     match input {
-        DscInput::Path(path) => args.push(path.clone()),
+        DscInput::Path(path) => {
+            args.push("--file".into());
+            args.push(path.clone());
+        }
         DscInput::Stdin(_) => {
-            args.push("--input".into());
+            args.push("--file".into());
             args.push("-".into());
         }
     }
@@ -289,9 +292,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_config_get_args_uses_stdin() {
+    fn build_config_get_args_uses_file_stdin() {
         let args = build_dsc_args(&DscCommand::ConfigGet, &DscInput::Stdin("{}".into()));
-        assert_eq!(args, vec!["config", "get", "--input", "-"]);
+        assert_eq!(args, vec!["config", "get", "--file", "-"]);
+    }
+
+    #[test]
+    fn build_config_validate_args_uses_file_stdin() {
+        let args = build_dsc_args(&DscCommand::ConfigValidate, &DscInput::Stdin("{}".into()));
+        assert_eq!(args, vec!["config", "validate", "--file", "-"]);
+    }
+
+    #[test]
+    fn build_config_validate_args_uses_file_path() {
+        let args = build_dsc_args(
+            &DscCommand::ConfigValidate,
+            &DscInput::Path("configuration.dsc.yaml".into()),
+        );
+        assert_eq!(
+            args,
+            vec!["config", "validate", "--file", "configuration.dsc.yaml"]
+        );
     }
 
     #[test]
