@@ -181,7 +181,7 @@ fn create_server_pipe(
 ) -> Result<tokio::net::windows::named_pipe::NamedPipeServer, ServiceErrorKind> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
-let mut options = ServerOptions::new();
+    let mut options = ServerOptions::new();
     options.first_pipe_instance(first_instance);
     options.reject_remote_clients(true);
     let mut attributes = pipe_security.attributes();
@@ -264,9 +264,17 @@ fn pipe_name_for_identity(profile_id: &str, authorization_token: &str, identity:
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+    #[cfg(windows)]
+    let identity_hint = {
+        let digest = Sha256::digest(identity.as_bytes());
+        digest[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
 
     #[cfg(windows)]
-    return format!(r"\\.\pipe\pedantic-{identity}-{profile_id}-{token_hint}");
+    return format!(r"\\.\pipe\pedantic-{identity_hint}-{profile_id}-{token_hint}");
 
     #[cfg(not(windows))]
     format!("/tmp/pedantic-{identity}-{profile_id}-{token_hint}")
@@ -387,6 +395,15 @@ mod tests {
         );
         assert_ne!(first, second);
         assert!(first.contains("S-1-5-21-test-default-"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pipe_name_stays_within_the_windows_limit_for_long_sids() {
+        let sid = format!("S-{}", "1".repeat(182));
+        let pipe_name =
+            pipe_name_for_identity(&"p".repeat(64), "0123456789abcdef0123456789abcdef", &sid);
+        assert!(pipe_name.len() <= 256);
     }
 
     #[cfg(windows)]
