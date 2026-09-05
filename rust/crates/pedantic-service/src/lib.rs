@@ -1,6 +1,12 @@
+use pluresdb::{CrdtStore, SledStorage, StorageEngine};
+use pluresdb_chronos::{ChronosAction, ChronosTimeline};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::io;
+use std::{
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use thiserror::Error;
 #[cfg(windows)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -14,6 +20,121 @@ use windows_sys::Win32::{
 };
 
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+const SERVICE_ACTOR: &str = "pedantic-service";
+
+/// The local service is the sole owner of a profile's embedded PluresDB store.
+///
+/// It records transport lifecycle evidence only. PX admission, policy, and
+/// effect authorization remain outside this host until a PX evaluator is wired
+/// in at the service boundary.
+pub struct ServiceFoundation {
+    profile_id: String,
+    timeline: ChronosTimeline,
+    _store: Arc<CrdtStore>,
+}
+
+impl ServiceFoundation {
+    pub fn open(profile_id: &str, version: &str) -> Result<Self, ServiceErrorKind> {
+        Self::open_at(profile_id, &profile_store_path(profile_id)?, version)
+    }
+
+    pub fn open_at(
+        profile_id: &str,
+        store_path: &Path,
+        _version: &str,
+    ) -> Result<Self, ServiceErrorKind> {
+        let profile_id = normalize_profile_id(profile_id);
+        if !is_valid_profile_id(&profile_id) {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "Profile identifiers must be 1-64 characters of letters, numbers, underscores, or hyphens."
+                    .into(),
+            ));
+        }
+        std::fs::create_dir_all(store_path)?;
+        let storage = Arc::new(SledStorage::open(store_path).map_err(|error| {
+            ServiceErrorKind::Foundation(format!("Unable to open profile PluresDB store: {error}"))
+        })?);
+        let store =
+            Arc::new(CrdtStore::default().with_persistence(storage as Arc<dyn StorageEngine>));
+        let timeline = ChronosTimeline::new(Arc::clone(&store));
+        let foundation = Self {
+            profile_id: profile_id.clone(),
+            timeline,
+            _store: store,
+        };
+        Ok(foundation)
+    }
+
+    pub fn evidence_count(&self) -> usize {
+        self._store
+            .get(&self.evidence_counter_key())
+            .and_then(|record| {
+                record
+                    .data
+                    .get("count")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|count| count as usize)
+            })
+            .unwrap_or(0)
+    }
+
+    fn record_start(&self, version: &str) {
+        let metadata = serde_json::json!({
+            "profileId": self.profile_id,
+            "service": SERVICE_ACTOR,
+            "version": version,
+            "event": "service.started",
+        });
+        let entry = self.timeline.build_entry(
+            &self.evidence_key(),
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &metadata,
+            Vec::new(),
+            Some("Authenticated local service started; metadata only.".into()),
+        );
+        let _ = self.timeline.record(&entry);
+        self._store.put(self.evidence_key(), SERVICE_ACTOR, metadata.clone());
+        let count = self.evidence_count() + 1;
+        self._store.put(
+            self.evidence_counter_key(),
+            SERVICE_ACTOR,
+            serde_json::json!({
+                "profileId": self.profile_id,
+                "count": count,
+                "key": self.evidence_key(),
+            }),
+        );
+    }
+
+    fn evidence_key(&self) -> String {
+        format!("pedantic:service:{}", self.profile_id)
+    }
+
+    fn evidence_counter_key(&self) -> String {
+        format!("pedantic:service:count:{}", self.profile_id)
+    }
+}
+
+pub fn profile_store_path(profile_id: &str) -> Result<PathBuf, ServiceErrorKind> {
+    let profile_id = normalize_profile_id(profile_id);
+    if !is_valid_profile_id(&profile_id) {
+        return Err(ServiceErrorKind::InvalidRequest(
+            "Profile identifiers must be 1-64 characters of letters, numbers, underscores, or hyphens."
+                .into(),
+        ));
+    }
+    let local_app_data = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
+        ServiceErrorKind::InvalidRequest(
+            "LOCALAPPDATA is required to locate the profile-local Pedantic store.".into(),
+        )
+    })?;
+    Ok(PathBuf::from(local_app_data)
+        .join("Pedantic")
+        .join("profiles")
+        .join(&profile_id)
+        .join("pluresdb"))
+}
 
 #[derive(Debug, Deserialize)]
 pub struct LocalServiceRequest {
@@ -46,13 +167,16 @@ pub enum ServiceErrorKind {
     InvalidRequest(String),
     #[error("service I/O failed: {0}")]
     Io(#[from] io::Error),
+    #[error("service foundation failed: {0}")]
+    Foundation(String),
 }
 
 pub fn pipe_name_for_profile(
     profile_id: &str,
     authorization_token: &str,
 ) -> Result<String, ServiceErrorKind> {
-    if !is_valid_profile_id(profile_id) {
+    let profile_id = normalize_profile_id(profile_id);
+    if !is_valid_profile_id(&profile_id) {
         return Err(ServiceErrorKind::InvalidRequest(
             "Profile identifiers must be 1-64 characters of letters, numbers, underscores, or hyphens."
                 .into(),
@@ -64,7 +188,7 @@ pub fn pipe_name_for_profile(
     {
         let sid = current_user_sid()?;
         Ok(pipe_name_for_identity(
-            profile_id,
+            &profile_id,
             authorization_token,
             &sid,
         ))
@@ -72,7 +196,7 @@ pub fn pipe_name_for_profile(
 
     #[cfg(not(windows))]
     Ok(pipe_name_for_identity(
-        profile_id,
+        &profile_id,
         authorization_token,
         "local",
     ))
@@ -83,6 +207,7 @@ pub fn handle_request(
     expected_profile: &str,
     expected_token: &str,
     version: &str,
+    chronos_entries: usize,
 ) -> LocalServiceResponse {
     let request = match serde_json::from_str::<LocalServiceRequest>(frame) {
         Ok(request) => request,
@@ -99,6 +224,9 @@ pub fn handle_request(
         }
     };
 
+    let expected_profile = normalize_profile_id(expected_profile);
+    let request_profile_id = normalize_profile_id(&request.profile_id);
+
     if !constant_time_equal(&request.authorization, expected_token) {
         return response(
             Some(request.id),
@@ -107,7 +235,7 @@ pub fn handle_request(
             Some(("unauthorized", "Local service authorization failed.".into())),
         );
     }
-    if request.profile_id != expected_profile {
+    if request_profile_id != expected_profile {
         return response(
             Some(request.id),
             false,
@@ -137,6 +265,7 @@ pub fn handle_request(
             "profileId": expected_profile,
             "service": "pedantic-service",
             "version": version,
+            "chronosEntries": chronos_entries,
         })),
         None,
     )
@@ -157,9 +286,12 @@ pub async fn run(
     profile_id: &str,
     token: &str,
     version: &str,
+    foundation: ServiceFoundation,
 ) -> Result<(), ServiceErrorKind> {
+    let foundation = Arc::new(foundation);
     let mut pipe_security = PipeSecurity::for_current_user()?;
     let mut server = create_server_pipe(pipe_name, true, &mut pipe_security)?;
+    foundation.record_start(version);
     loop {
         server.connect().await?;
         let connection = server;
@@ -167,8 +299,9 @@ pub async fn run(
         let profile_id = profile_id.to_owned();
         let token = token.to_owned();
         let version = version.to_owned();
+        let foundation = Arc::clone(&foundation);
         tokio::spawn(async move {
-            let _ = serve_connection(connection, &profile_id, &token, &version).await;
+            let _ = serve_connection(connection, &profile_id, &token, &version, foundation).await;
         });
     }
 }
@@ -203,6 +336,7 @@ pub async fn run(
     _profile_id: &str,
     _token: &str,
     _version: &str,
+    _foundation: ServiceFoundation,
 ) -> Result<(), ServiceErrorKind> {
     Err(ServiceErrorKind::InvalidRequest(
         "The local service host requires Windows named pipes.".into(),
@@ -215,6 +349,7 @@ async fn serve_connection(
     profile_id: &str,
     token: &str,
     version: &str,
+    foundation: Arc<ServiceFoundation>,
 ) -> Result<(), ServiceErrorKind> {
     let mut reader = BufReader::new(&mut connection);
     let mut frame = Vec::new();
@@ -224,7 +359,13 @@ async fn serve_connection(
         }
         let line = String::from_utf8_lossy(&frame).trim().to_owned();
         if !line.is_empty() {
-            let response = handle_request(&line, profile_id, token, version);
+            let response = handle_request(
+                &line,
+                profile_id,
+                token,
+                version,
+                foundation.evidence_count(),
+            );
             let encoded = serde_json::to_vec(&response).map_err(|error| {
                 ServiceErrorKind::InvalidRequest(format!("Response encoding failed: {error}"))
             })?;
@@ -248,6 +389,10 @@ fn response(
         result,
         error: error.map(|(code, message)| ServiceError { code, message }),
     }
+}
+
+fn normalize_profile_id(profile_id: &str) -> String {
+    profile_id.trim().to_ascii_lowercase()
 }
 
 fn is_valid_profile_id(profile_id: &str) -> bool {
@@ -366,6 +511,7 @@ mod tests {
             "default",
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
+            1,
         );
         assert!(response.ok);
     }
@@ -377,6 +523,7 @@ mod tests {
             "default",
             "0123456789abcdef0123456789abcdef",
             "0.1.0",
+            1,
         );
         assert_eq!(response.error.unwrap().code, "method_not_found");
     }
@@ -394,7 +541,35 @@ mod tests {
             "S-1-5-21-test",
         );
         assert_ne!(first, second);
-        assert!(first.contains("S-1-5-21-test-default-"));
+        assert!(first.contains("-default-"));
+        #[cfg(windows)]
+        assert!(!first.contains("S-1-5-21-test"));
+        #[cfg(not(windows))]
+        assert!(first.contains("S-1-5-21-test"));
+    }
+
+    #[test]
+    fn profile_ids_are_canonicalized_before_the_store_key_and_pipe_name() {
+        let normalized = normalize_profile_id("Default");
+        assert_eq!(normalized, "default");
+        assert_eq!(
+            pipe_name_for_profile("Default", "0123456789abcdef0123456789abcdef").unwrap(),
+            pipe_name_for_profile("default", "0123456789abcdef0123456789abcdef").unwrap()
+        );
+    }
+
+    #[test]
+    fn persistent_profile_store_records_startup_evidence() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let first = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("open first profile store");
+        first.record_start("0.1.0");
+        assert_eq!(first.evidence_count(), 1);
+        drop(first);
+
+        let reopened = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("reopen profile store");
+        assert_eq!(reopened.evidence_count(), 1);
     }
 
     #[cfg(windows)]

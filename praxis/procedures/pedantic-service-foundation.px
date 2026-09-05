@@ -1,0 +1,37 @@
+# Pedantic profile service foundation: only metadata lifecycle evidence is
+# persisted here. Transport secrets and effect decisions never enter evidence.
+
+entity ServiceStartup:
+  prefix: "pedantic:service-startup:"
+  fields:
+    profile_id: String
+    actor_id: String
+    service_version: String
+
+entity ServiceEvidence:
+  prefix: "pedantic:service-evidence:"
+  fields:
+    evidence_id: String
+    profile_id: String
+    event_kind: String
+    redaction_class: String
+
+constraint startup_requires_profile:
+  scope: service_startup
+  phase: admission
+  require: startup.profile_id != ""
+  severity: error
+  message: "A local service startup must be associated with a profile."
+
+constraint service_evidence_is_metadata_only:
+  scope: service_evidence
+  phase: evidence
+  require: evidence.redaction_class == "metadata_only"
+  severity: error
+  message: "Service lifecycle evidence must exclude transport secrets and effect payloads."
+
+procedure record_service_startup(startup: ServiceStartup from "service_startups") -> ServiceEvidence into "service_evidence":
+  given: "Persist only profile lifecycle metadata after service admission"
+  persist_profile_store startup -> $profile
+  record_chronos_evidence $profile -> $evidence
+  return {profile_id: startup.profile_id, event_kind: "service.started", redaction_class: "metadata_only", evidence_id: $evidence.id}
