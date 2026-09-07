@@ -1,6 +1,7 @@
 use pedantic_executor::dsc::{
     DscCommand, DscError, DscInput, DscRunOptions, DscTestResult, parse_test_results, run_dsc,
 };
+use pedantic_executor::inventory::{HostRecord, parse_hosts};
 use pluresdb::{CrdtStore, SledStorage, StorageEngine};
 use pluresdb_chronos::{ChronosAction, ChronosEntry, ChronosTimeline};
 use px_ast::{ConstraintDecl, Statement};
@@ -100,6 +101,28 @@ pub struct ConfigurationValidation {
     pub decision: String,
     #[serde(rename = "constraintId")]
     pub constraint_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InventoryObservationRequest {
+    #[serde(rename = "observationId")]
+    pub observation_id: String,
+    #[serde(rename = "sourceDigest")]
+    pub source_digest: String,
+    pub document: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct InventoryObservation {
+    #[serde(rename = "observationId")]
+    pub observation_id: String,
+    pub decision: String,
+    #[serde(rename = "constraintId")]
+    pub constraint_id: String,
+    #[serde(rename = "hostCount")]
+    pub host_count: usize,
+    pub hosts: Vec<HostRecord>,
     pub reason: String,
 }
 
@@ -349,6 +372,63 @@ impl ServiceFoundation {
         };
         self.record_configuration_validation(&revision_key, &validation)?;
         Ok(validation)
+    }
+
+    pub async fn observe_inventory(
+        &self,
+        request: InventoryObservationRequest,
+    ) -> Result<InventoryObservation, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let observed_source_digest =
+            format!("sha256:{:x}", Sha256::digest(request.document.as_bytes()));
+        let variables = HashMap::from([
+            (
+                "inventory".to_owned(),
+                serde_json::json!({ "source_digest": request.source_digest }),
+            ),
+            (
+                "observation".to_owned(),
+                serde_json::json!({ "source_digest": observed_source_digest }),
+            ),
+        ]);
+        let policy = evaluate_configuration_constraint(
+            "inventory observation",
+            "inventory_observation_requires_matching_source_digest",
+            &variables,
+        )?;
+        if !policy.accepted {
+            let observation = InventoryObservation {
+                observation_id: request.observation_id,
+                decision: "rejected".into(),
+                constraint_id: policy.constraint_id,
+                host_count: 0,
+                hosts: Vec::new(),
+                reason: policy.reason,
+            };
+            self.record_inventory_observation(&observation, &observed_source_digest)?;
+            return Ok(observation);
+        }
+
+        let observation = match parse_hosts(&request.document) {
+            Ok(hosts) => InventoryObservation {
+                observation_id: request.observation_id,
+                decision: "observed".into(),
+                constraint_id: policy.constraint_id,
+                host_count: hosts.len(),
+                hosts,
+                reason: "Inventory observation completed.".into(),
+            },
+            Err(_) => InventoryObservation {
+                observation_id: request.observation_id,
+                decision: "failed".into(),
+                constraint_id: "inventory_parse".into(),
+                host_count: 0,
+                hosts: Vec::new(),
+                reason: "Inventory document could not be parsed.".into(),
+            },
+        };
+        self.record_inventory_observation(&observation, &observed_source_digest)?;
+        Ok(observation)
     }
 
     pub async fn request_compliance(
@@ -630,6 +710,49 @@ impl ServiceFoundation {
 
     fn configuration_key(&self, revision_id: &str) -> String {
         format!("pedantic:configuration:{}:{revision_id}", self.profile_id)
+    }
+
+    fn inventory_observation_key(&self, observation_id: &str) -> String {
+        format!(
+            "pedantic:inventory-observation:{}:{observation_id}",
+            self.profile_id
+        )
+    }
+
+    fn record_inventory_observation(
+        &self,
+        observation: &InventoryObservation,
+        source_digest: &str,
+    ) -> Result<(), ServiceErrorKind> {
+        let key = self.inventory_observation_key(&observation.observation_id);
+        let metadata = serde_json::json!({
+            "profileId": self.profile_id,
+            "observationId": observation.observation_id,
+            "sourceDigest": source_digest,
+            "decision": observation.decision,
+            "constraintId": observation.constraint_id,
+            "hostCount": observation.host_count,
+            "hosts": observation.hosts,
+        });
+        if observation.decision == "observed" {
+            self._store
+                .put(key.clone(), SERVICE_ACTOR, metadata.clone());
+        }
+        let entry = self.timeline.build_entry(
+            &key,
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &serde_json::json!({
+                "profileId": self.profile_id,
+                "observationId": observation.observation_id,
+                "decision": observation.decision,
+                "constraintId": observation.constraint_id,
+                "hostCount": observation.host_count,
+            }),
+            Vec::new(),
+            Some("Inventory observation recorded without retaining source content.".into()),
+        );
+        self.record_evidence_summary(entry)
     }
 
     fn compliance_key(&self, request_id: &str) -> String {
@@ -923,12 +1046,13 @@ pub fn pipe_name_for_profile(
     ))
 }
 
-pub struct RequestHandlers<F, G, H, I, J> {
+pub struct RequestHandlers<F, G, H, I, J, K> {
     pub evidence: F,
     pub admission: G,
     pub validation: H,
-    pub compliance: I,
-    pub observation: J,
+    pub inventory: I,
+    pub compliance: J,
+    pub observation: K,
 }
 
 pub async fn handle_request<
@@ -937,8 +1061,10 @@ pub async fn handle_request<
     H,
     I,
     J,
+    K,
     AdmissionFuture,
     ValidationFuture,
+    InventoryFuture,
     ComplianceFuture,
     ObservationFuture,
 >(
@@ -947,16 +1073,18 @@ pub async fn handle_request<
     expected_token: &str,
     version: &str,
     chronos_entries: usize,
-    handlers: RequestHandlers<F, G, H, I, J>,
+    handlers: RequestHandlers<F, G, H, I, J, K>,
 ) -> LocalServiceResponse
 where
     F: FnOnce() -> EvidencePage,
     G: FnOnce(ConfigurationAdmissionRequest) -> AdmissionFuture,
     H: FnOnce(ConfigurationValidationRequest) -> ValidationFuture,
-    I: FnOnce(ComplianceRequest) -> ComplianceFuture,
-    J: FnOnce(ComplianceObservationRequest) -> ObservationFuture,
+    I: FnOnce(InventoryObservationRequest) -> InventoryFuture,
+    J: FnOnce(ComplianceRequest) -> ComplianceFuture,
+    K: FnOnce(ComplianceObservationRequest) -> ObservationFuture,
     AdmissionFuture: Future<Output = Result<ConfigurationAdmission, ServiceErrorKind>>,
     ValidationFuture: Future<Output = Result<ConfigurationValidation, ServiceErrorKind>>,
+    InventoryFuture: Future<Output = Result<InventoryObservation, ServiceErrorKind>>,
     ComplianceFuture: Future<Output = Result<ComplianceDecision, ServiceErrorKind>>,
     ObservationFuture: Future<Output = Result<ComplianceObservation, ServiceErrorKind>>,
 {
@@ -1090,6 +1218,48 @@ where
                     false,
                     None,
                     Some(("validation_failed", error.to_string())),
+                ),
+            }
+        }
+        "inventory.observe" => {
+            let inventory_request = match serde_json::from_value(request.params) {
+                Ok(inventory_request) => inventory_request,
+                Err(error) => {
+                    return response(
+                        Some(request.id),
+                        false,
+                        None,
+                        Some((
+                            "invalid_request",
+                            format!("inventory.observe parameters are invalid: {error}"),
+                        )),
+                    );
+                }
+            };
+            match (handlers.inventory)(inventory_request).await {
+                Ok(result) if result.decision == "rejected" => response(
+                    Some(request.id),
+                    false,
+                    Some(serde_json::json!(result)),
+                    Some(("inventory_rejected", result.reason.clone())),
+                ),
+                Ok(result) if result.decision == "failed" => response(
+                    Some(request.id),
+                    false,
+                    Some(serde_json::json!(result)),
+                    Some(("inventory_observation_failed", result.reason.clone())),
+                ),
+                Ok(result) => response(
+                    Some(request.id),
+                    true,
+                    Some(serde_json::json!(result)),
+                    None,
+                ),
+                Err(error) => response(
+                    Some(request.id),
+                    false,
+                    None,
+                    Some(("inventory_observation_failed", error.to_string())),
                 ),
             }
         }
@@ -1281,6 +1451,7 @@ async fn serve_connection(
                     evidence: || foundation.recent_evidence(),
                     admission: |request| foundation.admit_configuration(request),
                     validation: |request| foundation.validate_configuration(request),
+                    inventory: |request| foundation.observe_inventory(request),
                     compliance: |request| foundation.request_compliance(request),
                     observation: |request| foundation.observe_compliance(request),
                 },
@@ -1433,6 +1604,9 @@ mod tests {
             ConfigurationValidationRequest,
         ) -> std::future::Ready<Result<ConfigurationValidation, ServiceErrorKind>>,
         impl FnOnce(
+            InventoryObservationRequest,
+        ) -> std::future::Ready<Result<InventoryObservation, ServiceErrorKind>>,
+        impl FnOnce(
             ComplianceRequest,
         ) -> std::future::Ready<Result<ComplianceDecision, ServiceErrorKind>>,
         impl FnOnce(
@@ -1448,6 +1622,9 @@ mod tests {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
             validation: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            inventory: |_| {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
             compliance: |_| {
@@ -1570,6 +1747,7 @@ mod tests {
                 evidence: move || evidence,
                 admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                inventory: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
@@ -1594,6 +1772,7 @@ mod tests {
                 evidence: move || evidence,
                 admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                inventory: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
@@ -1671,6 +1850,7 @@ mod tests {
                 },
                 admission: |request| std::future::ready(evaluate_configuration_admission(&request, None)),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                inventory: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
@@ -1712,6 +1892,9 @@ mod tests {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
                 validation: move |_| std::future::ready(Ok(validation("validated"))),
+                inventory: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
                 compliance: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
@@ -1738,6 +1921,9 @@ mod tests {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
                 validation: move |_| std::future::ready(Ok(validation("invalid"))),
+                inventory: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
                 compliance: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
@@ -1765,6 +1951,9 @@ mod tests {
                 },
                 validation: |_| {
                     std::future::ready(Err(ServiceErrorKind::Foundation("adapter failed".into())))
+                },
+                inventory: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
                 compliance: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
@@ -1808,6 +1997,63 @@ mod tests {
             "configuration_validation_requires_matching_source_digest"
         );
         assert_eq!(foundation.evidence_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn inventory_observation_is_rejected_before_document_normalization() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let foundation = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("open profile store");
+
+        let observation = foundation
+            .observe_inventory(InventoryObservationRequest {
+                observation_id: "inventory-rejected".into(),
+                source_digest: "sha256:not-the-supplied-document".into(),
+                document: "not a Pedantic inventory".into(),
+            })
+            .await
+            .expect("evaluate PX inventory precondition");
+
+        assert_eq!(observation.decision, "rejected");
+        assert_eq!(
+            observation.constraint_id,
+            "inventory_observation_requires_matching_source_digest"
+        );
+        assert_eq!(observation.host_count, 0);
+        assert!(observation.hosts.is_empty());
+        assert_eq!(foundation.evidence_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn inventory_observation_normalizes_hosts_and_redacts_chronos_evidence() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let foundation = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("open profile store");
+        let document = include_str!("../../pedantic-executor/tests/fixtures/inventory.yaml");
+        let source_digest = format!("sha256:{:x}", Sha256::digest(document.as_bytes()));
+
+        let observation = foundation
+            .observe_inventory(InventoryObservationRequest {
+                observation_id: "inventory-observed".into(),
+                source_digest,
+                document: document.into(),
+            })
+            .await
+            .expect("normalize supplied inventory document");
+
+        assert_eq!(observation.decision, "observed");
+        assert_eq!(
+            observation.constraint_id,
+            "inventory_observation_requires_matching_source_digest"
+        );
+        assert_eq!(observation.host_count, 2);
+        assert_eq!(observation.hosts[0].hostname, "192.168.1.10");
+        assert_eq!(observation.hosts[1].connection, "ssh");
+
+        let evidence = serde_json::to_string(&foundation.recent_evidence())
+            .expect("serialize redacted evidence projection");
+        assert!(!evidence.contains("192.168.1.10"));
+        assert!(!evidence.contains("sourceDigest"));
     }
 
     #[tokio::test]
@@ -1894,6 +2140,7 @@ mod tests {
                 },
                 admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                inventory: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |request: ComplianceRequest| std::future::ready(Ok(ComplianceDecision {
                     request_id: request.request_id,
                     revision_id: request.revision_id,
@@ -1927,6 +2174,7 @@ mod tests {
                 },
                 admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                inventory: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |request: ComplianceRequest| std::future::ready(Ok(ComplianceDecision {
                     request_id: request.request_id,
                     revision_id: request.revision_id,
@@ -1942,6 +2190,41 @@ mod tests {
         assert_eq!(
             response.error.expect("PX rejection response").code,
             "compliance_rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn inventory_observation_returns_a_stable_px_rejection_code() {
+        let response = handle_request(
+            r#"{"id":"1","method":"inventory.observe","profileId":"default","authorization":"0123456789abcdef0123456789abcdef","params":{"observationId":"inventory-1","sourceDigest":"sha256:source","document":"document"}}"#,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            RequestHandlers {
+                evidence: || EvidencePage {
+                    entries: Vec::new(),
+                    truncated: false,
+                },
+                admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                inventory: |request: InventoryObservationRequest| std::future::ready(Ok(InventoryObservation {
+                    observation_id: request.observation_id,
+                    decision: "rejected".into(),
+                    constraint_id: "inventory_observation_requires_matching_source_digest".into(),
+                    host_count: 0,
+                    hosts: Vec::new(),
+                    reason: "PX rejected the observation.".into(),
+                })),
+                compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+            },
+        )
+        .await;
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.expect("PX rejection response").code,
+            "inventory_rejected"
         );
     }
 
@@ -2039,6 +2322,7 @@ mod tests {
                 },
                 admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                inventory: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 observation: |request: ComplianceObservationRequest| std::future::ready(Ok(ComplianceObservation {
                     observation_id: request.observation_id,

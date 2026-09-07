@@ -9,6 +9,15 @@ entity ConfigurationRevision:
     admission_state: String
     validation_state: String
 
+entity InventoryObservation:
+  prefix: "pedantic:inventory-observation:"
+  fields:
+    observation_id: String
+    profile_id: String
+    source_digest: String
+    host_count: int
+    decision: String
+
 entity ComplianceRequest:
   prefix: "pedantic:compliance-request:"
   fields:
@@ -57,6 +66,13 @@ constraint compliance_requires_validated_revision:
   severity: error
   message: "Compliance requires a validated configuration revision."
 
+constraint inventory_observation_requires_matching_source_digest:
+  scope: inventory_observation
+  phase: admission
+  require: inventory.source_digest == observation.source_digest
+  severity: error
+  message: "Inventory observation requires the supplied source digest."
+
 constraint compliance_observation_requires_accepted_request:
   scope: compliance_observation
   phase: admission
@@ -97,6 +113,12 @@ procedure admit_configuration_revision(revision: ConfigurationRevision from "con
   given: "Admit a configuration revision only when its source and validation evidence are acceptable"
   validate_configuration_revision revision -> $validation
   return {revision_id: revision.revision_id, decision: $validation.decision, reason: $validation.reason}
+
+procedure observe_inventory(observation: InventoryObservation from "inventory_observations") -> InventoryObservation into "inventory_observations":
+  given: "Normalize an inventory document only when its declared source digest matches the supplied document"
+  validate_inventory_source observation -> $validated
+  normalize_inventory_hosts $validated -> $hosts
+  return {observation_id: observation.observation_id, source_digest: observation.source_digest, host_count: $hosts.count, decision: "observed"}
 
 procedure authorize_compliance_request(request: ComplianceRequest from "compliance_requests") -> EffectAuthorization into "effect_authorizations":
   given: "Authorize a DSC compliance effect only for an admitted request and validated revision"
