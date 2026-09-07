@@ -290,11 +290,12 @@ fn parse_test_results_from_value(
     let mut results = Vec::new();
     for entry in values {
         let raw: RawDscTestResult = serde_json::from_value(entry)?;
+        let result = raw.result;
         results.push(DscTestResult {
             resource_name: raw.name,
             resource_type: raw.resource_type,
-            in_desired_state: raw.in_desired_state,
-            properties: raw.properties,
+            in_desired_state: result.in_desired_state,
+            properties: result.properties,
         });
     }
     Ok(results)
@@ -305,6 +306,11 @@ struct RawDscTestResult {
     name: String,
     #[serde(rename = "type")]
     resource_type: String,
+    result: RawDscTestResultDetails,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDscTestResultDetails {
     #[serde(rename = "inDesiredState")]
     in_desired_state: bool,
     #[serde(default)]
@@ -450,15 +456,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_test_results_from_array() {
-        let value = serde_json::json!([
-            {
-                "name": "pkg",
-                "type": "SimpleDSC/PackageInstaller",
-                "inDesiredState": true,
-                "properties": {}
-            }
-        ]);
+    fn parse_test_results_from_config_test_output() {
+        let value: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/config-test-output.json"))
+                .unwrap();
         let output = DscOutput {
             status: std::process::ExitStatus::default(),
             stdout: String::new(),

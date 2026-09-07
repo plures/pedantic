@@ -17,6 +17,16 @@ entity ComplianceRequest:
     profile_id: String
     actor_id: String
 
+entity ComplianceObservation:
+  prefix: "pedantic:compliance-observation:"
+  fields:
+    observation_id: String
+    request_id: String
+    revision_id: String
+    profile_id: String
+    source_digest: String
+    request_decision: String
+
 entity EffectAuthorization:
   prefix: "pedantic:effect-authorization:"
   fields:
@@ -46,6 +56,20 @@ constraint compliance_requires_validated_revision:
   require: revision.validation_state == "validated"
   severity: error
   message: "Compliance requires a validated configuration revision."
+
+constraint compliance_observation_requires_accepted_request:
+  scope: compliance_observation
+  phase: admission
+  require: request.decision == "accepted"
+  severity: error
+  message: "Compliance observation requires an accepted PX request."
+
+constraint compliance_observation_requires_matching_source_digest:
+  scope: compliance_observation
+  phase: admission
+  require: revision.source_digest == observation.source_digest
+  severity: error
+  message: "Compliance observation requires the admitted source digest."
 
 constraint configuration_validation_requires_accepted_admission:
   scope: configuration_validation
@@ -79,3 +103,12 @@ procedure authorize_compliance_request(request: ComplianceRequest from "complian
   resolve_revision request.revision_id -> $revision
   evaluate_compliance_policy request $revision -> $decision
   return {authorization_id: request.request_id, request_id: request.request_id, capability: "dsc_config_test", decision: $decision.value}
+
+procedure observe_compliance(observation: ComplianceObservation from "compliance_observations") -> ComplianceObservation into "compliance_observations":
+  given: "Run a read-only DSC compliance observation only after PX has accepted the request"
+  resolve_compliance_request observation.request_id -> $request
+  resolve_revision $request.revision_id -> $revision
+  authorize_compliance_request $request -> $authorization
+  validate_compliance_observation observation $request $revision -> $validated
+  observe_dsc_config_test $authorization $validated -> $result
+  return {observation_id: observation.observation_id, request_id: observation.request_id, revision_id: $request.revision_id, source_digest: $revision.source_digest}

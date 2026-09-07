@@ -1,4 +1,6 @@
-use pedantic_executor::dsc::{DscCommand, DscError, DscInput, DscRunOptions, run_dsc};
+use pedantic_executor::dsc::{
+    DscCommand, DscError, DscInput, DscRunOptions, DscTestResult, parse_test_results, run_dsc,
+};
 use pluresdb::{CrdtStore, SledStorage, StorageEngine};
 use pluresdb_chronos::{ChronosAction, ChronosEntry, ChronosTimeline};
 use px_ast::{ConstraintDecl, Statement};
@@ -118,6 +120,35 @@ pub struct ComplianceDecision {
     pub decision: String,
     #[serde(rename = "constraintId")]
     pub constraint_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ComplianceObservationRequest {
+    #[serde(rename = "observationId")]
+    pub observation_id: String,
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    pub document: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct ComplianceObservation {
+    #[serde(rename = "observationId")]
+    pub observation_id: String,
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "revisionId")]
+    pub revision_id: String,
+    pub decision: String,
+    #[serde(rename = "constraintId")]
+    pub constraint_id: String,
+    #[serde(rename = "resourceCount")]
+    pub resource_count: usize,
+    #[serde(rename = "compliantResourceCount")]
+    pub compliant_resource_count: usize,
+    #[serde(rename = "driftedResourceCount")]
+    pub drifted_resource_count: usize,
     pub reason: String,
 }
 
@@ -382,6 +413,117 @@ impl ServiceFoundation {
         Ok(decision)
     }
 
+    pub async fn observe_compliance(
+        &self,
+        request: ComplianceObservationRequest,
+    ) -> Result<ComplianceObservation, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let compliance_request = self
+            ._store
+            .get(self.compliance_key(&request.request_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest(
+                    "Compliance request was not recorded for this profile.".into(),
+                )
+            })?;
+        let revision_id = compliance_request.data["revisionId"]
+            .as_str()
+            .filter(|revision_id| !revision_id.is_empty())
+            .ok_or_else(|| {
+                ServiceErrorKind::Foundation(
+                    "Recorded compliance request is missing its configuration revision.".into(),
+                )
+            })?
+            .to_owned();
+        let revision = self
+            ._store
+            .get(self.configuration_key(&revision_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::Foundation(
+                    "Recorded compliance request refers to a missing configuration revision."
+                        .into(),
+                )
+            })?;
+        let request_variables = HashMap::from([(
+            "request".to_owned(),
+            serde_json::json!({ "decision": compliance_request.data["decision"] }),
+        )]);
+        let request_policy = evaluate_configuration_constraint(
+            "compliance observation",
+            "compliance_observation_requires_accepted_request",
+            &request_variables,
+        )?;
+        let source_digest = format!("sha256:{:x}", Sha256::digest(request.document.as_bytes()));
+        let source_variables = HashMap::from([
+            (
+                "revision".to_owned(),
+                serde_json::json!({ "source_digest": revision.data["sourceDigest"] }),
+            ),
+            (
+                "observation".to_owned(),
+                serde_json::json!({ "source_digest": source_digest }),
+            ),
+        ]);
+        let source_policy = evaluate_configuration_constraint(
+            "compliance observation",
+            "compliance_observation_requires_matching_source_digest",
+            &source_variables,
+        )?;
+        if !request_policy.accepted || !source_policy.accepted {
+            let policy = if request_policy.accepted {
+                source_policy
+            } else {
+                request_policy
+            };
+            let observation = ComplianceObservation {
+                observation_id: request.observation_id,
+                request_id: request.request_id,
+                revision_id,
+                decision: "rejected".into(),
+                constraint_id: policy.constraint_id,
+                resource_count: 0,
+                compliant_resource_count: 0,
+                drifted_resource_count: 0,
+                reason: policy.reason,
+            };
+            self.record_compliance_observation(&observation, &source_digest)?;
+            return Ok(observation);
+        }
+
+        let options = DscRunOptions {
+            timeout: Some(Duration::from_secs(30)),
+            ..Default::default()
+        };
+        let observation = match run_dsc(
+            DscCommand::ConfigTest,
+            DscInput::Stdin(request.document),
+            &options,
+        )
+        .await
+        {
+            Ok(output) => compliance_observation_from_results(
+                request.observation_id,
+                request.request_id,
+                revision_id,
+                parse_test_results(&output).map_err(dsc_compliance_observation_error)?,
+            ),
+            Err(DscError::Execution { .. }) => ComplianceObservation {
+                observation_id: request.observation_id,
+                request_id: request.request_id,
+                revision_id,
+                decision: "failed".into(),
+                constraint_id: "dsc_config_test".into(),
+                resource_count: 0,
+                compliant_resource_count: 0,
+                drifted_resource_count: 0,
+                reason: "DSC rejected the compliance observation document.".into(),
+            },
+            Err(error) => return Err(dsc_compliance_observation_error(error)),
+        };
+        self.record_compliance_observation(&observation, &source_digest)?;
+        Ok(observation)
+    }
+
     pub fn record_start(&self, version: &str) {
         let metadata = serde_json::json!({
             "profileId": self.profile_id,
@@ -497,6 +639,44 @@ impl ServiceFoundation {
         )
     }
 
+    fn compliance_observation_key(&self, observation_id: &str) -> String {
+        format!(
+            "pedantic:compliance-observation:{}:{observation_id}",
+            self.profile_id
+        )
+    }
+
+    fn record_compliance_observation(
+        &self,
+        observation: &ComplianceObservation,
+        source_digest: &str,
+    ) -> Result<(), ServiceErrorKind> {
+        let key = self.compliance_observation_key(&observation.observation_id);
+        let metadata = serde_json::json!({
+            "profileId": self.profile_id,
+            "observationId": observation.observation_id,
+            "requestId": observation.request_id,
+            "revisionId": observation.revision_id,
+            "sourceDigest": source_digest,
+            "decision": observation.decision,
+            "constraintId": observation.constraint_id,
+            "resourceCount": observation.resource_count,
+            "compliantResourceCount": observation.compliant_resource_count,
+            "driftedResourceCount": observation.drifted_resource_count,
+        });
+        self._store
+            .put(key.clone(), SERVICE_ACTOR, metadata.clone());
+        let entry = self.timeline.build_entry(
+            &key,
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &metadata,
+            Vec::new(),
+            Some("Compliance observation recorded without retaining DSC source content.".into()),
+        );
+        self.record_evidence_summary(entry)
+    }
+
     fn evidence_entry_key(&self, index: usize) -> String {
         format!("pedantic:service:evidence:{}:{index}", self.profile_id)
     }
@@ -541,6 +721,30 @@ fn evaluate_configuration_admission(
         constraint_id: decision.constraint_id,
         reason: decision.reason,
     })
+}
+
+fn compliance_observation_from_results(
+    observation_id: String,
+    request_id: String,
+    revision_id: String,
+    results: Vec<DscTestResult>,
+) -> ComplianceObservation {
+    let resource_count = results.len();
+    let compliant_resource_count = results
+        .iter()
+        .filter(|result| result.in_desired_state)
+        .count();
+    ComplianceObservation {
+        observation_id,
+        request_id,
+        revision_id,
+        decision: "observed".into(),
+        constraint_id: "dsc_config_test".into(),
+        resource_count,
+        compliant_resource_count,
+        drifted_resource_count: resource_count - compliant_resource_count,
+        reason: "DSC compliance observation completed.".into(),
+    }
 }
 
 struct PxConstraintDecision {
@@ -609,18 +813,26 @@ fn configuration_constraint(name: &str) -> Result<&'static ConstraintDecl, Servi
 }
 
 fn dsc_validation_error(error: DscError) -> ServiceErrorKind {
+    dsc_operation_error(error, "configuration validation")
+}
+
+fn dsc_compliance_observation_error(error: DscError) -> ServiceErrorKind {
+    dsc_operation_error(error, "compliance observation")
+}
+
+fn dsc_operation_error(error: DscError, operation: &str) -> ServiceErrorKind {
     let message = match error {
         DscError::NotFound => {
-            "DSC configuration validation is unavailable because dsc is not installed."
+            format!("DSC {operation} is unavailable because dsc is not installed.")
         }
-        DscError::Timeout(_) => "DSC configuration validation exceeded the bounded timeout.",
-        DscError::Spawn(_) | DscError::Io(_) => "DSC configuration validation could not start.",
-        DscError::Parse(_) => "DSC configuration validation returned an unsupported result.",
-        DscError::Yaml(_) => "DSC configuration validation could not serialize the document.",
-        DscError::SshConnection(_) => "DSC configuration validation could not reach its adapter.",
-        DscError::Execution { .. } => "DSC rejected the configuration document.",
+        DscError::Timeout(_) => format!("DSC {operation} exceeded the bounded timeout."),
+        DscError::Spawn(_) | DscError::Io(_) => format!("DSC {operation} could not start."),
+        DscError::Parse(_) => format!("DSC {operation} returned an unsupported result."),
+        DscError::Yaml(_) => format!("DSC {operation} could not serialize the document."),
+        DscError::SshConnection(_) => format!("DSC {operation} could not reach its adapter."),
+        DscError::Execution { .. } => format!("DSC {operation} rejected the document."),
     };
-    ServiceErrorKind::Foundation(message.into())
+    ServiceErrorKind::Foundation(message)
 }
 
 pub fn profile_store_path(profile_id: &str) -> Result<PathBuf, ServiceErrorKind> {
@@ -711,29 +923,42 @@ pub fn pipe_name_for_profile(
     ))
 }
 
-pub struct RequestHandlers<F, G, H, I> {
+pub struct RequestHandlers<F, G, H, I, J> {
     pub evidence: F,
     pub admission: G,
     pub validation: H,
     pub compliance: I,
+    pub observation: J,
 }
 
-pub async fn handle_request<F, G, H, I, AdmissionFuture, ValidationFuture, ComplianceFuture>(
+pub async fn handle_request<
+    F,
+    G,
+    H,
+    I,
+    J,
+    AdmissionFuture,
+    ValidationFuture,
+    ComplianceFuture,
+    ObservationFuture,
+>(
     frame: &str,
     expected_profile: &str,
     expected_token: &str,
     version: &str,
     chronos_entries: usize,
-    handlers: RequestHandlers<F, G, H, I>,
+    handlers: RequestHandlers<F, G, H, I, J>,
 ) -> LocalServiceResponse
 where
     F: FnOnce() -> EvidencePage,
     G: FnOnce(ConfigurationAdmissionRequest) -> AdmissionFuture,
     H: FnOnce(ConfigurationValidationRequest) -> ValidationFuture,
     I: FnOnce(ComplianceRequest) -> ComplianceFuture,
+    J: FnOnce(ComplianceObservationRequest) -> ObservationFuture,
     AdmissionFuture: Future<Output = Result<ConfigurationAdmission, ServiceErrorKind>>,
     ValidationFuture: Future<Output = Result<ConfigurationValidation, ServiceErrorKind>>,
     ComplianceFuture: Future<Output = Result<ComplianceDecision, ServiceErrorKind>>,
+    ObservationFuture: Future<Output = Result<ComplianceObservation, ServiceErrorKind>>,
 {
     let request = match serde_json::from_str::<LocalServiceRequest>(frame) {
         Ok(request) => request,
@@ -904,6 +1129,48 @@ where
                 ),
             }
         }
+        "compliance.observe" => {
+            let observation_request = match serde_json::from_value(request.params) {
+                Ok(observation_request) => observation_request,
+                Err(error) => {
+                    return response(
+                        Some(request.id),
+                        false,
+                        None,
+                        Some((
+                            "invalid_request",
+                            format!("compliance.observe parameters are invalid: {error}"),
+                        )),
+                    );
+                }
+            };
+            match (handlers.observation)(observation_request).await {
+                Ok(result) if result.decision == "rejected" => response(
+                    Some(request.id),
+                    false,
+                    Some(serde_json::json!(result)),
+                    Some(("compliance_rejected", result.reason.clone())),
+                ),
+                Ok(result) if result.decision == "failed" => response(
+                    Some(request.id),
+                    false,
+                    Some(serde_json::json!(result)),
+                    Some(("compliance_observation_failed", result.reason.clone())),
+                ),
+                Ok(result) => response(
+                    Some(request.id),
+                    true,
+                    Some(serde_json::json!(result)),
+                    None,
+                ),
+                Err(error) => response(
+                    Some(request.id),
+                    false,
+                    None,
+                    Some(("compliance_observation_failed", error.to_string())),
+                ),
+            }
+        }
         _ => response(
             Some(request.id),
             false,
@@ -1015,6 +1282,7 @@ async fn serve_connection(
                     admission: |request| foundation.admit_configuration(request),
                     validation: |request| foundation.validate_configuration(request),
                     compliance: |request| foundation.request_compliance(request),
+                    observation: |request| foundation.observe_compliance(request),
                 },
             )
             .await;
@@ -1167,6 +1435,9 @@ mod tests {
         impl FnOnce(
             ComplianceRequest,
         ) -> std::future::Ready<Result<ComplianceDecision, ServiceErrorKind>>,
+        impl FnOnce(
+            ComplianceObservationRequest,
+        ) -> std::future::Ready<Result<ComplianceObservation, ServiceErrorKind>>,
     > {
         RequestHandlers {
             evidence: || EvidencePage {
@@ -1180,6 +1451,9 @@ mod tests {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
             compliance: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            observation: |_| {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
         }
@@ -1297,6 +1571,7 @@ mod tests {
                 admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -1320,6 +1595,7 @@ mod tests {
                 admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -1396,6 +1672,7 @@ mod tests {
                 admission: |request| std::future::ready(evaluate_configuration_admission(&request, None)),
                 validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -1438,6 +1715,9 @@ mod tests {
                 compliance: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
+                observation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
             },
         )
         .await;
@@ -1459,6 +1739,9 @@ mod tests {
                 },
                 validation: move |_| std::future::ready(Ok(validation("invalid"))),
                 compliance: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                observation: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
             },
@@ -1484,6 +1767,9 @@ mod tests {
                     std::future::ready(Err(ServiceErrorKind::Foundation("adapter failed".into())))
                 },
                 compliance: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                observation: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
             },
@@ -1615,6 +1901,7 @@ mod tests {
                     constraint_id: "compliance_requires_validated_revision".into(),
                     reason: "PX accepted the request.".into(),
                 })),
+                observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -1646,6 +1933,123 @@ mod tests {
                     decision: "rejected".into(),
                     constraint_id: "compliance_requires_validated_revision".into(),
                     reason: "PX rejected the request.".into(),
+                })),
+                observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+            },
+        )
+        .await;
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.expect("PX rejection response").code,
+            "compliance_rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn compliance_observation_is_px_rejected_before_dsc_runs() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let foundation = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("open profile store");
+        foundation
+            .admit_configuration(ConfigurationAdmissionRequest {
+                revision_id: "revision-observation".into(),
+                source_digest: "sha256:admitted-source".into(),
+            })
+            .await
+            .expect("admit configuration");
+        foundation
+            .request_compliance(ComplianceRequest {
+                request_id: "request-observation".into(),
+                revision_id: "revision-observation".into(),
+            })
+            .await
+            .expect("record rejected compliance request");
+
+        let observation = foundation
+            .observe_compliance(ComplianceObservationRequest {
+                observation_id: "observation-rejected".into(),
+                request_id: "request-observation".into(),
+                document: "document that must not reach DSC".into(),
+            })
+            .await
+            .expect("evaluate PX observation precondition");
+        assert_eq!(observation.decision, "rejected");
+        assert_eq!(
+            observation.constraint_id,
+            "compliance_observation_requires_accepted_request"
+        );
+        assert_eq!(observation.resource_count, 0);
+        assert_eq!(foundation.evidence_count(), 3);
+        assert_eq!(
+            foundation
+                ._store
+                .get(&foundation.compliance_observation_key("observation-rejected"))
+                .expect("stored compliance observation")
+                .data["sourceDigest"],
+            format!(
+                "sha256:{:x}",
+                Sha256::digest("document that must not reach DSC".as_bytes())
+            )
+        );
+    }
+
+    #[test]
+    fn compliance_observation_normalizes_dsc_results_without_properties() {
+        let observation = compliance_observation_from_results(
+            "observation-1".into(),
+            "request-1".into(),
+            "revision-1".into(),
+            vec![
+                DscTestResult {
+                    resource_name: "compliant-resource".into(),
+                    resource_type: "Example/Resource".into(),
+                    in_desired_state: true,
+                    properties: serde_json::json!({ "sensitive": "not projected" }),
+                },
+                DscTestResult {
+                    resource_name: "drifted-resource".into(),
+                    resource_type: "Example/Resource".into(),
+                    in_desired_state: false,
+                    properties: serde_json::json!({ "sensitive": "not projected" }),
+                },
+            ],
+        );
+        assert_eq!(observation.decision, "observed");
+        assert_eq!(observation.resource_count, 2);
+        assert_eq!(observation.compliant_resource_count, 1);
+        assert_eq!(observation.drifted_resource_count, 1);
+        let serialized = serde_json::to_value(observation).expect("serialize observation");
+        assert!(serialized.get("properties").is_none());
+        assert!(serialized.get("sourceDigest").is_none());
+        assert!(!serialized.to_string().contains("not projected"));
+    }
+
+    #[tokio::test]
+    async fn compliance_observation_returns_a_stable_px_rejection_code() {
+        let response = handle_request(
+            r#"{"id":"1","method":"compliance.observe","profileId":"default","authorization":"0123456789abcdef0123456789abcdef","params":{"observationId":"observation-1","requestId":"request-1","document":"document"}}"#,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            RequestHandlers {
+                evidence: || EvidencePage {
+                    entries: Vec::new(),
+                    truncated: false,
+                },
+                admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                observation: |request: ComplianceObservationRequest| std::future::ready(Ok(ComplianceObservation {
+                    observation_id: request.observation_id,
+                    request_id: request.request_id,
+                    revision_id: "revision-1".into(),
+                    decision: "rejected".into(),
+                    constraint_id: "compliance_observation_requires_accepted_request".into(),
+                    resource_count: 0,
+                    compliant_resource_count: 0,
+                    drifted_resource_count: 0,
+                    reason: "PX rejected the observation.".into(),
                 })),
             },
         )

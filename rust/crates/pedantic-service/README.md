@@ -28,6 +28,14 @@ adapter with a 30-second bound, stores only the normalized validation state,
 and records redacted Chronos evidence; it never retains the document or raw
 adapter output.
 
+`compliance.request` first evaluates PX's validated-revision requirement.
+`compliance.observe` then accepts only that PX-approved request and a document
+matching the admitted source digest before invoking the read-only `dsc config
+test` adapter with the same 30-second bound. It stores a source digest and
+normalized resource counts, while the service response and Chronos projection
+exclude the DSC document, resource properties, and raw adapter output. Neither
+endpoint can invoke `dsc config set`.
+
 ## Run
 
 ```powershell
