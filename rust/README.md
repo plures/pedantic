@@ -17,8 +17,9 @@ pedantic plan <file>
 pedantic export junit <file>
 pedantic export sarif <file>
 pedantic resources list
-PEDANTIC_LOCAL_TOKEN=<secret> pedantic service health
-PEDANTIC_LOCAL_TOKEN=<secret> pedantic service evidence
+$env:PEDANTIC_LOCAL_TOKEN = "<secret>"
+pedantic service health
+pedantic service evidence
 ```
 
 The `service` commands are read-only clients of the Windows-local
