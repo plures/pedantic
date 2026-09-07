@@ -24,9 +24,10 @@ truth through its authenticated, profile-scoped service:
 - Pedantic owns the profile-scoped PluresDB projections and Chronos evidence.
 - RuneBook reads a versioned Pedantic canvas projection and renders stable
   configuration, resource, drift, proposal, decision, and evidence nodes.
-- RuneBook submits typed user intents to the Pedantic service. It never writes
-  a Pedantic store record or invokes DSC, PowerShell, SSH, WinRM, or a package
-  manager directly.
+- RuneBook submits typed user intents to the Pedantic service. The Pedantic
+  adapter never writes a Pedantic store record, invokes DSC, PowerShell, SSH,
+  WinRM, or a package manager directly, or routes a Pedantic intent through a
+  generic RuneBook execution node.
 
 The first integration contract has these boundaries:
 
@@ -36,7 +37,7 @@ The first integration contract has these boundaries:
 | Canvas layout, grouping, and annotations | RuneBook document | Keep presentation-only state separate from Pedantic operational state. |
 | Configuration import or edit proposal | Pedantic command contract | Submit source/provenance for PX admission; do not mutate an admitted revision. |
 | Compliance and remediation gestures | Pedantic command contract | Submit requests and display the returned decision/evidence. |
-| DSC effects and credentials | Pedantic capability adapter | No RuneBook capability or fallback path. |
+| DSC effects and credentials | Pedantic capability adapter | Expose no direct DSC or credential capability; execute typed requests only through Pedantic-authorized adapters. |
 
 RuneBook and Pedantic remain independently releasable. The integration is a
 thin adapter/package that depends on the versioned Pedantic service client and
