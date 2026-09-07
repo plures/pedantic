@@ -23,7 +23,9 @@ fn fixed_point_evaluation_runs_multiple_rounds() {
 
         fn apply(&self, facts: &[Fact], _events: &[Event]) -> RuleOutput {
             let mut output = RuleOutput::default();
-            let has_host = facts.iter().any(|fact| matches!(fact, Fact::HostInventory(_)));
+            let has_host = facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::HostInventory(_)));
             if !has_host {
                 output.new_facts.push(Fact::HostInventory(HostInventory {
                     hostname: "alpha".to_string(),
@@ -45,17 +47,23 @@ fn fixed_point_evaluation_runs_multiple_rounds() {
 
         fn apply(&self, facts: &[Fact], _events: &[Event]) -> RuleOutput {
             let mut output = RuleOutput::default();
-            let has_host = facts.iter().any(|fact| matches!(fact, Fact::HostInventory(_)));
-            let has_desired = facts.iter().any(|fact| matches!(fact, Fact::ResourceDesired(_)));
+            let has_host = facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::HostInventory(_)));
+            let has_desired = facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::ResourceDesired(_)));
             if has_host && !has_desired {
-                output.new_facts.push(Fact::ResourceDesired(ResourceDesired {
-                    resource: DscResource {
-                        name: "res-a".to_string(),
-                        resource_type: "Test/Resource".to_string(),
-                        depends_on: vec![],
-                        properties: json!({}),
-                    },
-                }));
+                output
+                    .new_facts
+                    .push(Fact::ResourceDesired(ResourceDesired {
+                        resource: DscResource {
+                            name: "res-a".to_string(),
+                            resource_type: "Test/Resource".to_string(),
+                            depends_on: vec![],
+                            properties: json!({}),
+                        },
+                    }));
             }
             output
         }
@@ -67,10 +75,12 @@ fn fixed_point_evaluation_runs_multiple_rounds() {
         .build();
     let outcome = engine.evaluate(vec![]);
 
-    assert!(outcome
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, Fact::ResourceDesired(_))));
+    assert!(
+        outcome
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, Fact::ResourceDesired(_)))
+    );
     assert_eq!(outcome.iterations, 3);
 }
 
@@ -124,7 +134,10 @@ fn rules_execute_in_priority_order() {
         .build();
 
     let outcome = engine.evaluate(vec![]);
-    assert_eq!(outcome.fired_rules, vec!["low".to_string(), "high".to_string()]);
+    assert_eq!(
+        outcome.fired_rules,
+        vec!["low".to_string(), "high".to_string()]
+    );
 }
 
 #[test]
@@ -181,20 +194,29 @@ fn constraint_violations_are_collected() {
         .build();
 
     let outcome = engine.evaluate(facts);
-    assert!(outcome
-        .constraint_violations
-        .iter()
-        .any(|violation| matches!(violation, ConstraintViolation::NoSetWithoutTest)));
-    assert!(outcome
-        .constraint_violations
-        .iter()
-        .any(|violation| matches!(violation, ConstraintViolation::NoDeployDraft)));
-    assert!(outcome
-        .constraint_violations
-        .iter()
-        .any(|violation| matches!(violation, ConstraintViolation::IdempotentRender)));
+    assert!(
+        outcome
+            .constraint_violations
+            .iter()
+            .any(|violation| matches!(violation, ConstraintViolation::NoSetWithoutTest))
+    );
+    assert!(
+        outcome
+            .constraint_violations
+            .iter()
+            .any(|violation| matches!(violation, ConstraintViolation::NoDeployDraft))
+    );
+    assert!(
+        outcome
+            .constraint_violations
+            .iter()
+            .any(|violation| matches!(violation, ConstraintViolation::IdempotentRender))
+    );
     assert!(outcome.constraint_violations.iter().any(|violation| {
-        matches!(violation, ConstraintViolation::MaxDriftThresholdExceeded { .. })
+        matches!(
+            violation,
+            ConstraintViolation::MaxDriftThresholdExceeded { .. }
+        )
     }));
 }
 
@@ -243,18 +265,24 @@ fn full_pipeline_emits_events_and_plans() {
         }),
     ]);
 
-    assert!(outcome
-        .events
-        .iter()
-        .any(|event| matches!(event, Event::ConfigParsed { .. })));
-    assert!(outcome
-        .events
-        .iter()
-        .any(|event| matches!(event, Event::DriftDetected { .. })));
-    assert!(!outcome
-        .events
-        .iter()
-        .any(|event| matches!(event, Event::ValidationFailed { .. })));
+    assert!(
+        outcome
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::ConfigParsed { .. }))
+    );
+    assert!(
+        outcome
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::DriftDetected { .. }))
+    );
+    assert!(
+        !outcome
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::ValidationFailed { .. }))
+    );
 
     let tasks = outcome.plan_tasks();
     assert!(tasks.iter().any(|task| task.action == PlanAction::Test));

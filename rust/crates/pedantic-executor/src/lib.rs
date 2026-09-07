@@ -2,7 +2,7 @@ pub mod dsc;
 pub mod inventory;
 pub mod transport;
 
-use crate::dsc::{parse_test_results, DscCommand, DscError, DscInput};
+use crate::dsc::{DscCommand, DscError, DscInput, parse_test_results};
 use crate::transport::Transport;
 use pedantic_core::{ModelResourceStatus, ResourceResult, RunStatus};
 
@@ -15,7 +15,10 @@ impl<T: Transport> DscRunner<T> {
         Self { transport }
     }
 
-    pub async fn test(&self, doc: &pedantic_core::DscDocument) -> Result<Vec<ResourceResult>, DscError> {
+    pub async fn test(
+        &self,
+        doc: &pedantic_core::DscDocument,
+    ) -> Result<Vec<ResourceResult>, DscError> {
         let yaml = serde_yaml::to_string(doc)?;
         let output = self
             .transport
@@ -36,7 +39,10 @@ impl<T: Transport> DscRunner<T> {
             .collect())
     }
 
-    pub async fn set(&self, doc: &pedantic_core::DscDocument) -> Result<Vec<ResourceResult>, DscError> {
+    pub async fn set(
+        &self,
+        doc: &pedantic_core::DscDocument,
+    ) -> Result<Vec<ResourceResult>, DscError> {
         let yaml = serde_yaml::to_string(doc)?;
         let output = self
             .transport

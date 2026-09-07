@@ -11,6 +11,10 @@ fn parses_inventory_hosts() {
     hosts.sort_by(|a, b| a.hostname.cmp(&b.hostname));
 
     assert_eq!(hosts.len(), 2);
-    assert!(hosts.iter().any(|host| host.hostname == "192.168.1.10" && host.os == "windows" && host.connection == "winrm"));
-    assert!(hosts.iter().any(|host| host.hostname == "192.168.1.11" && host.os == "linux" && host.connection == "ssh"));
+    assert!(hosts.iter().any(|host| host.hostname == "192.168.1.10"
+        && host.os == "windows"
+        && host.connection == "winrm"));
+    assert!(hosts.iter().any(|host| host.hostname == "192.168.1.11"
+        && host.os == "linux"
+        && host.connection == "ssh"));
 }

@@ -1,4 +1,4 @@
-use crate::dsc::{build_dsc_args, DscCommand, DscError, DscInput, DscOutput};
+use crate::dsc::{DscCommand, DscError, DscInput, DscOutput, build_dsc_args};
 use crate::transport::Transport;
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -60,9 +60,10 @@ impl Transport for SshTransport {
         })?;
 
         if let Some(stdin_content) = input.stdin()
-            && let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(stdin_content.as_bytes()).await?;
-            }
+            && let Some(mut stdin) = child.stdin.take()
+        {
+            stdin.write_all(stdin_content.as_bytes()).await?;
+        }
 
         let output = child.wait_with_output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();

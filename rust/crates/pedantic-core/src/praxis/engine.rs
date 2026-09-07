@@ -128,7 +128,10 @@ impl Engine {
             let mut new_fact_added = false;
 
             for rule in &rules {
-                let RuleOutput { new_facts, new_events } = rule.apply(&facts, &events);
+                let RuleOutput {
+                    new_facts,
+                    new_events,
+                } = rule.apply(&facts, &events);
                 let mut rule_fired = false;
 
                 for fact in new_facts {

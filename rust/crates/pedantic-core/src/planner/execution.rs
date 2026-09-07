@@ -24,14 +24,17 @@ pub fn plan_execution(doc: &DscDocument) -> Result<ExecutionPlan, PlanError> {
     let mut steps = Vec::new();
     let mut visiting = Vec::new();
     let mut visited = std::collections::HashSet::new();
-    let resource_map: std::collections::HashMap<_, _> = doc
-        .resources
-        .iter()
-        .map(|r| (r.name.clone(), r))
-        .collect();
+    let resource_map: std::collections::HashMap<_, _> =
+        doc.resources.iter().map(|r| (r.name.clone(), r)).collect();
 
     for resource in &doc.resources {
-        visit_resource(resource, &resource_map, &mut visiting, &mut visited, &mut steps)?;
+        visit_resource(
+            resource,
+            &resource_map,
+            &mut visiting,
+            &mut visited,
+            &mut steps,
+        )?;
     }
 
     Ok(ExecutionPlan { steps })

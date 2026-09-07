@@ -53,11 +53,8 @@ fn check_unique_resource_names(doc: &DscDocument) -> Vec<ValidationError> {
 
 fn check_dependencies(doc: &DscDocument) -> Vec<ValidationError> {
     let mut errors = Vec::new();
-    let resource_map: std::collections::HashMap<_, _> = doc
-        .resources
-        .iter()
-        .map(|r| (r.name.clone(), r))
-        .collect();
+    let resource_map: std::collections::HashMap<_, _> =
+        doc.resources.iter().map(|r| (r.name.clone(), r)).collect();
 
     for resource in &doc.resources {
         for dep in &resource.depends_on {
@@ -76,11 +73,8 @@ fn check_dependencies(doc: &DscDocument) -> Vec<ValidationError> {
 }
 
 fn has_cycle(doc: &DscDocument) -> bool {
-    let resource_map: std::collections::HashMap<_, _> = doc
-        .resources
-        .iter()
-        .map(|r| (r.name.clone(), r))
-        .collect();
+    let resource_map: std::collections::HashMap<_, _> =
+        doc.resources.iter().map(|r| (r.name.clone(), r)).collect();
 
     let mut visiting = std::collections::HashSet::new();
     let mut visited = std::collections::HashSet::new();
@@ -153,7 +147,8 @@ fn normalize_dependency(dep: &str) -> &str {
 
 fn check_parameter_references(doc: &DscDocument) -> Vec<ValidationError> {
     let mut errors = Vec::new();
-    let param_names: std::collections::HashSet<_> = doc.parameters.iter().map(|p| p.name.as_str()).collect();
+    let param_names: std::collections::HashSet<_> =
+        doc.parameters.iter().map(|p| p.name.as_str()).collect();
     let re = Regex::new(r"(?i)\[parameters?\('([^']+)'\)\]").unwrap();
 
     for resource in &doc.resources {

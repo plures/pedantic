@@ -1,5 +1,5 @@
-use pedantic_executor::transport::LocalTransport;
 use pedantic_executor::DscRunner;
+use pedantic_executor::transport::LocalTransport;
 
 #[test]
 fn constructs_runner() {

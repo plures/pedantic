@@ -14,12 +14,20 @@ pub fn parse_simple_dsl(yaml: &str) -> Result<DscDocument, SimpleParseError> {
     let mapping = value.as_mapping().ok_or(SimpleParseError::InvalidFormat)?;
 
     let install_key = serde_yaml::Value::String("dsc.install".to_string());
-    let install = mapping.get(&install_key).ok_or(SimpleParseError::InvalidFormat)?;
-    let install_map = install.as_mapping().ok_or(SimpleParseError::InvalidFormat)?;
+    let install = mapping
+        .get(&install_key)
+        .ok_or(SimpleParseError::InvalidFormat)?;
+    let install_map = install
+        .as_mapping()
+        .ok_or(SimpleParseError::InvalidFormat)?;
 
     let packages_key = serde_yaml::Value::String("packages".to_string());
-    let packages = install_map.get(&packages_key).ok_or(SimpleParseError::InvalidFormat)?;
-    let packages = packages.as_sequence().ok_or(SimpleParseError::InvalidFormat)?;
+    let packages = install_map
+        .get(&packages_key)
+        .ok_or(SimpleParseError::InvalidFormat)?;
+    let packages = packages
+        .as_sequence()
+        .ok_or(SimpleParseError::InvalidFormat)?;
 
     let resources = packages
         .iter()
