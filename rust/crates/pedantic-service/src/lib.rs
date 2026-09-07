@@ -17,8 +17,7 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
-#[cfg(windows)]
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 #[cfg(windows)]
 use windows_sys::Win32::{
     Foundation::LocalFree,
@@ -1080,44 +1079,20 @@ impl LocalServiceClient {
         {
             use tokio::net::windows::named_pipe::ClientOptions;
 
-            let mut connection = ClientOptions::new()
+            let connection = ClientOptions::new()
                 .open(&self.pipe_name)
                 .map_err(ServiceErrorKind::Io)?;
-            let request = serde_json::to_vec(&LocalServiceRequest {
-                id: id.into(),
-                method: method.into(),
-                profile_id: self.profile_id.clone(),
-                authorization: self.authorization_token.clone(),
-                params,
-            })
-            .map_err(|error| {
-                ServiceErrorKind::InvalidRequest(format!("Request encoding failed: {error}"))
-            })?;
-            if request.len() > MAX_FRAME_BYTES {
-                return Err(ServiceErrorKind::InvalidRequest(
-                    "Request exceeds the local service frame limit.".into(),
-                ));
-            }
-            connection.write_all(&request).await?;
-            connection.write_all(b"\n").await?;
-
-            let mut response = String::new();
-            let mut reader = BufReader::new(connection);
-            let bytes_read = reader.read_line(&mut response).await?;
-            if bytes_read == 0 {
-                return Err(ServiceErrorKind::Io(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "Local service closed the pipe before responding.",
-                )));
-            }
-            if response.len() > MAX_FRAME_BYTES {
-                return Err(ServiceErrorKind::InvalidRequest(
-                    "Local service response exceeds the frame limit.".into(),
-                ));
-            }
-            serde_json::from_str(&response).map_err(|error| {
-                ServiceErrorKind::InvalidRequest(format!("Response decoding failed: {error}"))
-            })
+            exchange(
+                connection,
+                LocalServiceRequest {
+                    id: id.into(),
+                    method: method.into(),
+                    profile_id: self.profile_id.clone(),
+                    authorization: self.authorization_token.clone(),
+                    params,
+                },
+            )
+            .await
         }
 
         #[cfg(not(windows))]
@@ -1138,6 +1113,45 @@ impl LocalServiceClient {
         self.call("evidence-list", "evidence.list", serde_json::Value::Null)
             .await
     }
+}
+
+async fn exchange<T>(
+    connection: T,
+    request: LocalServiceRequest,
+) -> Result<LocalServiceResponse, ServiceErrorKind>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    let request = serde_json::to_vec(&request).map_err(|error| {
+        ServiceErrorKind::InvalidRequest(format!("Request encoding failed: {error}"))
+    })?;
+    if request.len() > MAX_FRAME_BYTES {
+        return Err(ServiceErrorKind::InvalidRequest(
+            "Request exceeds the local service frame limit.".into(),
+        ));
+    }
+
+    let mut connection = connection;
+    connection.write_all(&request).await?;
+    connection.write_all(b"\n").await?;
+
+    let mut response = String::new();
+    let mut reader = BufReader::new(connection);
+    let bytes_read = reader.read_line(&mut response).await?;
+    if bytes_read == 0 {
+        return Err(ServiceErrorKind::Io(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "Local service closed the pipe before responding.",
+        )));
+    }
+    if response.len() > MAX_FRAME_BYTES {
+        return Err(ServiceErrorKind::InvalidRequest(
+            "Local service response exceeds the frame limit.".into(),
+        ));
+    }
+    serde_json::from_str(&response).map_err(|error| {
+        ServiceErrorKind::InvalidRequest(format!("Response decoding failed: {error}"))
+    })
 }
 
 pub struct RequestHandlers<F, G, H, I, J, K> {
@@ -1791,6 +1805,116 @@ mod tests {
         assert_eq!(
             client.pipe_name,
             pipe_name_for_profile("default", token).expect("derive profile endpoint")
+        );
+    }
+
+    fn transport_request() -> LocalServiceRequest {
+        LocalServiceRequest {
+            id: "request-1".into(),
+            method: "service.health".into(),
+            profile_id: "default".into(),
+            authorization: "0123456789abcdef0123456789abcdef".into(),
+            params: serde_json::Value::Null,
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_exchange_frames_requests_and_decodes_responses() {
+        let (client, mut server) = tokio::io::duplex(MAX_FRAME_BYTES);
+        let server_task = tokio::spawn(async move {
+            let mut request = String::new();
+            tokio::io::AsyncBufReadExt::read_line(
+                &mut tokio::io::BufReader::new(&mut server),
+                &mut request,
+            )
+            .await
+            .expect("read framed request");
+            assert!(request.ends_with('\n'));
+            assert_eq!(
+                serde_json::from_str::<LocalServiceRequest>(&request)
+                    .expect("decode request")
+                    .method,
+                "service.health"
+            );
+            server
+                .write_all(
+                    br#"{"id":"request-1","ok":true,"result":{"status":"ok"}}
+"#,
+                )
+                .await
+                .expect("write response");
+        });
+
+        let response = exchange(client, transport_request())
+            .await
+            .expect("exchange response");
+        server_task.await.expect("server task");
+        assert_eq!(response.id.as_deref(), Some("request-1"));
+        assert_eq!(response.result, Some(serde_json::json!({"status": "ok"})));
+    }
+
+    #[tokio::test]
+    async fn transport_exchange_rejects_malformed_and_eof_responses() {
+        let (client, mut server) = tokio::io::duplex(MAX_FRAME_BYTES);
+        let malformed = tokio::spawn(async move {
+            server
+                .write_all(b"not-json\n")
+                .await
+                .expect("write malformed response");
+        });
+        let error = exchange(client, transport_request())
+            .await
+            .expect_err("malformed response must fail");
+        malformed.await.expect("malformed server task");
+        assert!(
+            matches!(error, ServiceErrorKind::InvalidRequest(message) if message.contains("Response decoding failed"))
+        );
+
+        let (client, mut server) = tokio::io::duplex(MAX_FRAME_BYTES);
+        let eof = tokio::spawn(async move {
+            let mut request = String::new();
+            tokio::io::AsyncBufReadExt::read_line(
+                &mut tokio::io::BufReader::new(&mut server),
+                &mut request,
+            )
+            .await
+            .expect("read request before EOF");
+        });
+        let error = exchange(client, transport_request())
+            .await
+            .expect_err("EOF response must fail");
+        eof.await.expect("EOF server task");
+        assert!(matches!(
+            error,
+            ServiceErrorKind::Io(error) if error.kind() == io::ErrorKind::UnexpectedEof
+        ));
+    }
+
+    #[tokio::test]
+    async fn transport_exchange_enforces_request_and_response_frame_limits() {
+        let (client, _server) = tokio::io::duplex(MAX_FRAME_BYTES);
+        let mut request = transport_request();
+        request.params = serde_json::json!({"payload": "x".repeat(MAX_FRAME_BYTES)});
+        let error = exchange(client, request)
+            .await
+            .expect_err("oversized request must fail");
+        assert!(
+            matches!(error, ServiceErrorKind::InvalidRequest(message) if message.contains("Request exceeds"))
+        );
+
+        let (client, mut server) = tokio::io::duplex(MAX_FRAME_BYTES + 1);
+        let server_task = tokio::spawn(async move {
+            server
+                .write_all(format!("{}\n", "x".repeat(MAX_FRAME_BYTES)).as_bytes())
+                .await
+                .expect("write oversized response");
+        });
+        let error = exchange(client, transport_request())
+            .await
+            .expect_err("oversized response must fail");
+        server_task.await.expect("oversized server task");
+        assert!(
+            matches!(error, ServiceErrorKind::InvalidRequest(message) if message.contains("response exceeds"))
         );
     }
 
