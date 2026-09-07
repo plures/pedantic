@@ -17,7 +17,15 @@ pedantic plan <file>
 pedantic export junit <file>
 pedantic export sarif <file>
 pedantic resources list
+$env:PEDANTIC_LOCAL_TOKEN = "<secret>"
+pedantic service health
+pedantic service evidence
 ```
+
+The `service` commands are read-only clients of the Windows-local
+`pedantic-service` named pipe. They return its profile-scoped health and
+redacted Chronos evidence projections without opening PluresDB or invoking
+DSC.
 
 ## Development
 

@@ -1875,10 +1875,12 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "pedantic-core",
+ "pedantic-service",
  "self_update",
  "serde_json",
  "serde_yaml",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
