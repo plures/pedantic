@@ -734,8 +734,10 @@ impl ServiceFoundation {
             "hostCount": observation.host_count,
             "hosts": observation.hosts,
         });
-        self._store
-            .put(key.clone(), SERVICE_ACTOR, metadata.clone());
+        if observation.decision == "observed" {
+            self._store
+                .put(key.clone(), SERVICE_ACTOR, metadata.clone());
+        }
         let entry = self.timeline.build_entry(
             &key,
             SERVICE_ACTOR,
