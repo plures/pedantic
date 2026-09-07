@@ -107,7 +107,8 @@ procedure authorize_compliance_request(request: ComplianceRequest from "complian
 procedure observe_compliance(observation: ComplianceObservation from "compliance_observations") -> ComplianceObservation into "compliance_observations":
   given: "Run a read-only DSC compliance observation only after PX has accepted the request"
   resolve_compliance_request observation.request_id -> $request
-  resolve_revision observation.revision_id -> $revision
+  resolve_revision $request.revision_id -> $revision
   authorize_compliance_request $request -> $authorization
-  observe_dsc_config_test $authorization $revision -> $result
-  return {observation_id: observation.observation_id, request_id: observation.request_id, revision_id: observation.revision_id, source_digest: $revision.source_digest}
+  validate_compliance_observation observation $request $revision -> $validated
+  observe_dsc_config_test $authorization $validated -> $result
+  return {observation_id: observation.observation_id, request_id: observation.request_id, revision_id: $request.revision_id, source_digest: $revision.source_digest}
