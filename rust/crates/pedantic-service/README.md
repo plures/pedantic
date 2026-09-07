@@ -44,6 +44,13 @@ normalized resource counts, while the service response and Chronos projection
 exclude the DSC document, resource properties, and raw adapter output. Neither
 endpoint can invoke `dsc config set`.
 
+The `pedantic` CLI is a thin service client for read-only projections:
+`pedantic service health` and `pedantic service evidence` connect through the
+same authenticated named pipe using `PEDANTIC_LOCAL_TOKEN`. They never open a
+profile store or invoke DSC. Operational CLI commands remain explicitly
+offline compatibility behavior until their service-backed capability has
+equivalent task-level evidence.
+
 ## Run
 
 ```powershell

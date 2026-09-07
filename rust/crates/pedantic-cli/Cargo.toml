@@ -17,3 +17,5 @@ tracing = { workspace = true }
 tracing-subscriber = "0.3"
 self_update = { version = "0.42", default-features = false, features = ["rustls", "archive-tar", "archive-zip", "compression-flate2"] }
 pedantic-core = { path = "../pedantic-core" }
+pedantic-service = { path = "../pedantic-service" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -978,7 +978,7 @@ pub fn profile_store_path(profile_id: &str) -> Result<PathBuf, ServiceErrorKind>
         .join("pluresdb"))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct LocalServiceRequest {
     pub id: String,
     pub method: String,
@@ -989,7 +989,7 @@ pub struct LocalServiceRequest {
     pub params: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct LocalServiceResponse {
     pub id: Option<String>,
     pub ok: bool,
@@ -999,9 +999,9 @@ pub struct LocalServiceResponse {
     pub error: Option<ServiceError>,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct ServiceError {
-    pub code: &'static str,
+    pub code: String,
     pub message: String,
 }
 
@@ -1044,6 +1044,100 @@ pub fn pipe_name_for_profile(
         authorization_token,
         "local",
     ))
+}
+
+/// Authenticated client for the profile-scoped local service.
+///
+/// This is intentionally a transport-only adapter. The caller submits a typed
+/// request and receives the service result; PX decisions and PluresDB access
+/// remain service-owned.
+pub struct LocalServiceClient {
+    profile_id: String,
+    authorization_token: String,
+    pipe_name: String,
+}
+
+impl LocalServiceClient {
+    pub fn for_profile(
+        profile_id: &str,
+        authorization_token: &str,
+    ) -> Result<Self, ServiceErrorKind> {
+        let pipe_name = pipe_name_for_profile(profile_id, authorization_token)?;
+        Ok(Self {
+            profile_id: normalize_profile_id(profile_id),
+            authorization_token: authorization_token.to_owned(),
+            pipe_name,
+        })
+    }
+
+    pub async fn call(
+        &self,
+        id: impl Into<String>,
+        method: impl Into<String>,
+        params: serde_json::Value,
+    ) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        #[cfg(windows)]
+        {
+            use tokio::net::windows::named_pipe::ClientOptions;
+
+            let mut connection = ClientOptions::new()
+                .open(&self.pipe_name)
+                .map_err(ServiceErrorKind::Io)?;
+            let request = serde_json::to_vec(&LocalServiceRequest {
+                id: id.into(),
+                method: method.into(),
+                profile_id: self.profile_id.clone(),
+                authorization: self.authorization_token.clone(),
+                params,
+            })
+            .map_err(|error| {
+                ServiceErrorKind::InvalidRequest(format!("Request encoding failed: {error}"))
+            })?;
+            if request.len() > MAX_FRAME_BYTES {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "Request exceeds the local service frame limit.".into(),
+                ));
+            }
+            connection.write_all(&request).await?;
+            connection.write_all(b"\n").await?;
+
+            let mut response = String::new();
+            let mut reader = BufReader::new(connection);
+            let bytes_read = reader.read_line(&mut response).await?;
+            if bytes_read == 0 {
+                return Err(ServiceErrorKind::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "Local service closed the pipe before responding.",
+                )));
+            }
+            if response.len() > MAX_FRAME_BYTES {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "Local service response exceeds the frame limit.".into(),
+                ));
+            }
+            serde_json::from_str(&response).map_err(|error| {
+                ServiceErrorKind::InvalidRequest(format!("Response decoding failed: {error}"))
+            })
+        }
+
+        #[cfg(not(windows))]
+        {
+            let _ = (id, method, params);
+            Err(ServiceErrorKind::InvalidRequest(
+                "The local service client requires Windows named pipes.".into(),
+            ))
+        }
+    }
+
+    pub async fn health(&self) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        self.call("service-health", "service.health", serde_json::Value::Null)
+            .await
+    }
+
+    pub async fn list_evidence(&self) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        self.call("evidence-list", "evidence.list", serde_json::Value::Null)
+            .await
+    }
 }
 
 pub struct RequestHandlers<F, G, H, I, J, K> {
@@ -1478,7 +1572,10 @@ fn response(
         id,
         ok,
         result,
-        error: error.map(|(code, message)| ServiceError { code, message }),
+        error: error.map(|(code, message)| ServiceError {
+            code: code.to_owned(),
+            message,
+        }),
     }
 }
 
@@ -1682,6 +1779,19 @@ mod tests {
         assert!(!first.contains("S-1-5-21-test"));
         #[cfg(not(windows))]
         assert!(first.contains("S-1-5-21-test"));
+    }
+
+    #[test]
+    fn local_service_client_reuses_the_profile_bound_endpoint() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let client = LocalServiceClient::for_profile("Default", token)
+            .expect("construct authenticated local service client");
+
+        assert_eq!(client.profile_id, "default");
+        assert_eq!(
+            client.pipe_name,
+            pipe_name_for_profile("default", token).expect("derive profile endpoint")
+        );
     }
 
     #[test]

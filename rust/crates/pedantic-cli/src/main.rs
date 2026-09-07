@@ -3,6 +3,7 @@ use pedantic_core::export::{export_junit, export_sarif};
 use pedantic_core::parser::parse_dsc_v3;
 use pedantic_core::planner::plan_execution;
 use pedantic_core::validator::validate_document;
+use pedantic_service::LocalServiceClient;
 use std::fs;
 
 #[derive(Debug, Parser)]
@@ -38,6 +39,14 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Query the profile-scoped Pedantic local service without opening its store.
+    Service {
+        /// Profile served by the local Pedantic service.
+        #[arg(long, default_value = "default")]
+        profile: String,
+        #[command(subcommand)]
+        kind: ServiceKind,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -51,7 +60,16 @@ enum ResourceKind {
     List,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, Subcommand)]
+enum ServiceKind {
+    /// Read the service health projection.
+    Health,
+    /// Read bounded, redacted Chronos evidence.
+    Evidence,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
@@ -101,9 +119,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Update { check } => {
             run_update(check)?;
         }
+        Commands::Service { profile, kind } => {
+            let response = match kind {
+                ServiceKind::Health => query_service_health(&profile).await?,
+                ServiceKind::Evidence => query_service_evidence(&profile).await?,
+            };
+            if !response.ok {
+                let error = response
+                    .error
+                    .map(|error| format!("{}: {}", error.code, error.message))
+                    .unwrap_or_else(|| "local service rejected the request".into());
+                return Err(std::io::Error::other(error).into());
+            }
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
     }
 
     Ok(())
+}
+
+fn service_client(profile: &str) -> Result<LocalServiceClient, Box<dyn std::error::Error>> {
+    let token = std::env::var("PEDANTIC_LOCAL_TOKEN")?;
+    Ok(LocalServiceClient::for_profile(profile, &token)?)
+}
+
+async fn query_service_health(
+    profile: &str,
+) -> Result<pedantic_service::LocalServiceResponse, Box<dyn std::error::Error>> {
+    service_client(profile)?.health().await.map_err(Into::into)
+}
+
+async fn query_service_evidence(
+    profile: &str,
+) -> Result<pedantic_service::LocalServiceResponse, Box<dyn std::error::Error>> {
+    service_client(profile)?
+        .list_evidence()
+        .await
+        .map_err(Into::into)
 }
 
 fn run_update(check_only: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -145,4 +197,23 @@ fn load_document(
     let content = fs::read_to_string(path)?;
     let doc = parse_dsc_v3(&content)?;
     Ok(doc)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_read_only_service_evidence_command() {
+        let cli = Cli::try_parse_from(["pedantic", "service", "--profile", "Default", "evidence"])
+            .expect("parse service evidence command");
+
+        match cli.command {
+            Commands::Service {
+                profile,
+                kind: ServiceKind::Evidence,
+            } => assert_eq!(profile, "Default"),
+            _ => panic!("expected service evidence command"),
+        }
+    }
 }
