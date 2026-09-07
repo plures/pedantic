@@ -20,7 +20,12 @@ pub enum InventoryError {
 
 pub fn discover_hosts(path: impl AsRef<Path>) -> Result<Vec<HostRecord>, InventoryError> {
     let content = std::fs::read_to_string(path)?;
-    let inventory: InventoryFile = serde_yaml::from_str(&content)?;
+    parse_hosts(&content)
+}
+
+/// Normalizes a caller-supplied inventory document without retaining its source.
+pub fn parse_hosts(content: &str) -> Result<Vec<HostRecord>, InventoryError> {
+    let inventory: InventoryFile = serde_yaml::from_str(content)?;
 
     let mut builders: BTreeMap<String, HostBuilder> = inventory
         .all

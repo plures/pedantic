@@ -28,6 +28,14 @@ adapter with a 30-second bound, stores only the normalized validation state,
 and records redacted Chronos evidence; it never retains the document or raw
 adapter output.
 
+`inventory.observe` accepts a caller-supplied inventory document and its
+declared SHA-256 source digest. PX rejects a digest mismatch before the
+executor normalizes hosts, so the service never receives an arbitrary client
+filesystem path or invokes DSC discovery. It persists the normalized host
+projection and source digest in the authenticated profile store, while Chronos
+evidence retains only the decision, constraint, and host count; the source
+document and host details are not included in the evidence projection.
+
 `compliance.request` first evaluates PX's validated-revision requirement.
 `compliance.observe` then accepts only that PX-approved request and a document
 matching the admitted source digest before invoking the read-only `dsc config
