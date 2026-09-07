@@ -98,6 +98,15 @@ pedantic/
 
 Build the primary operator experience from `svelte-tarui-template`. Use Svelte 5, `svelte-ratatui`, Unum projections, and Design Dojo components. It provides configuration review, inventory, compliance, approval, evidence timeline, and local service/profile management. It must not shell out to DSC or read PluresDB itself.
 
+### RuneBook canvas integration
+
+Use RuneBook as a Pedantic projection and composition client: it renders the
+versioned configuration, drift, proposal, decision, and evidence graph, and
+submits typed service requests. Canvas layout and annotations may remain
+RuneBook-owned presentation state, but Pedantic remains the sole owner of PX
+decisions, profile-scoped PluresDB state, Chronos evidence, and DSC effects.
+See [ADR 0006](adr/0006-runebook-is-a-pedantic-projection-client.md).
+
 ### Pares Radix plugin
 
 Rebuild the current `plugin/` as a Modulus-submitted plugin that consumes the Pedantic service client. It supplies Radix-native pages, widgets, routes, and provenance-aware projections. Its manifest describes declared Pedantic capabilities and permissions, while its data model is a projection of service-owned schema rather than a second compliance database.
