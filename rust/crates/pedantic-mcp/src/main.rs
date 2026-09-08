@@ -6,6 +6,7 @@
 //! real `dsc` operations through Pedantic without a bespoke integration.
 
 use pedantic_executor::dsc::{DscCommand, DscError, DscInput, DscRunOptions, run_dsc};
+use pedantic_service::{LocalServiceClient, LocalServiceResponse};
 use rmcp::schemars;
 use rmcp::{
     ErrorData as McpError, ServiceExt,
@@ -65,6 +66,17 @@ pub struct ConfigExportRequest {
     pub resource_type: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ServiceProjectionRequest {
+    /// Profile served by the local Pedantic service.
+    #[serde(default = "default_profile")]
+    pub profile: String,
+}
+
+fn default_profile() -> String {
+    "default".into()
+}
+
 fn dsc_error_to_mcp(err: DscError) -> McpError {
     McpError::internal_error(err.to_string(), None)
 }
@@ -73,12 +85,73 @@ fn text_result(value: impl std::fmt::Display) -> CallToolResult {
     CallToolResult::success(vec![Content::text(value.to_string())])
 }
 
+fn local_service_client(profile: &str) -> Result<LocalServiceClient, McpError> {
+    let token = std::env::var("PEDANTIC_LOCAL_TOKEN").map_err(|_| {
+        McpError::internal_error(
+            "PEDANTIC_LOCAL_TOKEN is required for local service tools.",
+            None,
+        )
+    })?;
+    LocalServiceClient::for_profile(profile, &token)
+        .map_err(|error| McpError::internal_error(error.to_string(), None))
+}
+
+fn service_result(response: LocalServiceResponse) -> Result<CallToolResult, McpError> {
+    if !response.ok {
+        let error = response
+            .error
+            .map(|error| format!("{}: {}", error.code, error.message))
+            .unwrap_or_else(|| "Pedantic service rejected the request.".into());
+        return Err(McpError::internal_error(error, None));
+    }
+    let projection = response.result.ok_or_else(|| {
+        McpError::internal_error("Pedantic service returned no projection.", None)
+    })?;
+    let projection = serde_json::to_string_pretty(&projection)
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+    Ok(CallToolResult::success(vec![Content::text(projection)]))
+}
+
 #[tool_router]
 impl PedanticMcpServer {
     pub fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
         }
+    }
+
+    /// Read the authenticated profile-scoped Pedantic service health projection.
+    #[tool(
+        description = "Read the profile-scoped Pedantic local service health through its authenticated named-pipe client. Does not invoke DSC or open PluresDB."
+    )]
+    async fn service_health(
+        &self,
+        Parameters(request): Parameters<ServiceProjectionRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = local_service_client(&request.profile)?;
+        service_result(
+            client
+                .health()
+                .await
+                .map_err(|error| McpError::internal_error(error.to_string(), None))?,
+        )
+    }
+
+    /// Read bounded, redacted Chronos evidence from the authenticated profile service.
+    #[tool(
+        description = "Read bounded redacted Chronos evidence through the profile-scoped Pedantic local service. Does not invoke DSC or open PluresDB."
+    )]
+    async fn service_evidence(
+        &self,
+        Parameters(request): Parameters<ServiceProjectionRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = local_service_client(&request.profile)?;
+        service_result(
+            client
+                .list_evidence()
+                .await
+                .map_err(|error| McpError::internal_error(error.to_string(), None))?,
+        )
     }
 
     /// List DSC resources discoverable on this host (equivalent to `dsc resource list`).
@@ -320,7 +393,7 @@ impl rmcp::ServerHandler for PedanticMcpServer {
     fn get_info(&self) -> ServerInfo {
         let _tool_router = &self.tool_router;
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "Pedantic MCP server: exposes real DSC v3 resource discovery (resource_list), \
+            "Pedantic MCP server: exposes profile-scoped local service health and redacted evidence, plus legacy direct DSC v3 resource discovery (resource_list), \
              read (resource_get), compliance testing (resource_test), drift export \
              (resource_export), config export (config_export), and validation (config_validate) tools backed by the \
              actual `dsc` CLI binary on this host.",
@@ -349,7 +422,7 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::find_resource_manifest_dir_in_path;
+    use super::{ServiceProjectionRequest, find_resource_manifest_dir_in_path};
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
 
@@ -392,6 +465,13 @@ mod tests {
 
         assert!(found.is_none());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn service_projection_request_defaults_to_the_default_profile() {
+        let request: ServiceProjectionRequest =
+            serde_json::from_str("{}").expect("deserialize service projection request");
+        assert_eq!(request.profile, "default");
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {
