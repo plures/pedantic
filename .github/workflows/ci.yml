@@ -75,6 +75,11 @@ jobs:
         run: |
           ./tests/dsc-v3-compatibility.ps1
 
+      - name: Validate PX procedures with the canonical parser
+        shell: pwsh
+        run: |
+          ./scripts/Test-PxProcedures.ps1
+
       - name: Test Rust workspace and MCP server
         shell: pwsh
         run: |
