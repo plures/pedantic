@@ -10,7 +10,7 @@
 | Rust core | DSC parser, validator, planner, `praxis` engine | normalized document model and decision lifecycle | contracts + PX | Retire duplicated imperative policy; retain parser only if required as an adapter |
 | Rust executor | local/SSH DSC runner and inventory | DSC and transport effects | `pedantic-dsc-adapter`, `pedantic-transport` | Move without new policy |
 | Rust CLI | `parse`, `validate`, `plan`, `export`, `resources`, `update`, `service health`, `service evidence` | service client and offline tooling | CLI client | Read-only service client exists for health/evidence; identify any operational offline-only mode explicitly |
-| Rust MCP | resource list/get/test/export; config validate/export | automation API | service MCP facade | Remove unrestricted direct DSC operations |
+| Rust MCP | `service_health`, `service_evidence`, resource list/get/test/export; config validate/export | automation API | service MCP facade | Read-only service tools exist; remove unrestricted direct DSC operations after service parity |
 | VS Code extension | authoring, language server, graph, inventory, fact gather, push config | editor projection and command submission | VS Code service client | Keep syntax-only diagnostics local; migrate operational commands |
 | Radix plugin | config browser, compliance dashboard/history, widgets | Radix projection | Modulus-published service client | Replace local compliance store with service projections |
 | Standalone app | absent | primary local operator workflow | Svelte/Tarui + Unum service client | New surface in Phase 3 |

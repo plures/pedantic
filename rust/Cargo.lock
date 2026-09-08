@@ -1921,6 +1921,7 @@ dependencies = [
  "anyhow",
  "pedantic-core",
  "pedantic-executor",
+ "pedantic-service",
  "rmcp",
  "schemars",
  "serde",
