@@ -1705,7 +1705,34 @@ fn parse_current_user_sid(output: &str) -> Result<String, ServiceErrorKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jsonschema::{Draft, JSONSchema};
+    use jsonschema::{Draft, JSONSchema, SchemaResolver, SchemaResolverError};
+    use std::sync::Arc;
+    use url::Url;
+
+    struct ContractResolver {
+        evidence_schema: Arc<serde_json::Value>,
+    }
+
+    impl SchemaResolver for ContractResolver {
+        fn resolve(
+            &self,
+            _root_schema: &serde_json::Value,
+            url: &Url,
+            _original_reference: &str,
+        ) -> Result<Arc<serde_json::Value>, SchemaResolverError> {
+            if url.as_str()
+                == "https://schemas.pedantic.dev/contracts/v1/evidence-summary.schema.json"
+            {
+                Ok(Arc::clone(&self.evidence_schema))
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("unsupported local contract reference: {url}"),
+                )
+                .into())
+            }
+        }
+    }
 
     fn assert_contract(schema_source: &str, instance: serde_json::Value) {
         let schema = serde_json::from_str(schema_source).expect("parse JSON Schema");
@@ -1717,6 +1744,60 @@ mod tests {
             let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
             panic!("contract validation failed: {messages:?}");
         }
+    }
+
+    fn assert_contract_rejects(schema_source: &str, instance: serde_json::Value) {
+        let schema = serde_json::from_str(schema_source).expect("parse JSON Schema");
+        let validator = JSONSchema::options()
+            .with_draft(Draft::Draft7)
+            .compile(&schema)
+            .expect("compile JSON Schema");
+        assert!(
+            !validator.is_valid(&instance),
+            "contract unexpectedly accepted {instance}"
+        );
+    }
+
+    fn assert_response_contract(
+        schema_source: &str,
+        evidence_schema_source: &str,
+        instance: serde_json::Value,
+    ) {
+        let schema = serde_json::from_str(schema_source).expect("parse response JSON Schema");
+        let evidence_schema =
+            serde_json::from_str(evidence_schema_source).expect("parse evidence JSON Schema");
+        let validator = JSONSchema::options()
+            .with_draft(Draft::Draft7)
+            .with_resolver(ContractResolver {
+                evidence_schema: Arc::new(evidence_schema),
+            })
+            .compile(&schema)
+            .expect("compile response JSON Schema");
+        if let Err(errors) = validator.validate(&instance) {
+            let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+            panic!("response contract validation failed: {messages:?}");
+        }
+    }
+
+    fn assert_response_contract_rejects(
+        schema_source: &str,
+        evidence_schema_source: &str,
+        instance: serde_json::Value,
+    ) {
+        let schema = serde_json::from_str(schema_source).expect("parse response JSON Schema");
+        let evidence_schema =
+            serde_json::from_str(evidence_schema_source).expect("parse evidence JSON Schema");
+        let validator = JSONSchema::options()
+            .with_draft(Draft::Draft7)
+            .with_resolver(ContractResolver {
+                evidence_schema: Arc::new(evidence_schema),
+            })
+            .compile(&schema)
+            .expect("compile response JSON Schema");
+        assert!(
+            !validator.is_valid(&instance),
+            "response contract unexpectedly accepted {instance}"
+        );
     }
 
     #[test]
@@ -1797,9 +1878,47 @@ mod tests {
             REQUEST_SCHEMA,
             serde_json::from_str(REQUEST_FIXTURE).expect("parse request fixture"),
         );
-        assert_contract(
+        assert_contract_rejects(
+            REQUEST_SCHEMA,
+            serde_json::json!({
+                "id": "admission-missing-params",
+                "method": "configuration.admit",
+                "profileId": "default",
+                "authorization": "0123456789abcdef0123456789abcdef"
+            }),
+        );
+        assert_response_contract(
             RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
             serde_json::from_str(RESPONSE_FIXTURE).expect("parse response fixture"),
+        );
+        assert_response_contract_rejects(
+            RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
+            serde_json::json!({
+                "id": "health-invalid-result",
+                "ok": true,
+                "result": null
+            }),
+        );
+        assert_response_contract_rejects(
+            RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
+            serde_json::json!({
+                "id": "evidence-invalid-entry",
+                "ok": true,
+                "result": {
+                    "entries": [{
+                        "eventId": "chronos-1",
+                        "timestamp": 1750000000,
+                        "actor": "pedantic-service",
+                        "action": "create",
+                        "level": "info",
+                        "storeKey": "must-not-project"
+                    }],
+                    "truncated": false
+                }
+            }),
         );
         assert_contract(
             EVIDENCE_SCHEMA,
@@ -1815,8 +1934,9 @@ mod tests {
             test_handlers(),
         )
         .await;
-        assert_contract(
+        assert_response_contract(
             RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
             serde_json::to_value(response).expect("serialize live response"),
         );
 
@@ -1829,8 +1949,9 @@ mod tests {
             test_handlers(),
         )
         .await;
-        assert_contract(
+        assert_response_contract(
             RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
             serde_json::to_value(unauthorized).expect("serialize rejected response"),
         );
 
@@ -1879,8 +2000,9 @@ mod tests {
             },
         )
         .await;
-        assert_contract(
+        assert_response_contract(
             RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
             serde_json::to_value(rejected).expect("serialize policy-rejected response"),
         );
     }

@@ -8,7 +8,9 @@ define the authenticated named-pipe protocol used by the local service and its
 thin clients. `evidence-summary.schema.json` defines the bounded redacted
 Chronos projection returned by that protocol. These contracts do not authorize
 effects: the service evaluates the corresponding PX procedure, writes
-state/evidence, and returns the resulting projection.
+state/evidence, and returns the resulting projection. Request parameters are
+typed per method; response schemas constrain the transport shape and redacted
+projection without duplicating PX decision policy.
 
 Contract changes require an ADR, compatibility classification, schema tests,
 and a pre-release client conformance run. The fixtures in `fixtures/` are

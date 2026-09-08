@@ -26,5 +26,102 @@
     },
     "authorization": { "type": "string", "minLength": 32 },
     "params": { "type": ["object", "null"] }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "method": { "const": "service.health" } } },
+      "then": { "properties": { "params": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "evidence.list" } } },
+      "then": { "properties": { "params": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "configuration.admit" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["revisionId", "sourceDigest"],
+            "properties": {
+              "revisionId": { "type": "string" },
+              "sourceDigest": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "configuration.validate" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["revisionId", "document"],
+            "properties": {
+              "revisionId": { "type": "string" },
+              "document": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "inventory.observe" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["observationId", "sourceDigest", "document"],
+            "properties": {
+              "observationId": { "type": "string" },
+              "sourceDigest": { "type": "string" },
+              "document": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "compliance.request" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requestId", "revisionId"],
+            "properties": {
+              "requestId": { "type": "string" },
+              "revisionId": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "compliance.observe" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["observationId", "requestId", "document"],
+            "properties": {
+              "observationId": { "type": "string" },
+              "requestId": { "type": "string" },
+              "document": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
