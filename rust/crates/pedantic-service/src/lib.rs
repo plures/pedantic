@@ -1462,9 +1462,9 @@ where
 }
 
 pub fn validate_token(token: &str) -> Result<(), ServiceErrorKind> {
-    if token.len() < 32 {
+    if token.chars().count() < 32 {
         return Err(ServiceErrorKind::InvalidRequest(
-            "PEDANTIC_LOCAL_TOKEN must contain at least 32 bytes.".into(),
+            "PEDANTIC_LOCAL_TOKEN must contain at least 32 characters.".into(),
         ));
     }
     Ok(())
@@ -1717,6 +1717,12 @@ mod tests {
             let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
             panic!("contract validation failed: {messages:?}");
         }
+    }
+
+    #[test]
+    fn token_length_matches_schema_character_rule() {
+        assert!(validate_token(&"é".repeat(32)).is_ok());
+        assert!(validate_token(&"é".repeat(31)).is_err());
     }
 
     fn test_handlers() -> RequestHandlers<
