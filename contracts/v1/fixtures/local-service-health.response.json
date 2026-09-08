@@ -1,0 +1,10 @@
+{
+  "id": "health-1",
+  "ok": true,
+  "result": {
+    "profileId": "default",
+    "service": "pedantic-service",
+    "version": "0.1.0",
+    "chronosEntries": 1
+  }
+}

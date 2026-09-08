@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/local-service-request.schema.json",
+  "title": "Pedantic local service request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "method", "profileId", "authorization"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "method": {
+      "enum": [
+        "service.health",
+        "evidence.list",
+        "configuration.admit",
+        "configuration.validate",
+        "inventory.observe",
+        "compliance.request",
+        "compliance.observe"
+      ]
+    },
+    "profileId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]*$"
+    },
+    "authorization": { "type": "string", "minLength": 32 },
+    "params": { "type": ["object", "null"] }
+  }
+}

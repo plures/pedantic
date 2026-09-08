@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/local-service-response.schema.json",
+  "title": "Pedantic local service response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "ok"],
+  "properties": {
+    "id": { "type": ["string", "null"] },
+    "ok": { "type": "boolean" },
+    "result": {},
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_request",
+            "unauthorized",
+            "method_not_found",
+            "configuration_rejected",
+            "px_evaluation_failed",
+            "validation_failed",
+            "inventory_rejected",
+            "inventory_observation_failed",
+            "compliance_rejected",
+            "compliance_failed",
+            "compliance_observation_failed"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": { "ok": { "const": true } },
+      "required": ["result"],
+      "not": { "required": ["error"] }
+    },
+    {
+      "properties": { "ok": { "const": false } },
+      "required": ["error"]
+    }
+  ]
+}
