@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/evidence-summary.schema.json",
+  "title": "Pedantic redacted evidence summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "timestamp", "actor", "action", "level"],
+  "properties": {
+    "eventId": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "actor": { "type": "string", "minLength": 1 },
+    "action": { "type": "string", "minLength": 1 },
+    "level": { "type": "string", "minLength": 1 }
+  }
+}

@@ -1462,9 +1462,9 @@ where
 }
 
 pub fn validate_token(token: &str) -> Result<(), ServiceErrorKind> {
-    if token.len() < 32 {
+    if token.chars().count() < 32 {
         return Err(ServiceErrorKind::InvalidRequest(
-            "PEDANTIC_LOCAL_TOKEN must contain at least 32 bytes.".into(),
+            "PEDANTIC_LOCAL_TOKEN must contain at least 32 characters.".into(),
         ));
     }
     Ok(())
@@ -1705,6 +1705,106 @@ fn parse_current_user_sid(output: &str) -> Result<String, ServiceErrorKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jsonschema::{Draft, JSONSchema, SchemaResolver, SchemaResolverError};
+    use std::sync::Arc;
+    use url::Url;
+
+    struct ContractResolver {
+        evidence_schema: Arc<serde_json::Value>,
+    }
+
+    impl SchemaResolver for ContractResolver {
+        fn resolve(
+            &self,
+            _root_schema: &serde_json::Value,
+            url: &Url,
+            _original_reference: &str,
+        ) -> Result<Arc<serde_json::Value>, SchemaResolverError> {
+            if url.as_str()
+                == "https://schemas.pedantic.dev/contracts/v1/evidence-summary.schema.json"
+            {
+                Ok(Arc::clone(&self.evidence_schema))
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("unsupported local contract reference: {url}"),
+                )
+                .into())
+            }
+        }
+    }
+
+    fn assert_contract(schema_source: &str, instance: serde_json::Value) {
+        let schema = serde_json::from_str(schema_source).expect("parse JSON Schema");
+        let validator = JSONSchema::options()
+            .with_draft(Draft::Draft7)
+            .compile(&schema)
+            .expect("compile JSON Schema");
+        if let Err(errors) = validator.validate(&instance) {
+            let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+            panic!("contract validation failed: {messages:?}");
+        }
+    }
+
+    fn assert_contract_rejects(schema_source: &str, instance: serde_json::Value) {
+        let schema = serde_json::from_str(schema_source).expect("parse JSON Schema");
+        let validator = JSONSchema::options()
+            .with_draft(Draft::Draft7)
+            .compile(&schema)
+            .expect("compile JSON Schema");
+        assert!(
+            !validator.is_valid(&instance),
+            "contract unexpectedly accepted {instance}"
+        );
+    }
+
+    fn assert_response_contract(
+        schema_source: &str,
+        evidence_schema_source: &str,
+        instance: serde_json::Value,
+    ) {
+        let schema = serde_json::from_str(schema_source).expect("parse response JSON Schema");
+        let evidence_schema =
+            serde_json::from_str(evidence_schema_source).expect("parse evidence JSON Schema");
+        let validator = JSONSchema::options()
+            .with_draft(Draft::Draft7)
+            .with_resolver(ContractResolver {
+                evidence_schema: Arc::new(evidence_schema),
+            })
+            .compile(&schema)
+            .expect("compile response JSON Schema");
+        if let Err(errors) = validator.validate(&instance) {
+            let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+            panic!("response contract validation failed: {messages:?}");
+        }
+    }
+
+    fn assert_response_contract_rejects(
+        schema_source: &str,
+        evidence_schema_source: &str,
+        instance: serde_json::Value,
+    ) {
+        let schema = serde_json::from_str(schema_source).expect("parse response JSON Schema");
+        let evidence_schema =
+            serde_json::from_str(evidence_schema_source).expect("parse evidence JSON Schema");
+        let validator = JSONSchema::options()
+            .with_draft(Draft::Draft7)
+            .with_resolver(ContractResolver {
+                evidence_schema: Arc::new(evidence_schema),
+            })
+            .compile(&schema)
+            .expect("compile response JSON Schema");
+        assert!(
+            !validator.is_valid(&instance),
+            "response contract unexpectedly accepted {instance}"
+        );
+    }
+
+    #[test]
+    fn token_length_matches_schema_character_rule() {
+        assert!(validate_token(&"é".repeat(32)).is_ok());
+        assert!(validate_token(&"é".repeat(31)).is_err());
+    }
 
     fn test_handlers() -> RequestHandlers<
         impl FnOnce() -> EvidencePage,
@@ -1745,6 +1845,166 @@ mod tests {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
         }
+    }
+
+    #[tokio::test]
+    async fn local_service_v1_contracts_validate_fixtures_and_live_responses() {
+        const REQUEST_SCHEMA: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/local-service-request.schema.json"
+        ));
+        const RESPONSE_SCHEMA: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/local-service-response.schema.json"
+        ));
+        const EVIDENCE_SCHEMA: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/evidence-summary.schema.json"
+        ));
+        const REQUEST_FIXTURE: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/fixtures/local-service-health.request.json"
+        ));
+        const RESPONSE_FIXTURE: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/fixtures/local-service-health.response.json"
+        ));
+        const EVIDENCE_FIXTURE: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/fixtures/evidence-summary.json"
+        ));
+
+        assert_contract(
+            REQUEST_SCHEMA,
+            serde_json::from_str(REQUEST_FIXTURE).expect("parse request fixture"),
+        );
+        assert_contract_rejects(
+            REQUEST_SCHEMA,
+            serde_json::json!({
+                "id": "admission-missing-params",
+                "method": "configuration.admit",
+                "profileId": "default",
+                "authorization": "0123456789abcdef0123456789abcdef"
+            }),
+        );
+        assert_response_contract(
+            RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
+            serde_json::from_str(RESPONSE_FIXTURE).expect("parse response fixture"),
+        );
+        assert_response_contract_rejects(
+            RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
+            serde_json::json!({
+                "id": "health-invalid-result",
+                "ok": true,
+                "result": null
+            }),
+        );
+        assert_response_contract_rejects(
+            RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
+            serde_json::json!({
+                "id": "evidence-invalid-entry",
+                "ok": true,
+                "result": {
+                    "entries": [{
+                        "eventId": "chronos-1",
+                        "timestamp": 1750000000,
+                        "actor": "pedantic-service",
+                        "action": "create",
+                        "level": "info",
+                        "storeKey": "must-not-project"
+                    }],
+                    "truncated": false
+                }
+            }),
+        );
+        assert_contract(
+            EVIDENCE_SCHEMA,
+            serde_json::from_str(EVIDENCE_FIXTURE).expect("parse evidence fixture"),
+        );
+
+        let response = handle_request(
+            REQUEST_FIXTURE,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            1,
+            test_handlers(),
+        )
+        .await;
+        assert_response_contract(
+            RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
+            serde_json::to_value(response).expect("serialize live response"),
+        );
+
+        let unauthorized = handle_request(
+            REQUEST_FIXTURE,
+            "default",
+            "fedcba9876543210fedcba9876543210",
+            "0.1.0",
+            0,
+            test_handlers(),
+        )
+        .await;
+        assert_response_contract(
+            RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
+            serde_json::to_value(unauthorized).expect("serialize rejected response"),
+        );
+
+        let rejected_request = serde_json::json!({
+            "id": "admission-1",
+            "method": "configuration.admit",
+            "profileId": "default",
+            "authorization": "0123456789abcdef0123456789abcdef",
+            "params": {
+                "revisionId": "revision-1",
+                "sourceDigest": "digest-1"
+            }
+        })
+        .to_string();
+        let rejected = handle_request(
+            &rejected_request,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            1,
+            RequestHandlers {
+                evidence: || EvidencePage {
+                    entries: Vec::new(),
+                    truncated: false,
+                },
+                admission: |_| {
+                    std::future::ready(Ok(ConfigurationAdmission {
+                        revision_id: "revision-1".into(),
+                        decision: "rejected".into(),
+                        constraint_id: "configuration_requires_source_digest".into(),
+                        reason: "Source digest is required.".into(),
+                    }))
+                },
+                validation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                inventory: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                compliance: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                observation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+            },
+        )
+        .await;
+        assert_response_contract(
+            RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
+            serde_json::to_value(rejected).expect("serialize policy-rejected response"),
+        );
     }
 
     #[tokio::test]

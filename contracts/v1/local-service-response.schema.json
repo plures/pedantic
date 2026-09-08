@@ -1,0 +1,148 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/local-service-response.schema.json",
+  "title": "Pedantic local service response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "ok"],
+  "properties": {
+    "id": { "type": ["string", "null"] },
+    "ok": { "type": "boolean" },
+    "result": {
+      "anyOf": [
+        { "$ref": "#/definitions/healthResult" },
+        { "$ref": "#/definitions/evidencePage" },
+        { "$ref": "#/definitions/configurationDecision" },
+        { "$ref": "#/definitions/inventoryObservation" },
+        { "$ref": "#/definitions/complianceDecision" },
+        { "$ref": "#/definitions/complianceObservation" }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_request",
+            "unauthorized",
+            "method_not_found",
+            "configuration_rejected",
+            "px_evaluation_failed",
+            "validation_failed",
+            "inventory_rejected",
+            "inventory_observation_failed",
+            "compliance_rejected",
+            "compliance_failed",
+            "compliance_observation_failed"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "definitions": {
+    "healthResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profileId", "service", "version", "chronosEntries"],
+      "properties": {
+        "profileId": { "type": "string" },
+        "service": { "const": "pedantic-service" },
+        "version": { "type": "string" },
+        "chronosEntries": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "evidencePage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entries", "truncated"],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "https://schemas.pedantic.dev/contracts/v1/evidence-summary.schema.json"
+          }
+        },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "configurationDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revisionId", "decision", "constraintId", "reason"],
+      "properties": {
+        "revisionId": { "type": "string" },
+        "decision": { "type": "string" },
+        "constraintId": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "inventoryObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observationId", "decision", "constraintId", "hostCount", "hosts", "reason"],
+      "properties": {
+        "observationId": { "type": "string" },
+        "decision": { "type": "string" },
+        "constraintId": { "type": "string" },
+        "hostCount": { "type": "integer", "minimum": 0 },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["hostname", "os", "connection"],
+            "properties": {
+              "hostname": { "type": "string" },
+              "os": { "type": "string" },
+              "connection": { "type": "string" }
+            }
+          }
+        },
+        "reason": { "type": "string" }
+      }
+    },
+    "complianceDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "revisionId", "decision", "constraintId", "reason"],
+      "properties": {
+        "requestId": { "type": "string" },
+        "revisionId": { "type": "string" },
+        "decision": { "type": "string" },
+        "constraintId": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "complianceObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observationId", "requestId", "revisionId", "decision", "constraintId", "resourceCount", "compliantResourceCount", "driftedResourceCount", "reason"],
+      "properties": {
+        "observationId": { "type": "string" },
+        "requestId": { "type": "string" },
+        "revisionId": { "type": "string" },
+        "decision": { "type": "string" },
+        "constraintId": { "type": "string" },
+        "resourceCount": { "type": "integer", "minimum": 0 },
+        "compliantResourceCount": { "type": "integer", "minimum": 0 },
+        "driftedResourceCount": { "type": "integer", "minimum": 0 },
+        "reason": { "type": "string" }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": { "ok": { "const": true } },
+      "required": ["result"],
+      "not": { "required": ["error"] }
+    },
+    {
+      "properties": { "ok": { "const": false } },
+      "required": ["error"]
+    }
+  ]
+}

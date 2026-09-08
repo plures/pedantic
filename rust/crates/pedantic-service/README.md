@@ -55,7 +55,7 @@ equivalent task-level evidence.
 
 ```powershell
 Set-Location rust
-$env:PEDANTIC_LOCAL_TOKEN = "replace-with-a-random-secret-of-at-least-32-bytes"
+$env:PEDANTIC_LOCAL_TOKEN = "replace-with-a-random-secret-of-at-least-32-characters"
 cargo run -p pedantic-service -- --profile default
 ```
 

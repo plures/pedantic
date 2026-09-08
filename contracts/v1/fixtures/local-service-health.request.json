@@ -1,0 +1,7 @@
+{
+  "id": "health-1",
+  "method": "service.health",
+  "profileId": "default",
+  "authorization": "0123456789abcdef0123456789abcdef",
+  "params": null
+}
