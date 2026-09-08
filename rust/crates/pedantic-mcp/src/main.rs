@@ -104,7 +104,10 @@ fn service_result(response: LocalServiceResponse) -> Result<CallToolResult, McpE
             .unwrap_or_else(|| "Pedantic service rejected the request.".into());
         return Err(McpError::internal_error(error, None));
     }
-    let projection = serde_json::to_string_pretty(&response)
+    let projection = response.result.ok_or_else(|| {
+        McpError::internal_error("Pedantic service returned no projection.", None)
+    })?;
+    let projection = serde_json::to_string_pretty(&projection)
         .map_err(|error| McpError::internal_error(error.to_string(), None))?;
     Ok(CallToolResult::success(vec![Content::text(projection)]))
 }
