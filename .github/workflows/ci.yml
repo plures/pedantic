@@ -75,6 +75,17 @@ jobs:
         run: |
           ./tests/dsc-v3-compatibility.ps1
 
+      - name: Checkout praxis-lang (canonical PX parser)
+        uses: actions/checkout@v7
+        with:
+          repository: plures/praxis-lang
+          ref: v0.1.0
+          path: praxis-lang
+
+      - name: Validate PX procedures with the canonical parser
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File ./scripts/Test-PxProcedures.ps1 -SourceRoot ./praxis-lang
       - name: Test Rust workspace and MCP server
         shell: pwsh
         run: |
