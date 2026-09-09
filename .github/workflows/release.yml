@@ -19,8 +19,10 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: write
   packages: write
   id-token: write
+  actions: write
 
 jobs:
   release:
@@ -29,3 +31,28 @@ jobs:
       bump: ${{ inputs.bump || '' }}
       target_version: ${{ inputs.target_version || '' }}
     secrets: inherit
+
+  trigger-installers:
+    name: Trigger installers workflow
+    needs: release
+    if: ${{ needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve latest published release tag
+        id: latest_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag_name="$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+          if [[ -z "${tag_name}" || "${tag_name}" == "null" ]]; then
+            echo "No published release found; skipping installer dispatch."
+            exit 0
+          fi
+          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch installers workflow
+        if: ${{ steps.latest_release.outputs.tag_name != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run installers.yml --ref main -f tag_name=${{ steps.latest_release.outputs.tag_name }}
