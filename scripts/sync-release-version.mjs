@@ -1,9 +1,7 @@
 #!/usr/bin/env node
-'use strict';
-
 /** Synchronize Cargo package metadata for a release computed by the shared workflow. */
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
 
 const version = process.argv[2] || process.env.RELEASE_VERSION;
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version || '')) {
