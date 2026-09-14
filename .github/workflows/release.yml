@@ -44,7 +44,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag_name="$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+          tag_name="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName')"
           if [[ -z "${tag_name}" || "${tag_name}" == "null" ]]; then
             echo "No published release found; skipping installer dispatch."
             exit 0
@@ -55,4 +55,4 @@ jobs:
         if: ${{ steps.latest_release.outputs.tag_name != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run installers.yml --ref main -f tag_name=${{ steps.latest_release.outputs.tag_name }}
+        run: gh workflow run installers.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag_name=${{ steps.latest_release.outputs.tag_name }}
