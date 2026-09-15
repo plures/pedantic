@@ -52,9 +52,9 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Build CLI (release)
+      - name: Build CLI and local service (release)
         working-directory: rust
-        run: cargo build --release --package pedantic
+        run: cargo build --release --package pedantic --package pedantic-service
 
       - name: Install WiX v5
         shell: pwsh

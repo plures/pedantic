@@ -2,15 +2,28 @@
 
 **Modern DSC (Desired State Configuration) management toolkit**
 
-Pedantic is a PowerShell module and toolset for managing DSC resources and configurations across Windows, macOS, and Linux with PowerShell 7.2+. It provides a simplified interface for working with DSC v3, resource caching, remote execution, and dual DSL support for configuration authoring.
+Pedantic is a DSC authoring, validation, and configuration-management project
+being refactored around PX Lang decisions, a profile-scoped PluresDB service,
+and bounded DSC effects. The v0.6 release is a **pre-parity** release: its
+offline CLI is usable for parsing, structural validation, planning, and export;
+the Windows-local service supports admitted validation, inventory observation,
+read-only compliance observation, and redacted Chronos evidence. It does not
+yet provide service-backed remediation or remote deployment.
+
+The shipped PowerShell module is a legacy compatibility surface. It can apply a
+local configuration only when DSC is already installed, but its remote,
+automatic-bootstrap, and automatic-resource preparation paths are not
+supported in v0.6. Do not use those switches as an operational deployment
+contract. See [the parity recovery record](docs/REFACTOR-PARITY-RECOVERY.md)
+for the complete capability map and acceptance gates.
 
 ## Features
 
-The Pedantic PowerShell module (v0.9.0) provides:
+The legacy Pedantic PowerShell module currently provides:
 
-- **DSC Configuration Management** - Apply, test, validate, and export DSC configurations
-- **Resource Caching** - Automatic downloading and caching of DSC resources from PowerShell Gallery
-- **Remote Execution** - Secure remote DSC operations via SSH and WinRM
+- **Local DSC Compatibility** - Apply, test, validate, and export a local DSC configuration when DSC is already installed
+- **Resource Cache Utilities** - Cache-management commands retained for migration; they are not wired into the v0.6 apply path
+- **Remote Execution** - Not supported by the released compatibility apply path
 - **Dual DSL Support** - Work with both simplified YAML syntax and SudoLang configurations
 - **Built-in Resource Mapping** - Pre-configured mappings for 30+ classic DSC resources
 - **Ansible Integration** - DSC v3 adapter for Ansible modules (Pedantic.Ansible/Module)
@@ -60,17 +73,18 @@ Get-Content file.txt | Get-Tail -Count 5
 Initialize the DSC resource cache and ensure required resources are available:
 
 ```powershell
-# Initialize the installer cache
-Initialize-InstallerCache
+# Inspect the user-scoped cache without making a network request
+Get-DscInstallerCache
 
-# Get platform-specific DSC version
-Get-LatestDscVersion -Platform "Windows"
+# Explicitly refresh the Windows DSC installer cache (network access)
+Update-DscInstallerCache -Platform Windows
 
-# Download a specific DSC resource
-Download-DscResource -ResourceType "Microsoft.Windows/Registry" -Version "1.0.0" -Source "PowerShellGallery"
+# Explicitly cache a DSC resource (network access)
+Update-DscResourceCache -SpecificResource "Microsoft.Windows/Registry"
 
-# Ensure multiple resources are available (downloads if needed)
-Ensure-DscResourcesAvailable -ResourceTypes @("Microsoft.Windows/Registry", "Microsoft.Windows/File") -Force
+# Check that required resources are already cached. Add -Force only when an
+# online download is intended.
+Ensure-DscResourcesAvailable -ResourceTypes @("Microsoft.Windows/Registry", "Microsoft.Windows/File")
 ```
 
 #### Example 3: Install Go (Golang) with DSC v3
@@ -116,13 +130,12 @@ Import-Module Pedantic
 Set-DscConfiguration -DscPath ./go-install.dsc.yaml -WhatIf:$false
 ```
 
-4. **Remote execution** (optional):
+4. **Remote execution:** not available in v0.6. Use this example only after the
+   service-backed remote remediation capability has passed its task suite.
 
 ```powershell
-Set-DscConfiguration -DscPath ./go-install.dsc.yaml `
-  -ComputerName 'server01' `
-  -AutoInstallDscResources `
-  -ForceUpdateCache
+# Planned, not currently supported:
+# Set-DscConfiguration -DscPath ./go-install.dsc.yaml -ComputerName 'server01'
 ```
 
 **Notes:**
@@ -235,11 +248,11 @@ Get-Help Set-DscConfiguration -Full
 Get-Command -Module Pedantic
 ```
 
-### Key Functions
+### Key Functions and compatibility status
 
-- **Configuration Management**: `Set-DscConfiguration`, `Test-DscConfiguration`, `Validate-DscConfiguration`, `Export-DscConfiguration`
-- **Resource Management**: `Update-DscResourceCache`, `Ensure-DscResourcesAvailable`, `Get-DscResourcePath`
-- **Remote Operations**: `New-SecureRemoteSession`, `Repair-DscInstallation`
+- **Configuration Management**: local-only compatibility `Set-DscConfiguration`, `Test-DscConfiguration`, `Validate-DscConfiguration`, `Export-DscConfiguration`
+- **Resource Management**: `Update-DscResourceCache`, `Ensure-DscResourcesAvailable`, `Get-DscResourcePath` are retained migration utilities
+- **Remote Operations**: `New-SecureRemoteSession`, `Repair-DscInstallation` are not wired into `Set-DscConfiguration` and are not a supported deployment route
 - **Utilities**: `Get-Head`, `Get-Tail`, `Invoke-DscHelper`
 
 ## Related Projects

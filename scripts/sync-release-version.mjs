@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Synchronize Cargo package metadata for a release computed by the shared workflow. */
+/** Synchronize shipped package metadata for a release computed by the shared workflow. */
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -91,3 +91,21 @@ for (const [lock, names] of cargoPackages) {
   if (missing.length) throw new Error(path.relative(root, lock) + ': no local package record for ' + missing.join(', ') + '.');
   writeIfChanged(lock, before, blocks.join(''));
 }
+
+// Pedantic's compatibility module ships in the same release artifacts as the
+// Rust CLI. Keep its manifest identity aligned with the release tag so a
+// package manager and PowerShell do not report different installed versions.
+const powerShellManifest = path.join(root, 'Pedantic.psd1');
+if (!fs.existsSync(powerShellManifest)) {
+  throw new Error('Pedantic.psd1 is required for a Pedantic release.');
+}
+const manifestBefore = fs.readFileSync(powerShellManifest, 'utf8');
+const manifestVersion = /^\s*ModuleVersion\s*=\s*'[^']+'\s*$/m.exec(manifestBefore);
+if (!manifestVersion) {
+  throw new Error('Pedantic.psd1 has no single-quoted ModuleVersion entry.');
+}
+const manifestAfter = manifestBefore.replace(
+  manifestVersion[0],
+  manifestVersion[0].replace(/'[^']+'/, "'" + version + "'"),
+);
+writeIfChanged(powerShellManifest, manifestBefore, manifestAfter);
