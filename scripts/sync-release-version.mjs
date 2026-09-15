@@ -120,11 +120,17 @@ if (prereleaseLabel && !prereleaseTag) {
   throw new Error('Prerelease label ' + prereleaseLabel + ' has no alphanumeric characters for PSData.Prerelease.');
 }
 
-const existingPrerelease = /[ \t]*Prerelease\s*=\s*'[^']*'[ \t]*;?/.exec(manifestAfter);
+const prereleaseLine = /^[ \t]*Prerelease\s*=\s*'[^']*'[ \t]*;?[ \t]*\r?\n/m;
+const prereleaseInline = /(^|[\s;{])Prerelease\s*=\s*'[^']*'[ \t]*;?/m;
+const lineMatch = prereleaseLine.exec(manifestAfter);
+const existingPrerelease = lineMatch || prereleaseInline.exec(manifestAfter);
 if (prereleaseTag) {
   const entry = "Prerelease = '" + prereleaseTag + "'";
   if (existingPrerelease) {
-    manifestAfter = manifestAfter.replace(/Prerelease\s*=\s*'[^']*'/, entry);
+    manifestAfter = manifestAfter.replace(
+      existingPrerelease[0],
+      existingPrerelease[0].replace(/Prerelease\s*=\s*'[^']*'/, entry),
+    );
   } else {
     const psData = /PSData\s*=\s*@\{/.exec(manifestAfter);
     if (!psData) {
@@ -134,7 +140,7 @@ if (prereleaseTag) {
     manifestAfter = manifestAfter.slice(0, insertAt) + ' ' + entry + ';' + manifestAfter.slice(insertAt);
   }
 } else if (existingPrerelease) {
-  manifestAfter = manifestAfter.replace(existingPrerelease[0], '');
+  manifestAfter = manifestAfter.replace(existingPrerelease[0], lineMatch ? '' : existingPrerelease[1]);
 }
 
 writeIfChanged(powerShellManifest, manifestBefore, manifestAfter);
