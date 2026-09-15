@@ -5,7 +5,7 @@
   Author = 'Pedantic Project'
   CompanyName = 'Pedantic'
   Copyright = '(c) Pedantic. All rights reserved.'
-  Description = 'Pedantic DSC Helper Module. Provides user-friendly DSC v3 operations with parameter autocomplete support and automatic remote execution.'
+  Description = 'Pedantic DSC Helper Module. Provides user-friendly local DSC v3 operations with parameter autocomplete support. Requires DSC to be installed already; remote execution is not supported in this release.'
   PowerShellVersion = '7.2'
   CompatiblePSEditions = @('Core')
   # Export explicit public surface for performance and clarity
