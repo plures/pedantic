@@ -37,8 +37,8 @@ Describe 'Pedantic release parity' {
       Get-DscInstallerPath -Quiet | Out-Null
       Get-DscResourcePath -ResourceType 'Microsoft.Windows/File' -Quiet | Out-Null
 
-      Assert-MockCalled Update-DscInstallerCacheInternal -Exactly 0
-      Assert-MockCalled Update-DscResourceCacheInternal -Exactly 0
+      Should -Invoke Update-DscInstallerCacheInternal -Exactly -Times 0
+      Should -Invoke Update-DscResourceCacheInternal -Exactly -Times 0
     }
   }
 
@@ -50,8 +50,8 @@ Describe 'Pedantic release parity' {
       Update-DscInstallerCache -WhatIf -Quiet | Out-Null
       Update-DscResourceCache -WhatIf -Quiet | Out-Null
 
-      Assert-MockCalled Update-DscInstallerCacheInternal -Exactly 0
-      Assert-MockCalled Update-DscResourceCacheInternal -Exactly 0
+      Should -Invoke Update-DscInstallerCacheInternal -Exactly -Times 0
+      Should -Invoke Update-DscResourceCacheInternal -Exactly -Times 0
     }
   }
 }
