@@ -1,5 +1,6 @@
 ## [0.6.0] — 2026-09-15
 
+- fix(ci): scope installer dispatch to the release repo (#146) (eacd708)
 - deps(npm)(deps-dev): bump the dev-dependencies group (#145) (793ad34)
 - fix(ci): add release version synchronization (#143) (4d4dc88)
 - deps(npm)(deps-dev): bump js-yaml from 4.3.1 to 4.3.2 in /extension (#142) (666c365)
