@@ -1,25 +1,29 @@
 # Pedantic DSC Helper Module
 # Provides user-friendly DSC v3 operations with parameter autocomplete support
-# Retains legacy local compatibility operations while service-backed remote
-# execution is recovered through the PX capability boundary.
+# Retains legacy local compatibility operations while service-backed remote
+# execution is recovered through the PX capability boundary.
 # PowerShell 7 compatible version
 
-# Module configuration. Caches are user-owned runtime data, never mutable
-# package contents. This keeps installed modules usable without elevation and
-# avoids mixing release files with downloaded artifacts.
-$cacheRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
-if ([string]::IsNullOrWhiteSpace($cacheRoot)) {
-    $cacheRoot = Join-Path $PSScriptRoot '.cache'
-}
-$cacheRoot = Join-Path $cacheRoot 'Pedantic'
-
-$script:ModuleConfig = @{
-    InstallerCachePath  = Join-Path $cacheRoot "Installers"
-    InstallerCacheFile  = Join-Path $cacheRoot "Installers\installer-cache.json"
-    ResourceCachePath   = Join-Path $cacheRoot "Resources"
-    ResourceCacheFile   = Join-Path $cacheRoot "Resources\resource-cache.json"
+# Module configuration. Caches are user-owned runtime data, never mutable
+# package contents. This keeps installed modules usable without elevation and
+# avoids mixing release files with downloaded artifacts.
+$cacheRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+if ([string]::IsNullOrWhiteSpace($cacheRoot)) {
+    $cacheRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    if ([string]::IsNullOrWhiteSpace($cacheRoot)) {
+        throw 'Unable to resolve a user-scoped cache directory.'
+    }
+    $cacheRoot = Join-Path $cacheRoot '.cache'
+}
+$cacheRoot = Join-Path $cacheRoot 'Pedantic'
+
+$script:ModuleConfig = @{
+    InstallerCachePath  = Join-Path $cacheRoot "Installers"
+    InstallerCacheFile  = Join-Path $cacheRoot "Installers\installer-cache.json"
+    ResourceCachePath   = Join-Path $cacheRoot "Resources"
+    ResourceCacheFile   = Join-Path $cacheRoot "Resources\resource-cache.json"
     UpdateCheckInterval = 1  # Days - check daily for updates
-    LastUpdateCheckFile = Join-Path $cacheRoot "Installers\last-update-check.txt"
+    LastUpdateCheckFile = Join-Path $cacheRoot "Installers\last-update-check.txt"
     MaxCachedVersions   = 3  # Maximum number of DSC versions to keep cached
     MaxCachedResources  = 50 # Maximum number of resource versions to keep cached
 }
@@ -801,7 +805,7 @@ function Download-DscInstaller {
 }
 
 # Update DSC installer cache (internal function)
-function Update-DscInstallerCacheInternal {
+function Update-DscInstallerCacheInternal {
     param([switch]$Force, [switch]$Quiet, [int]$MaxVersions = $script:ModuleConfig.MaxCachedVersions, [string[]]$Platforms = @("Windows"))
   
     if (-not $Force -and -not (Test-UpdateCheckNeeded)) {
@@ -864,55 +868,55 @@ function Update-DscInstallerCacheInternal {
     if (-not $Quiet) {
         Write-Host "DSC installer cache updated successfully" -ForegroundColor Green
     }
-}
+}
 
-function Get-DscInstallerCache {
-    [CmdletBinding()]
-    param()
-
-    return Get-InstallerCache
-}
-
-function Update-DscInstallerCache {
-    [CmdletBinding(SupportsShouldProcess)]
-    param(
-        [switch]$Force,
-        [switch]$Quiet,
-        [ValidateRange(1, 20)][int]$MaxVersions = $script:ModuleConfig.MaxCachedVersions,
-        [ValidateSet('Windows', 'Linux', 'macOS')][string[]]$Platform = @('Windows')
-    )
-
-    if ($PSCmdlet.ShouldProcess($script:ModuleConfig.InstallerCachePath, 'Refresh DSC installer cache')) {
-        Update-DscInstallerCacheInternal -Force:$Force -Quiet:$Quiet -MaxVersions $MaxVersions -Platforms $Platform
-    }
-    return Get-InstallerCache
-}
-
-function Remove-DscInstallerCache {
-    [CmdletBinding(SupportsShouldProcess)]
-    param(
-        [string]$Version,
-        [switch]$RemoveArtifacts
-    )
-
-    $cache = Get-InstallerCache
-    $keys = @($cache.AvailableVersions.PSObject.Properties.Name | Where-Object {
-        [string]::IsNullOrWhiteSpace($Version) -or $_ -like "$Version-*"
-    })
-    foreach ($key in $keys) {
-        $entry = $cache.AvailableVersions.PSObject.Properties[$key].Value
-        if ($RemoveArtifacts -and $entry.LocalPath -and (Test-Path -LiteralPath $entry.LocalPath)) {
-            if ($PSCmdlet.ShouldProcess($entry.LocalPath, 'Remove cached DSC installer artifact')) {
-                Remove-Item -LiteralPath $entry.LocalPath -Force
-            }
-        }
-        $cache.AvailableVersions.PSObject.Properties.Remove($key)
-    }
-    if ([string]::IsNullOrWhiteSpace($Version)) { $cache.CurrentVersion = $null }
-    Update-InstallerCache -CacheData $cache
-    return Get-InstallerCache
-}
-
+function Get-DscInstallerCache {
+    [CmdletBinding()]
+    param()
+
+    return Get-InstallerCache
+}
+
+function Update-DscInstallerCache {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [switch]$Force,
+        [switch]$Quiet,
+        [ValidateRange(1, 20)][int]$MaxVersions = $script:ModuleConfig.MaxCachedVersions,
+        [ValidateSet('Windows', 'Linux', 'macOS')][string[]]$Platform = @('Windows')
+    )
+
+    if ($PSCmdlet.ShouldProcess($script:ModuleConfig.InstallerCachePath, 'Refresh DSC installer cache')) {
+        Update-DscInstallerCacheInternal -Force:$Force -Quiet:$Quiet -MaxVersions $MaxVersions -Platforms $Platform
+    }
+    return Get-InstallerCache
+}
+
+function Remove-DscInstallerCache {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [string]$Version,
+        [switch]$RemoveArtifacts
+    )
+
+    $cache = Get-InstallerCache
+    $keys = @($cache.AvailableVersions.PSObject.Properties.Name | Where-Object {
+        [string]::IsNullOrWhiteSpace($Version) -or $_ -like "$Version-*"
+    })
+    foreach ($key in $keys) {
+        $entry = $cache.AvailableVersions.PSObject.Properties[$key].Value
+        if ($RemoveArtifacts -and $entry.LocalPath -and (Test-Path -LiteralPath $entry.LocalPath)) {
+            if ($PSCmdlet.ShouldProcess($entry.LocalPath, 'Remove cached DSC installer artifact')) {
+                Remove-Item -LiteralPath $entry.LocalPath -Force
+            }
+        }
+        $cache.AvailableVersions.PSObject.Properties.Remove($key)
+    }
+    if ([string]::IsNullOrWhiteSpace($Version)) { $cache.CurrentVersion = $null }
+    Update-InstallerCache -CacheData $cache
+    return Get-InstallerCache
+}
+
 # Manage cached version limits
 function Manage-CachedVersions {
     param(
@@ -980,14 +984,14 @@ function Manage-CachedVersions {
 }
 
 # Get best available DSC installer path
-function Get-DscInstallerPath {
-    param([string]$PreferredVersion, [string]$TargetPlatform = "Windows", [switch]$Refresh, [switch]$Quiet)
-
-    # Network access is explicit. Lookup is offline-first so callers can use
-    # a pre-staged cache in disconnected environments.
-    if ($Refresh) {
-        Update-DscInstallerCacheInternal -Quiet:$Quiet -Platforms @($TargetPlatform)
-    }
+function Get-DscInstallerPath {
+    param([string]$PreferredVersion, [string]$TargetPlatform = "Windows", [switch]$Refresh, [switch]$Quiet)
+
+    # Network access is explicit. Lookup is offline-first so callers can use
+    # a pre-staged cache in disconnected environments.
+    if ($Refresh) {
+        Update-DscInstallerCacheInternal -Quiet:$Quiet -Platforms @($TargetPlatform)
+    }
   
     $cache = Get-InstallerCache
   
@@ -1484,7 +1488,7 @@ function Download-DscResource {
 }
 
 # Update DSC resource cache (internal function)
-function Update-DscResourceCacheInternal {
+function Update-DscResourceCacheInternal {
     param([switch]$Force, [switch]$Quiet, [int]$MaxResources = $script:ModuleConfig.MaxCachedResources, [string]$SpecificResource)
   
     # If specific resource is requested, try to download it directly
@@ -1857,54 +1861,54 @@ function Update-DscResourceCacheInternal {
         Write-Host "DSC resource cache updated successfully" -ForegroundColor Green
         Write-Host "Downloaded $downloadCount new resources, $errorCount errors encountered" -ForegroundColor Cyan
     }
-}
+}
 
-function Get-DscResourceCache {
-    [CmdletBinding()]
-    param()
-
-    return Get-ResourceCache
-}
-
-function Update-DscResourceCache {
-    [CmdletBinding(SupportsShouldProcess)]
-    param(
-        [switch]$Force,
-        [switch]$Quiet,
-        [ValidateRange(1, 500)][int]$MaxResources = $script:ModuleConfig.MaxCachedResources,
-        [string]$SpecificResource
-    )
-
-    if ($PSCmdlet.ShouldProcess($script:ModuleConfig.ResourceCachePath, 'Refresh DSC resource cache')) {
-        return Update-DscResourceCacheInternal -Force:$Force -Quiet:$Quiet -MaxResources $MaxResources -SpecificResource $SpecificResource
-    }
-    return $null
-}
-
-function Remove-DscResourceCache {
-    [CmdletBinding(SupportsShouldProcess)]
-    param(
-        [string]$ResourceType,
-        [switch]$RemoveArtifacts
-    )
-
-    $cache = Get-ResourceCache
-    $keys = @($cache.AvailableResources.PSObject.Properties.Name | Where-Object {
-        [string]::IsNullOrWhiteSpace($ResourceType) -or $_ -like "$ResourceType*"
-    })
-    foreach ($key in $keys) {
-        $entry = $cache.AvailableResources.PSObject.Properties[$key].Value
-        if ($RemoveArtifacts -and $entry.LocalPath -and (Test-Path -LiteralPath $entry.LocalPath)) {
-            if ($PSCmdlet.ShouldProcess($entry.LocalPath, 'Remove cached DSC resource artifact')) {
-                Remove-Item -LiteralPath $entry.LocalPath -Recurse -Force
-            }
-        }
-        $cache.AvailableResources.PSObject.Properties.Remove($key)
-    }
-    Update-ResourceCache -CacheData $cache
-    return Get-ResourceCache
-}
-
+function Get-DscResourceCache {
+    [CmdletBinding()]
+    param()
+
+    return Get-ResourceCache
+}
+
+function Update-DscResourceCache {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [switch]$Force,
+        [switch]$Quiet,
+        [ValidateRange(1, 500)][int]$MaxResources = $script:ModuleConfig.MaxCachedResources,
+        [string]$SpecificResource
+    )
+
+    if ($PSCmdlet.ShouldProcess($script:ModuleConfig.ResourceCachePath, 'Refresh DSC resource cache')) {
+        return Update-DscResourceCacheInternal -Force:$Force -Quiet:$Quiet -MaxResources $MaxResources -SpecificResource $SpecificResource
+    }
+    return $null
+}
+
+function Remove-DscResourceCache {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [string]$ResourceType,
+        [switch]$RemoveArtifacts
+    )
+
+    $cache = Get-ResourceCache
+    $keys = @($cache.AvailableResources.PSObject.Properties.Name | Where-Object {
+        [string]::IsNullOrWhiteSpace($ResourceType) -or $_ -like "$ResourceType*"
+    })
+    foreach ($key in $keys) {
+        $entry = $cache.AvailableResources.PSObject.Properties[$key].Value
+        if ($RemoveArtifacts -and $entry.LocalPath -and (Test-Path -LiteralPath $entry.LocalPath)) {
+            if ($PSCmdlet.ShouldProcess($entry.LocalPath, 'Remove cached DSC resource artifact')) {
+                Remove-Item -LiteralPath $entry.LocalPath -Recurse -Force
+            }
+        }
+        $cache.AvailableResources.PSObject.Properties.Remove($key)
+    }
+    Update-ResourceCache -CacheData $cache
+    return Get-ResourceCache
+}
+
 # Manage cached resource limits
 function Manage-CachedResources {
     param([object]$Cache, [int]$MaxResources = $script:ModuleConfig.MaxCachedResources, [switch]$Quiet)
@@ -1940,15 +1944,15 @@ function Manage-CachedResources {
 }
 
 # Get best available DSC resource path
-function Get-DscResourcePath {
-    param([string]$ResourceType, [string]$PreferredVersion, [switch]$Refresh, [switch]$Quiet)
-
-    # A lookup must not download a resource. Use Update-DscResourceCache for
-    # an explicit online refresh or Test-DscResourceAvailability -Force for
-    # the legacy opt-in compatibility behavior.
-    if ($Refresh) {
-        Update-DscResourceCacheInternal -Quiet:$Quiet
-    }
+function Get-DscResourcePath {
+    param([string]$ResourceType, [string]$PreferredVersion, [switch]$Refresh, [switch]$Quiet)
+
+    # A lookup must not download a resource. Use Update-DscResourceCache for
+    # an explicit online refresh or Test-DscResourceAvailability -Force for
+    # the legacy opt-in compatibility behavior.
+    if ($Refresh) {
+        Update-DscResourceCacheInternal -Quiet:$Quiet
+    }
   
     # Load cache directly to avoid function scope issues
     Initialize-ResourceCache
@@ -1981,7 +1985,7 @@ function Get-DscResourcePath {
             }
         }
     
-    }
+    }
   
     # Look for exact resource type match (support partial matches and return latest version)
     $matchingResources = $cache.AvailableResources.PSObject.Properties.Name | Where-Object { $_ -like "$ResourceType-*" -or $_ -eq $ResourceType -or $_ -like "$ResourceType*" }
@@ -2633,7 +2637,7 @@ try {
     # Initialize resource cache  
     Initialize-ResourceCache
     
-    Write-Verbose "DSC module caches initialized. Use Update-DscInstallerCache or Update-DscResourceCache for an explicit online refresh."
+    Write-Verbose "DSC module caches initialized. Use Update-DscInstallerCache or Update-DscResourceCache for an explicit online refresh."
 }
 catch {
     Write-Warning "Failed to initialize DSC module caches: $($_.Exception.Message)"
