@@ -44,14 +44,28 @@ function nearestCargoLock(manifest) {
 
 for (const manifest of walk(root, 'Cargo.toml')) {
   const before = fs.readFileSync(manifest, 'utf8');
-  const section = /^\[package\]\s*$([\s\S]*?)(?=^\[[^\]]+\]\s*$|(?![\s\S]))/m.exec(before);
-  if (!section) continue;
+  let after = before;
+  const workspaceSection = /^\[workspace\.package\]\s*$([\s\S]*?)(?=^\[[^\]]+\]\s*$|(?![\s\S]))/m.exec(after);
+  const workspaceVersion = workspaceSection && /^version\s*=\s*"[^"]+"\s*$/m.exec(workspaceSection[1]);
+  if (workspaceSection && workspaceVersion) {
+    const replacement = workspaceVersion[0].replace(/"[^"]+"/, '"' + version + '"');
+    after = after.slice(0, workspaceSection.index) + workspaceSection[0].replace(workspaceVersion[0], replacement) + after.slice(workspaceSection.index + workspaceSection[0].length);
+  }
+
+  const section = /^\[package\]\s*$([\s\S]*?)(?=^\[[^\]]+\]\s*$|(?![\s\S]))/m.exec(after);
+  if (!section) {
+    writeIfChanged(manifest, before, after);
+    continue;
+  }
   const name = /^name\s*=\s*"([^"]+)"\s*$/m.exec(section[1])?.[1];
   const packageVersion = /^version\s*=\s*"[^"]+"\s*$/m.exec(section[1]);
-  if (!name || !packageVersion) continue;
+  if (!name || !packageVersion) {
+    writeIfChanged(manifest, before, after);
+    continue;
+  }
 
   const replacement = packageVersion[0].replace(/"[^"]+"/, '"' + version + '"');
-  const after = before.slice(0, section.index) + section[0].replace(packageVersion[0], replacement) + before.slice(section.index + section[0].length);
+  after = after.slice(0, section.index) + section[0].replace(packageVersion[0], replacement) + after.slice(section.index + section[0].length);
   writeIfChanged(manifest, before, after);
 
   const lock = nearestCargoLock(manifest);
