@@ -174,6 +174,90 @@ pub struct ComplianceObservation {
     pub reason: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RemediationRequest {
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "revisionId")]
+    pub revision_id: String,
+    #[serde(rename = "observationId")]
+    pub observation_id: String,
+    #[serde(rename = "actorId")]
+    pub actor_id: String,
+    #[serde(rename = "idempotencyKey")]
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct RemediationDecision {
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "revisionId")]
+    pub revision_id: String,
+    #[serde(rename = "observationId")]
+    pub observation_id: String,
+    pub decision: String,
+    #[serde(rename = "constraintId")]
+    pub constraint_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemediationApprovalRequest {
+    #[serde(rename = "approvalId")]
+    pub approval_id: String,
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "actorId")]
+    pub actor_id: String,
+    pub approved: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct RemediationApproval {
+    #[serde(rename = "approvalId")]
+    pub approval_id: String,
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "authorizationId")]
+    pub authorization_id: Option<String>,
+    pub decision: String,
+    #[serde(rename = "constraintId")]
+    pub constraint_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemediationExecutionRequest {
+    #[serde(rename = "executionId")]
+    pub execution_id: String,
+    #[serde(rename = "authorizationId")]
+    pub authorization_id: String,
+    #[serde(rename = "idempotencyKey")]
+    pub idempotency_key: String,
+    pub document: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct RemediationExecution {
+    #[serde(rename = "executionId")]
+    pub execution_id: String,
+    #[serde(rename = "requestId")]
+    pub request_id: String,
+    #[serde(rename = "revisionId")]
+    pub revision_id: String,
+    pub decision: String,
+    #[serde(rename = "constraintId")]
+    pub constraint_id: String,
+    #[serde(rename = "resourceCount")]
+    pub resource_count: usize,
+    #[serde(rename = "compliantResourceCount")]
+    pub compliant_resource_count: usize,
+    #[serde(rename = "driftedResourceCount")]
+    pub drifted_resource_count: usize,
+    pub reason: String,
+}
+
 /// The local service is the sole owner of a profile's embedded PluresDB store.
 ///
 /// It owns authenticated transport, profile-local persistence, and Chronos
@@ -603,6 +687,298 @@ impl ServiceFoundation {
         Ok(observation)
     }
 
+    /// Records the PX admission decision for a requested local remediation.
+    /// This does not invoke DSC.
+    pub async fn request_remediation(
+        &self,
+        request: RemediationRequest,
+    ) -> Result<RemediationDecision, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let observation = self
+            ._store
+            .get(self.compliance_observation_key(&request.observation_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest(
+                    "Compliance observation was not recorded for this profile.".into(),
+                )
+            })?;
+        let variables = HashMap::from([
+            (
+                "remediation".to_owned(),
+                serde_json::json!({
+                    "revision_id": request.revision_id,
+                    "actor_id": request.actor_id,
+                    "idempotency_key": request.idempotency_key,
+                }),
+            ),
+            (
+                "observation".to_owned(),
+                serde_json::json!({
+                    "decision": observation.data["decision"],
+                    "revision_id": observation.data["revisionId"],
+                    "drifted_resource_count": observation.data["driftedResourceCount"],
+                }),
+            ),
+        ]);
+        let policy = first_configuration_rejection(
+            "remediation request",
+            [
+                "remediation_requires_drifted_observation",
+                "remediation_requires_matching_revision",
+                "remediation_requires_actor_and_idempotency_key",
+            ],
+            &variables,
+        )?;
+        let decision = RemediationDecision {
+            request_id: request.request_id,
+            revision_id: request.revision_id,
+            observation_id: request.observation_id,
+            decision: if policy.accepted {
+                "accepted".into()
+            } else {
+                "rejected".into()
+            },
+            constraint_id: policy.constraint_id,
+            reason: policy.reason,
+        };
+        self.record_remediation_request(&decision, &request.actor_id, &request.idempotency_key)?;
+        Ok(decision)
+    }
+
+    /// Converts an explicit human or agent approval into one bounded DSC-set
+    /// authorization. This does not invoke DSC.
+    pub async fn approve_remediation(
+        &self,
+        request: RemediationApprovalRequest,
+    ) -> Result<RemediationApproval, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let remediation = self
+            ._store
+            .get(self.remediation_request_key(&request.request_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest(
+                    "Remediation request was not recorded for this profile.".into(),
+                )
+            })?;
+        let revision_id = required_record_string(
+            &remediation.data,
+            "revisionId",
+            "Recorded remediation request is missing its configuration revision.",
+        )?;
+        let revision = self
+            ._store
+            .get(self.configuration_key(&revision_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::Foundation(
+                    "Recorded remediation request refers to a missing configuration revision."
+                        .into(),
+                )
+            })?;
+        let variables = HashMap::from([
+            (
+                "remediation".to_owned(),
+                serde_json::json!({ "decision": remediation.data["decision"] }),
+            ),
+            (
+                "approval".to_owned(),
+                serde_json::json!({
+                    "approval_id": request.approval_id,
+                    "actor_id": request.actor_id,
+                    "approved": request.approved,
+                }),
+            ),
+        ]);
+        let policy = first_configuration_rejection(
+            "remediation approval",
+            [
+                "remediation_approval_requires_accepted_request",
+                "remediation_approval_requires_explicit_approval",
+                "remediation_approval_requires_actor_and_identifier",
+            ],
+            &variables,
+        )?;
+        let accepted = policy.accepted;
+        let authorization_id = accepted.then(|| request.approval_id.clone());
+        let approval = RemediationApproval {
+            approval_id: request.approval_id,
+            request_id: request.request_id,
+            authorization_id: authorization_id.clone(),
+            decision: if accepted {
+                "accepted".into()
+            } else {
+                "rejected".into()
+            },
+            constraint_id: policy.constraint_id,
+            reason: policy.reason,
+        };
+        let source_digest = required_record_string(
+            &revision.data,
+            "sourceDigest",
+            "Recorded configuration revision is missing its source digest.",
+        )?;
+        let idempotency_key = required_record_string(
+            &remediation.data,
+            "idempotencyKey",
+            "Recorded remediation request is missing its idempotency key.",
+        )?;
+        self.record_remediation_approval(&approval, &request.actor_id)?;
+        if let Some(authorization_id) = authorization_id {
+            self.record_effect_authorization(
+                &authorization_id,
+                &approval.request_id,
+                &revision_id,
+                &source_digest,
+                &idempotency_key,
+            )?;
+        }
+        Ok(approval)
+    }
+
+    /// Runs `dsc config set` locally after PX checks have accepted a persisted
+    /// authorization. The service never supplies a remote transport adapter.
+    pub async fn execute_remediation(
+        &self,
+        request: RemediationExecutionRequest,
+    ) -> Result<RemediationExecution, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let idempotency_key = self.remediation_execution_idempotency_key(&request.idempotency_key);
+        let document_digest = format!("sha256:{:x}", Sha256::digest(request.document.as_bytes()));
+        if let Some(existing) = self._store.get(&idempotency_key) {
+            let recorded_authorization = required_record_string(
+                &existing.data,
+                "authorizationId",
+                "Recorded remediation execution is missing its authorization.",
+            )?;
+            let recorded_digest = required_record_string(
+                &existing.data,
+                "documentDigest",
+                "Recorded remediation execution is missing its document digest.",
+            )?;
+            if recorded_authorization != request.authorization_id
+                || recorded_digest != document_digest
+            {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "An idempotency key cannot be reused for a different remediation execution."
+                        .into(),
+                ));
+            }
+            return serde_json::from_value(existing.data["result"].clone()).map_err(|error| {
+                ServiceErrorKind::Foundation(format!(
+                    "Recorded remediation execution is invalid: {error}"
+                ))
+            });
+        }
+
+        let authorization = self
+            ._store
+            .get(self.effect_authorization_key(&request.authorization_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest(
+                    "Remediation authorization was not recorded for this profile.".into(),
+                )
+            })?;
+        let revision_id = required_record_string(
+            &authorization.data,
+            "revisionId",
+            "Recorded remediation authorization is missing its configuration revision.",
+        )?;
+        let request_id = required_record_string(
+            &authorization.data,
+            "requestId",
+            "Recorded remediation authorization is missing its request.",
+        )?;
+        let revision = self
+            ._store
+            .get(self.configuration_key(&revision_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::Foundation(
+                    "Recorded remediation authorization refers to a missing configuration revision."
+                        .into(),
+                )
+            })?;
+        let variables = HashMap::from([
+            (
+                "authorization".to_owned(),
+                serde_json::json!({
+                    "capability": authorization.data["capability"],
+                    "decision": authorization.data["decision"],
+                    "idempotency_key": authorization.data["idempotencyKey"],
+                }),
+            ),
+            (
+                "revision".to_owned(),
+                serde_json::json!({ "source_digest": revision.data["sourceDigest"] }),
+            ),
+            (
+                "execution".to_owned(),
+                serde_json::json!({
+                    "source_digest": document_digest,
+                    "idempotency_key": request.idempotency_key,
+                }),
+            ),
+        ]);
+        let policy = first_configuration_rejection(
+            "remediation execution",
+            [
+                "set_requires_pedantic_authorization",
+                "remediation_execution_requires_matching_authorization",
+                "remediation_execution_requires_matching_source_digest",
+                "remediation_execution_requires_matching_idempotency_key",
+            ],
+            &variables,
+        )?;
+        let execution = if !policy.accepted {
+            RemediationExecution {
+                execution_id: request.execution_id,
+                request_id,
+                revision_id,
+                decision: "rejected".into(),
+                constraint_id: policy.constraint_id,
+                resource_count: 0,
+                compliant_resource_count: 0,
+                drifted_resource_count: 0,
+                reason: policy.reason,
+            }
+        } else {
+            let options = DscRunOptions {
+                timeout: Some(Duration::from_secs(30)),
+                ..Default::default()
+            };
+            match run_dsc(
+                DscCommand::ConfigSet,
+                DscInput::Stdin(request.document),
+                &options,
+            )
+            .await
+            {
+                Ok(_) => RemediationExecution {
+                    execution_id: request.execution_id,
+                    request_id,
+                    revision_id,
+                    decision: "completed".into(),
+                    constraint_id: "dsc_config_set".into(),
+                    resource_count: 0,
+                    compliant_resource_count: 0,
+                    drifted_resource_count: 0,
+                    reason: "DSC remediation completed locally.".into(),
+                },
+                Err(error) => remediation_execution_failure(
+                    request.execution_id,
+                    request_id,
+                    revision_id,
+                    error,
+                ),
+            }
+        };
+        self.record_remediation_execution(
+            &idempotency_key,
+            &request.authorization_id,
+            &document_digest,
+            &execution,
+        )?;
+        Ok(execution)
+    }
+
     pub fn record_start(&self, version: &str) {
         let metadata = serde_json::json!({
             "profileId": self.profile_id,
@@ -768,6 +1144,185 @@ impl ServiceFoundation {
         )
     }
 
+    fn remediation_request_key(&self, request_id: &str) -> String {
+        format!(
+            "pedantic:remediation-request:{}:{request_id}",
+            self.profile_id
+        )
+    }
+
+    fn remediation_approval_key(&self, approval_id: &str) -> String {
+        format!(
+            "pedantic:remediation-approval:{}:{approval_id}",
+            self.profile_id
+        )
+    }
+
+    fn effect_authorization_key(&self, authorization_id: &str) -> String {
+        format!(
+            "pedantic:effect-authorization:{}:{authorization_id}",
+            self.profile_id
+        )
+    }
+
+    fn remediation_execution_idempotency_key(&self, idempotency_key: &str) -> String {
+        let digest = Sha256::digest(idempotency_key.as_bytes());
+        format!(
+            "pedantic:remediation-execution:{}:sha256:{digest:x}",
+            self.profile_id
+        )
+    }
+
+    fn record_remediation_request(
+        &self,
+        decision: &RemediationDecision,
+        actor_id: &str,
+        idempotency_key: &str,
+    ) -> Result<(), ServiceErrorKind> {
+        let key = self.remediation_request_key(&decision.request_id);
+        let metadata = serde_json::json!({
+            "profileId": self.profile_id,
+            "requestId": decision.request_id,
+            "revisionId": decision.revision_id,
+            "observationId": decision.observation_id,
+            "actorId": actor_id,
+            "idempotencyKey": idempotency_key,
+            "decision": decision.decision,
+            "constraintId": decision.constraint_id,
+        });
+        self._store
+            .put(key.clone(), SERVICE_ACTOR, metadata.clone());
+        let entry = self.timeline.build_entry(
+            &key,
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &serde_json::json!({
+                "profileId": self.profile_id,
+                "requestId": decision.request_id,
+                "revisionId": decision.revision_id,
+                "observationId": decision.observation_id,
+                "decision": decision.decision,
+                "constraintId": decision.constraint_id,
+            }),
+            Vec::new(),
+            Some(
+                "PX remediation request decision recorded without retaining configuration content."
+                    .into(),
+            ),
+        );
+        self.record_evidence_summary(entry)
+    }
+
+    fn record_remediation_approval(
+        &self,
+        approval: &RemediationApproval,
+        actor_id: &str,
+    ) -> Result<(), ServiceErrorKind> {
+        let key = self.remediation_approval_key(&approval.approval_id);
+        let metadata = serde_json::json!({
+            "profileId": self.profile_id,
+            "approvalId": approval.approval_id,
+            "requestId": approval.request_id,
+            "actorId": actor_id,
+            "authorizationId": approval.authorization_id,
+            "decision": approval.decision,
+            "constraintId": approval.constraint_id,
+        });
+        self._store
+            .put(key.clone(), SERVICE_ACTOR, metadata.clone());
+        let entry = self.timeline.build_entry(
+            &key,
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &serde_json::json!({
+                "profileId": self.profile_id,
+                "approvalId": approval.approval_id,
+                "requestId": approval.request_id,
+                "decision": approval.decision,
+                "constraintId": approval.constraint_id,
+            }),
+            Vec::new(),
+            Some("PX remediation approval decision recorded.".into()),
+        );
+        self.record_evidence_summary(entry)
+    }
+
+    fn record_effect_authorization(
+        &self,
+        authorization_id: &str,
+        request_id: &str,
+        revision_id: &str,
+        source_digest: &str,
+        idempotency_key: &str,
+    ) -> Result<(), ServiceErrorKind> {
+        let key = self.effect_authorization_key(authorization_id);
+        let metadata = serde_json::json!({
+            "profileId": self.profile_id,
+            "authorizationId": authorization_id,
+            "requestId": request_id,
+            "revisionId": revision_id,
+            "sourceDigest": source_digest,
+            "idempotencyKey": idempotency_key,
+            "capability": "dsc_config_set",
+            "decision": "accepted",
+        });
+        self._store
+            .put(key.clone(), SERVICE_ACTOR, metadata.clone());
+        let entry = self.timeline.build_entry(
+            &key,
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &serde_json::json!({
+                "profileId": self.profile_id,
+                "authorizationId": authorization_id,
+                "requestId": request_id,
+                "revisionId": revision_id,
+                "capability": "dsc_config_set",
+                "decision": "accepted",
+            }),
+            Vec::new(),
+            Some("PX issued a bounded local DSC set authorization.".into()),
+        );
+        self.record_evidence_summary(entry)
+    }
+
+    fn record_remediation_execution(
+        &self,
+        idempotency_key: &str,
+        authorization_id: &str,
+        document_digest: &str,
+        execution: &RemediationExecution,
+    ) -> Result<(), ServiceErrorKind> {
+        let metadata = serde_json::json!({
+            "profileId": self.profile_id,
+            "executionId": execution.execution_id,
+            "authorizationId": authorization_id,
+            "documentDigest": document_digest,
+            "result": execution,
+        });
+        self._store
+            .put(idempotency_key, SERVICE_ACTOR, metadata.clone());
+        let entry = self.timeline.build_entry(
+            idempotency_key,
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &serde_json::json!({
+                "profileId": self.profile_id,
+                "executionId": execution.execution_id,
+                "requestId": execution.request_id,
+                "revisionId": execution.revision_id,
+                "decision": execution.decision,
+                "constraintId": execution.constraint_id,
+            }),
+            Vec::new(),
+            Some(
+                "Local DSC remediation outcome recorded without retaining configuration content."
+                    .into(),
+            ),
+        );
+        self.record_evidence_summary(entry)
+    }
+
     fn record_compliance_observation(
         &self,
         observation: &ComplianceObservation,
@@ -866,6 +1421,66 @@ fn compliance_observation_from_results(
         compliant_resource_count,
         drifted_resource_count: resource_count - compliant_resource_count,
         reason: "DSC compliance observation completed.".into(),
+    }
+}
+
+fn required_record_string(
+    record: &serde_json::Value,
+    field: &str,
+    error: &str,
+) -> Result<String, ServiceErrorKind> {
+    record[field]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| ServiceErrorKind::Foundation(error.into()))
+}
+
+fn first_configuration_rejection<const N: usize>(
+    operation: &str,
+    constraints: [&str; N],
+    variables: &HashMap<String, serde_json::Value>,
+) -> Result<PxConstraintDecision, ServiceErrorKind> {
+    let mut last = None;
+    for constraint in constraints {
+        let decision = evaluate_configuration_constraint(operation, constraint, variables)?;
+        if !decision.accepted {
+            return Ok(decision);
+        }
+        last = Some(decision);
+    }
+    last.ok_or_else(|| {
+        ServiceErrorKind::Foundation(
+            "PX remediation procedure has no constraints to evaluate.".into(),
+        )
+    })
+}
+
+fn remediation_execution_failure(
+    execution_id: String,
+    request_id: String,
+    revision_id: String,
+    error: DscError,
+) -> RemediationExecution {
+    let reason = match error {
+        DscError::NotFound => "DSC remediation is unavailable because dsc is not installed.",
+        DscError::Timeout(_) => "DSC remediation exceeded the bounded timeout.",
+        DscError::Execution { .. } => "DSC rejected the remediation document.",
+        DscError::Spawn(_) | DscError::Io(_) => "DSC remediation could not start.",
+        DscError::Parse(_) => "DSC remediation returned an unsupported result.",
+        DscError::Yaml(_) => "DSC remediation could not serialize the document.",
+        DscError::SshConnection(_) => "DSC remediation could not reach its adapter.",
+    };
+    RemediationExecution {
+        execution_id,
+        request_id,
+        revision_id,
+        decision: "failed".into(),
+        constraint_id: "dsc_config_set".into(),
+        resource_count: 0,
+        compliant_resource_count: 0,
+        drifted_resource_count: 0,
+        reason: reason.into(),
     }
 }
 
@@ -1154,13 +1769,16 @@ where
     })
 }
 
-pub struct RequestHandlers<F, G, H, I, J, K> {
+pub struct RequestHandlers<F, G, H, I, J, K, L, M, N> {
     pub evidence: F,
     pub admission: G,
     pub validation: H,
     pub inventory: I,
     pub compliance: J,
     pub observation: K,
+    pub remediation: L,
+    pub approval: M,
+    pub execution: N,
 }
 
 pub async fn handle_request<
@@ -1170,18 +1788,24 @@ pub async fn handle_request<
     I,
     J,
     K,
+    L,
+    M,
+    N,
     AdmissionFuture,
     ValidationFuture,
     InventoryFuture,
     ComplianceFuture,
     ObservationFuture,
+    RemediationFuture,
+    ApprovalFuture,
+    ExecutionFuture,
 >(
     frame: &str,
     expected_profile: &str,
     expected_token: &str,
     version: &str,
     chronos_entries: usize,
-    handlers: RequestHandlers<F, G, H, I, J, K>,
+    handlers: RequestHandlers<F, G, H, I, J, K, L, M, N>,
 ) -> LocalServiceResponse
 where
     F: FnOnce() -> EvidencePage,
@@ -1190,11 +1814,17 @@ where
     I: FnOnce(InventoryObservationRequest) -> InventoryFuture,
     J: FnOnce(ComplianceRequest) -> ComplianceFuture,
     K: FnOnce(ComplianceObservationRequest) -> ObservationFuture,
+    L: FnOnce(RemediationRequest) -> RemediationFuture,
+    M: FnOnce(RemediationApprovalRequest) -> ApprovalFuture,
+    N: FnOnce(RemediationExecutionRequest) -> ExecutionFuture,
     AdmissionFuture: Future<Output = Result<ConfigurationAdmission, ServiceErrorKind>>,
     ValidationFuture: Future<Output = Result<ConfigurationValidation, ServiceErrorKind>>,
     InventoryFuture: Future<Output = Result<InventoryObservation, ServiceErrorKind>>,
     ComplianceFuture: Future<Output = Result<ComplianceDecision, ServiceErrorKind>>,
     ObservationFuture: Future<Output = Result<ComplianceObservation, ServiceErrorKind>>,
+    RemediationFuture: Future<Output = Result<RemediationDecision, ServiceErrorKind>>,
+    ApprovalFuture: Future<Output = Result<RemediationApproval, ServiceErrorKind>>,
+    ExecutionFuture: Future<Output = Result<RemediationExecution, ServiceErrorKind>>,
 {
     let request = match serde_json::from_str::<LocalServiceRequest>(frame) {
         Ok(request) => request,
@@ -1449,6 +2079,120 @@ where
                 ),
             }
         }
+        "remediation.request" => {
+            let remediation_request = match serde_json::from_value(request.params) {
+                Ok(remediation_request) => remediation_request,
+                Err(error) => {
+                    return response(
+                        Some(request.id),
+                        false,
+                        None,
+                        Some((
+                            "invalid_request",
+                            format!("remediation.request parameters are invalid: {error}"),
+                        )),
+                    );
+                }
+            };
+            match (handlers.remediation)(remediation_request).await {
+                Ok(result) if result.decision == "rejected" => response(
+                    Some(request.id),
+                    false,
+                    Some(serde_json::json!(result)),
+                    Some(("remediation_rejected", result.reason.clone())),
+                ),
+                Ok(result) => response(
+                    Some(request.id),
+                    true,
+                    Some(serde_json::json!(result)),
+                    None,
+                ),
+                Err(error) => response(
+                    Some(request.id),
+                    false,
+                    None,
+                    Some(("remediation_failed", error.to_string())),
+                ),
+            }
+        }
+        "remediation.approve" => {
+            let approval_request = match serde_json::from_value(request.params) {
+                Ok(approval_request) => approval_request,
+                Err(error) => {
+                    return response(
+                        Some(request.id),
+                        false,
+                        None,
+                        Some((
+                            "invalid_request",
+                            format!("remediation.approve parameters are invalid: {error}"),
+                        )),
+                    );
+                }
+            };
+            match (handlers.approval)(approval_request).await {
+                Ok(result) if result.decision == "rejected" => response(
+                    Some(request.id),
+                    false,
+                    Some(serde_json::json!(result)),
+                    Some(("remediation_rejected", result.reason.clone())),
+                ),
+                Ok(result) => response(
+                    Some(request.id),
+                    true,
+                    Some(serde_json::json!(result)),
+                    None,
+                ),
+                Err(error) => response(
+                    Some(request.id),
+                    false,
+                    None,
+                    Some(("remediation_failed", error.to_string())),
+                ),
+            }
+        }
+        "remediation.execute" => {
+            let execution_request = match serde_json::from_value(request.params) {
+                Ok(execution_request) => execution_request,
+                Err(error) => {
+                    return response(
+                        Some(request.id),
+                        false,
+                        None,
+                        Some((
+                            "invalid_request",
+                            format!("remediation.execute parameters are invalid: {error}"),
+                        )),
+                    );
+                }
+            };
+            match (handlers.execution)(execution_request).await {
+                Ok(result) if result.decision == "rejected" => response(
+                    Some(request.id),
+                    false,
+                    Some(serde_json::json!(result)),
+                    Some(("remediation_rejected", result.reason.clone())),
+                ),
+                Ok(result) if result.decision == "failed" => response(
+                    Some(request.id),
+                    false,
+                    Some(serde_json::json!(result)),
+                    Some(("remediation_failed", result.reason.clone())),
+                ),
+                Ok(result) => response(
+                    Some(request.id),
+                    true,
+                    Some(serde_json::json!(result)),
+                    None,
+                ),
+                Err(error) => response(
+                    Some(request.id),
+                    false,
+                    None,
+                    Some(("remediation_failed", error.to_string())),
+                ),
+            }
+        }
         _ => response(
             Some(request.id),
             false,
@@ -1562,6 +2306,9 @@ async fn serve_connection(
                     inventory: |request| foundation.observe_inventory(request),
                     compliance: |request| foundation.request_compliance(request),
                     observation: |request| foundation.observe_compliance(request),
+                    remediation: |request| foundation.request_remediation(request),
+                    approval: |request| foundation.approve_remediation(request),
+                    execution: |request| foundation.execute_remediation(request),
                 },
             )
             .await;
@@ -1823,6 +2570,15 @@ mod tests {
         impl FnOnce(
             ComplianceObservationRequest,
         ) -> std::future::Ready<Result<ComplianceObservation, ServiceErrorKind>>,
+        impl FnOnce(
+            RemediationRequest,
+        ) -> std::future::Ready<Result<RemediationDecision, ServiceErrorKind>>,
+        impl FnOnce(
+            RemediationApprovalRequest,
+        ) -> std::future::Ready<Result<RemediationApproval, ServiceErrorKind>>,
+        impl FnOnce(
+            RemediationExecutionRequest,
+        ) -> std::future::Ready<Result<RemediationExecution, ServiceErrorKind>>,
     > {
         RequestHandlers {
             evidence: || EvidencePage {
@@ -1842,6 +2598,15 @@ mod tests {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
             observation: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            remediation: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            approval: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            execution: |_| {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
         }
@@ -1995,6 +2760,15 @@ mod tests {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
                 observation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                remediation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                approval: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                execution: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
             },
@@ -2244,6 +3018,9 @@ mod tests {
                 inventory: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -2269,6 +3046,9 @@ mod tests {
                 inventory: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -2347,6 +3127,9 @@ mod tests {
                 inventory: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -2395,6 +3178,15 @@ mod tests {
                 observation: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
+                remediation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                approval: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                execution: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
             },
         )
         .await;
@@ -2422,6 +3214,15 @@ mod tests {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
                 observation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                remediation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                approval: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                execution: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
             },
@@ -2453,6 +3254,15 @@ mod tests {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
                 observation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                remediation: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                approval: |_| {
+                    std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+                },
+                execution: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
             },
@@ -2643,6 +3453,9 @@ mod tests {
                     reason: "PX accepted the request.".into(),
                 })),
                 observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -2677,6 +3490,9 @@ mod tests {
                     reason: "PX rejected the request.".into(),
                 })),
                 observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -2712,6 +3528,9 @@ mod tests {
                 })),
                 compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -2829,6 +3648,9 @@ mod tests {
                     drifted_resource_count: 0,
                     reason: "PX rejected the observation.".into(),
                 })),
+                remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
             },
         )
         .await;
@@ -2836,6 +3658,183 @@ mod tests {
         assert_eq!(
             response.error.expect("PX rejection response").code,
             "compliance_rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn remediation_requires_drift_then_explicit_approval_and_never_reaches_dsc_on_digest_mismatch()
+     {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let foundation = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("open profile store");
+        let document = "document admitted for remediation";
+        let source_digest = format!("sha256:{:x}", Sha256::digest(document.as_bytes()));
+        foundation._store.put(
+            foundation.configuration_key("revision-remediation"),
+            SERVICE_ACTOR,
+            serde_json::json!({
+                "profileId": foundation.profile_id,
+                "revisionId": "revision-remediation",
+                "sourceDigest": source_digest,
+                "admissionState": "accepted",
+                "validationState": "validated",
+                "constraintId": "configuration_validation_requires_matching_source_digest",
+            }),
+        );
+        foundation
+            .record_compliance_observation(
+                &ComplianceObservation {
+                    observation_id: "observation-drifted".into(),
+                    request_id: "compliance-request".into(),
+                    revision_id: "revision-remediation".into(),
+                    decision: "observed".into(),
+                    constraint_id: "dsc_config_test".into(),
+                    resource_count: 1,
+                    compliant_resource_count: 0,
+                    drifted_resource_count: 1,
+                    reason: "fixture".into(),
+                },
+                &source_digest,
+            )
+            .expect("record drift observation");
+
+        let remediation = foundation
+            .request_remediation(RemediationRequest {
+                request_id: "remediation-request".into(),
+                revision_id: "revision-remediation".into(),
+                observation_id: "observation-drifted".into(),
+                actor_id: "operator@example.test".into(),
+                idempotency_key: "remediation-key".into(),
+            })
+            .await
+            .expect("evaluate remediation request");
+        assert_eq!(remediation.decision, "accepted");
+        assert_eq!(
+            remediation.constraint_id,
+            "remediation_requires_actor_and_idempotency_key"
+        );
+
+        let denied_approval = foundation
+            .approve_remediation(RemediationApprovalRequest {
+                approval_id: "approval-denied".into(),
+                request_id: "remediation-request".into(),
+                actor_id: "reviewer@example.test".into(),
+                approved: false,
+            })
+            .await
+            .expect("evaluate denied approval");
+        assert_eq!(denied_approval.decision, "rejected");
+        assert_eq!(
+            denied_approval.constraint_id,
+            "remediation_approval_requires_explicit_approval"
+        );
+        assert!(denied_approval.authorization_id.is_none());
+
+        let missing_actor = foundation
+            .approve_remediation(RemediationApprovalRequest {
+                approval_id: "approval-missing-actor".into(),
+                request_id: "remediation-request".into(),
+                actor_id: String::new(),
+                approved: true,
+            })
+            .await
+            .expect("evaluate incomplete approval");
+        assert_eq!(missing_actor.decision, "rejected");
+        assert_eq!(
+            missing_actor.constraint_id,
+            "remediation_approval_requires_actor_and_identifier"
+        );
+
+        let approved = foundation
+            .approve_remediation(RemediationApprovalRequest {
+                approval_id: "approval-accepted".into(),
+                request_id: "remediation-request".into(),
+                actor_id: "reviewer@example.test".into(),
+                approved: true,
+            })
+            .await
+            .expect("approve remediation");
+        assert_eq!(approved.decision, "accepted");
+        assert_eq!(
+            approved.authorization_id.as_deref(),
+            Some("approval-accepted")
+        );
+
+        let rejected = foundation
+            .execute_remediation(RemediationExecutionRequest {
+                execution_id: "execution-rejected".into(),
+                authorization_id: "approval-accepted".into(),
+                idempotency_key: "remediation-key".into(),
+                document: "different document that must not reach DSC".into(),
+            })
+            .await
+            .expect("evaluate remediation execution precondition");
+        assert_eq!(rejected.decision, "rejected");
+        assert_eq!(
+            rejected.constraint_id,
+            "remediation_execution_requires_matching_source_digest"
+        );
+        let replay = foundation
+            .execute_remediation(RemediationExecutionRequest {
+                execution_id: "execution-rejected".into(),
+                authorization_id: "approval-accepted".into(),
+                idempotency_key: "remediation-key".into(),
+                document: "different document that must not reach DSC".into(),
+            })
+            .await
+            .expect("replay remediation execution");
+        assert_eq!(replay, rejected);
+        let evidence = serde_json::to_string(&foundation.recent_evidence())
+            .expect("serialize redacted evidence projection");
+        assert!(!evidence.contains("different document"));
+        assert!(!evidence.contains("sourceDigest"));
+    }
+
+    #[tokio::test]
+    async fn remediation_request_returns_a_stable_px_rejection_code() {
+        const RESPONSE_SCHEMA: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/local-service-response.schema.json"
+        ));
+        const EVIDENCE_SCHEMA: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/evidence-summary.schema.json"
+        ));
+        let response = handle_request(
+            r#"{"id":"1","method":"remediation.request","profileId":"default","authorization":"0123456789abcdef0123456789abcdef","params":{"requestId":"request-1","revisionId":"revision-1","observationId":"observation-1","actorId":"operator","idempotencyKey":"key-1"}}"#,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            RequestHandlers {
+                evidence: || EvidencePage { entries: Vec::new(), truncated: false },
+                admission: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                validation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                inventory: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                compliance: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                observation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                remediation: |request: RemediationRequest| std::future::ready(Ok(RemediationDecision {
+                    request_id: request.request_id,
+                    revision_id: request.revision_id,
+                    observation_id: request.observation_id,
+                    decision: "rejected".into(),
+                    constraint_id: "remediation_requires_drifted_observation".into(),
+                    reason: "PX rejected the remediation request.".into(),
+                })),
+                approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+            },
+        )
+        .await;
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.as_ref().expect("PX rejection response").code,
+            "remediation_rejected"
+        );
+        assert_response_contract(
+            RESPONSE_SCHEMA,
+            EVIDENCE_SCHEMA,
+            serde_json::to_value(response).expect("serialize remediation response"),
         );
     }
 

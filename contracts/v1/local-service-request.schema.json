@@ -15,7 +15,10 @@
         "configuration.validate",
         "inventory.observe",
         "compliance.request",
-        "compliance.observe"
+        "compliance.observe",
+        "remediation.request",
+        "remediation.approve",
+        "remediation.execute"
       ]
     },
     "profileId": {
@@ -118,6 +121,64 @@
               "observationId": { "type": "string" },
               "requestId": { "type": "string" },
               "document": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "remediation.request" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requestId", "revisionId", "observationId", "actorId", "idempotencyKey"],
+            "properties": {
+              "requestId": { "type": "string", "minLength": 1 },
+              "revisionId": { "type": "string", "minLength": 1 },
+              "observationId": { "type": "string", "minLength": 1 },
+              "actorId": { "type": "string", "minLength": 1 },
+              "idempotencyKey": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "remediation.approve" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["approvalId", "requestId", "actorId", "approved"],
+            "properties": {
+              "approvalId": { "type": "string", "minLength": 1 },
+              "requestId": { "type": "string", "minLength": 1 },
+              "actorId": { "type": "string", "minLength": 1 },
+              "approved": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "remediation.execute" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["executionId", "authorizationId", "idempotencyKey", "document"],
+            "properties": {
+              "executionId": { "type": "string", "minLength": 1 },
+              "authorizationId": { "type": "string", "minLength": 1 },
+              "idempotencyKey": { "type": "string", "minLength": 1 },
+              "document": { "type": "string", "minLength": 1 }
             }
           }
         }
