@@ -116,8 +116,8 @@ let manifestAfter = manifestBefore.replace(
 // PowerShell prerelease strings allow only ASCII alphanumerics, so separators
 // from the SemVer label are dropped rather than emitting an invalid manifest.
 const prereleaseTag = (prereleaseLabel || '').replace(/[^0-9A-Za-z]/g, '');
-if (prereleaseLabel && !prereleaseTag) {
-  throw new Error('Prerelease label ' + prereleaseLabel + ' has no alphanumeric characters for PSData.Prerelease.');
+if (prereleaseLabel && !/^[A-Za-z][0-9A-Za-z]*$/.test(prereleaseTag)) {
+  throw new Error('Prerelease label ' + prereleaseLabel + ' does not map to a PSData.Prerelease value starting with an ASCII letter.');
 }
 
 const prereleaseLine = /^[ \t]*Prerelease\s*=\s*'[^']*'[ \t]*;?[ \t]*\r?\n/m;
