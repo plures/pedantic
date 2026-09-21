@@ -148,6 +148,6 @@
     "vscode-languageclient": "^10.1.1",
     "vscode-languageserver": "^10.1.1",
     "vscode-languageserver-textdocument": "^1.0.14",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   }
 }
