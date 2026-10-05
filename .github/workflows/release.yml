@@ -30,6 +30,7 @@ jobs:
     with:
       bump: ${{ inputs.bump || '' }}
       target_version: ${{ inputs.target_version || '' }}
+      version_manifest_path: rust/Cargo.toml
     secrets: inherit
 
   trigger-installers:

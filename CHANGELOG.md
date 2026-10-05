@@ -1,5 +1,6 @@
 ## [0.6.0] — 2026-09-15
 
+- chore(release): v0.6.0 (#144) (c6cbd7c)
 - chore(release): v0.6.0 (#147) (d547523)
 - chore(release): v0.6.0 (#148) (a0b82c1)
 - fix(ci): scope installer dispatch to the release repo (#146) (eacd708)
