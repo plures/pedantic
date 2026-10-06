@@ -110,7 +110,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-node@v3
         with:
-          node-version: 20
+          node-version: 22
       - run: npm ci
         working-directory: extension
       - run: npm run benchmark
@@ -233,7 +233,7 @@ vsce package --out ../dist/statesmith-dsc-0.1.0.vsix
 - [ ] CI produces artifact with hash
 
 **Files to Create:**
-- `.nvmrc` - Node version (20.x)
+- `.nvmrc` - Node version (22.x)
 - `extension/scripts/package.sh` - VSIX build script
 
 **Package Script:**
