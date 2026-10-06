@@ -1,6 +1,6 @@
 @{
   RootModule = 'Pedantic.psm1'
-  ModuleVersion = '0.6.0'
+  ModuleVersion = '0.6.1'
   GUID = '2b6a3c27-1a4a-4d3f-9c9f-9b8b7d9d1234'
   Author = 'Pedantic Project'
   CompanyName = 'Pedantic'
