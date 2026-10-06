@@ -4,9 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const version = process.argv[2] || process.env.RELEASE_VERSION;
-if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version || '')) {
+const semver = /^(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/.exec(version || '');
+if (!semver) {
   throw new Error('Provide a SemVer release version as argv[2] or RELEASE_VERSION.');
 }
+const [, versionCore, prereleaseLabel] = semver;
 
 const root = process.cwd();
 const ignored = new Set(['.git', 'node_modules', 'target']);
@@ -95,6 +97,8 @@ for (const [lock, names] of cargoPackages) {
 // Pedantic's compatibility module ships in the same release artifacts as the
 // Rust CLI. Keep its manifest identity aligned with the release tag so a
 // package manager and PowerShell do not report different installed versions.
+// `ModuleVersion` must be a numeric System.Version, so SemVer prerelease
+// suffixes are preserved through PrivateData.PSData.Prerelease instead.
 const powerShellManifest = path.join(root, 'Pedantic.psd1');
 if (!fs.existsSync(powerShellManifest)) {
   throw new Error('Pedantic.psd1 is required for a Pedantic release.');
@@ -104,8 +108,39 @@ const manifestVersion = /^\s*ModuleVersion\s*=\s*'[^']+'\s*$/m.exec(manifestBefo
 if (!manifestVersion) {
   throw new Error('Pedantic.psd1 has no single-quoted ModuleVersion entry.');
 }
-const manifestAfter = manifestBefore.replace(
+let manifestAfter = manifestBefore.replace(
   manifestVersion[0],
-  manifestVersion[0].replace(/'[^']+'/, "'" + version + "'"),
+  manifestVersion[0].replace(/'[^']+'/, "'" + versionCore + "'"),
 );
+
+// PowerShell prerelease strings allow only ASCII alphanumerics, so separators
+// from the SemVer label are dropped rather than emitting an invalid manifest.
+const prereleaseTag = (prereleaseLabel || '').replace(/[^0-9A-Za-z]/g, '');
+if (prereleaseLabel && !/^[A-Za-z][0-9A-Za-z]*$/.test(prereleaseTag)) {
+  throw new Error('Prerelease label ' + prereleaseLabel + ' does not map to a PSData.Prerelease value starting with an ASCII letter.');
+}
+
+const prereleaseLine = /^[ \t]*Prerelease\s*=\s*'[^']*'[ \t]*;?[ \t]*\r?\n/m;
+const prereleaseInline = /(^|[\s;{])Prerelease\s*=\s*'[^']*'[ \t]*;?/m;
+const lineMatch = prereleaseLine.exec(manifestAfter);
+const existingPrerelease = lineMatch || prereleaseInline.exec(manifestAfter);
+if (prereleaseTag) {
+  const entry = "Prerelease = '" + prereleaseTag + "'";
+  if (existingPrerelease) {
+    manifestAfter = manifestAfter.replace(
+      existingPrerelease[0],
+      existingPrerelease[0].replace(/Prerelease\s*=\s*'[^']*'/, entry),
+    );
+  } else {
+    const psData = /PSData\s*=\s*@\{/.exec(manifestAfter);
+    if (!psData) {
+      throw new Error('Pedantic.psd1 has no PrivateData.PSData hashtable for the prerelease label.');
+    }
+    const insertAt = psData.index + psData[0].length;
+    manifestAfter = manifestAfter.slice(0, insertAt) + ' ' + entry + ';' + manifestAfter.slice(insertAt);
+  }
+} else if (existingPrerelease) {
+  manifestAfter = manifestAfter.replace(existingPrerelease[0], lineMatch ? '' : existingPrerelease[1]);
+}
+
 writeIfChanged(powerShellManifest, manifestBefore, manifestAfter);

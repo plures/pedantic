@@ -145,9 +145,9 @@
   "dependencies": {
     "chevrotain": "^13.2.0",
     "echarts": "^6.1.0",
-    "vscode-languageclient": "^10.1.1",
-    "vscode-languageserver": "^10.1.1",
+    "vscode-languageclient": "^10.1.2",
+    "vscode-languageserver": "^10.1.2",
     "vscode-languageserver-textdocument": "^1.0.14",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   }
 }

@@ -9,7 +9,11 @@
 # avoids mixing release files with downloaded artifacts.
 $cacheRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
 if ([string]::IsNullOrWhiteSpace($cacheRoot)) {
-    $cacheRoot = Join-Path $PSScriptRoot '.cache'
+    $cacheRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    if ([string]::IsNullOrWhiteSpace($cacheRoot)) {
+        throw 'Unable to resolve a user-scoped cache directory.'
+    }
+    $cacheRoot = Join-Path $cacheRoot '.cache'
 }
 $cacheRoot = Join-Path $cacheRoot 'Pedantic'
 
