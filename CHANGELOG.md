@@ -1,3 +1,10 @@
+## [0.6.1] — 2026-10-06
+
+- chore(deps): bump rmcp in /rust in the cargo group across 1 directory (#155) (bfdb3c2)
+- fix: recover release parity boundaries (#153) (958ef10)
+- chore(release): v0.6.0 (#149) (d22489d)
+- fix(ci): source releases from the Rust workspace (#152) (c900542)
+
 ## [0.6.0] — 2026-09-15
 
 - chore(release): v0.6.0 (#144) (c6cbd7c)
