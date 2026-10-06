@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   WiX v4 installer definition for Pedantic DSC toolkit.
-  Installs the Rust CLI binary and the PowerShell module.
+  Installs the Rust CLI binary, the Windows-local service, and the PowerShell
+  compatibility module.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
@@ -22,6 +23,10 @@
       <ComponentRef Id="PathEntry" />
     </Feature>
 
+    <Feature Id="LocalService" Title="Pedantic Local Service" Level="1">
+      <ComponentGroupRef Id="ServiceComponents" />
+    </Feature>
+
     <Feature Id="PSModule" Title="PowerShell Module" Level="1">
       <ComponentGroupRef Id="PSModuleComponents" />
     </Feature>
@@ -40,6 +45,15 @@
     <ComponentGroup Id="CLIComponents" Directory="BinDir">
       <Component Id="PedanticExe" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
         <File Id="pedantic.exe" Source="$(var.BinSource)\pedantic.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- The service is started explicitly by the profile owner. It is not a
+         machine-wide daemon because its PluresDB store and local pipe are
+         user/profile scoped. -->
+    <ComponentGroup Id="ServiceComponents" Directory="BinDir">
+      <Component Id="PedanticServiceExe" Guid="E5F6A7B8-C9D0-1234-EFAB-234567890123">
+        <File Id="pedantic-service.exe" Source="$(var.BinSource)\pedantic-service.exe" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 

@@ -1,11 +1,11 @@
 @{
   RootModule = 'Pedantic.psm1'
-  ModuleVersion = '0.9.0'
+  ModuleVersion = '0.6.0'
   GUID = '2b6a3c27-1a4a-4d3f-9c9f-9b8b7d9d1234'
   Author = 'Pedantic Project'
   CompanyName = 'Pedantic'
   Copyright = '(c) Pedantic. All rights reserved.'
-  Description = 'Pedantic DSC Helper Module. Provides user-friendly DSC v3 operations with parameter autocomplete support and automatic remote execution.'
+  Description = 'Pedantic DSC Helper Module. Provides user-friendly local DSC v3 operations with parameter autocomplete support. Requires DSC to be installed already; remote execution is not supported in this release.'
   PowerShellVersion = '7.2'
   CompatiblePSEditions = @('Core')
   # Export explicit public surface for performance and clarity
