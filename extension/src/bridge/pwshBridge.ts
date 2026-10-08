@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { setTimeout, clearTimeout } from 'node:timers';
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import * as vscode from 'vscode';
 import { ExtensionAssetContext, resolveBridgeAsset, validateBridgeAsset } from './assets';
 import { bridgeProtocolVersion, BridgeRequest, BridgeResponse, parseBridgeResponse } from './schema';
@@ -52,56 +52,91 @@ export class PwshBridge {
   }
   
   return new Promise(resolve => {
-    const proc = spawn(pwshPath, args);
+    const proc = spawn(pwshPath, args, { detached: process.platform !== 'win32' });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let cancelled = false;
     let completed = false;
+    let closeCode: number | null | undefined;
+    let terminationTimer: ReturnType<typeof setTimeout> | undefined;
     const finish = (response: BridgeResponse) => {
       if (completed) {
         return;
       }
       completed = true;
       clearTimeout(timer);
+      if (terminationTimer) {
+        clearTimeout(terminationTimer);
+      }
       cancellationDisposable?.dispose();
       resolve(response);
     };
-    
-    // Manually implement timeout with process termination
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill('SIGTERM');
-      // Force kill if SIGTERM doesn't work
-      setTimeout(() => {
-        if (!proc.killed) {
-          proc.kill('SIGKILL');
-        }
+
+    const terminate = (reason: 'cancelled' | 'timeout') => {
+      if (completed || timedOut || cancelled) {
+        return;
+      }
+      timedOut = reason === 'timeout';
+      cancelled = reason === 'cancelled';
+      terminateProcessTree(proc, 'SIGTERM');
+      terminationTimer = setTimeout(() => {
+        void terminateProcessTree(proc, 'SIGKILL').then(() => {
+          terminationTimer = undefined;
+          if (closeCode !== undefined) {
+            finishTermination();
+          }
+        });
       }, 1000);
-    }, timeout);
-    const cancellationDisposable = cancellationToken?.onCancellationRequested(() => {
-      proc.kill('SIGTERM');
-      finish({
-        protocolVersion: bridgeProtocolVersion,
-        success: false,
-        errors: ['PowerShell bridge operation was cancelled.']
-      });
-    });
-    
-    proc.stdout.on('data', data => stdout += data.toString());
-    proc.stderr.on('data', data => stderr += data.toString());
-    
-    proc.on('close', code => {
+    };
+
+    const finishTermination = () => {
       if (timedOut) {
         finish({
           protocolVersion: bridgeProtocolVersion,
           success: false,
           errors: [`PowerShell process timed out after ${timeout}ms`]
         });
+      } else {
+        finish({
+          protocolVersion: bridgeProtocolVersion,
+          success: false,
+          errors: ['PowerShell bridge operation was cancelled.']
+        });
+      }
+    };
+
+    const timer = setTimeout(() => {
+      terminate('timeout');
+    }, timeout);
+    const cancellationDisposable = cancellationToken?.onCancellationRequested(() => {
+      terminate('cancelled');
+    });
+    
+    proc.stdout.on('data', data => stdout += data.toString());
+    proc.stderr.on('data', data => stderr += data.toString());
+    
+    proc.on('close', code => {
+      closeCode = code;
+      if (timedOut) {
+        if (!terminationTimer) {
+          finishTermination();
+        }
+        return;
+      }
+      if (cancelled) {
+        if (!terminationTimer) {
+          finishTermination();
+        }
         return;
       }
       
       try {
-        finish(parseBridgeResponse(JSON.parse(stdout)));
+        const lines = stdout.trimEnd().split(/\r?\n/).filter(line => line.trim().length > 0);
+        if (lines.length === 0) {
+          throw new Error('PowerShell bridge returned no JSON response.');
+        }
+        finish(parseBridgeResponse(JSON.parse(lines[lines.length - 1])));
       } catch (error) {
         finish({
           protocolVersion: bridgeProtocolVersion,
@@ -115,10 +150,36 @@ export class PwshBridge {
     });
     
     proc.on('error', err => {
+      if (timedOut || cancelled) {
+        return;
+      }
       finish(bridgeFailure(new Error(`PowerShell bridge failed: ${err.message}`)));
     });
   });
   }
+}
+
+function terminateProcessTree(proc: ReturnType<typeof spawn>, signal: NodeJS.Signals): Promise<void> {
+  if (proc.pid === undefined) {
+    return Promise.resolve();
+  }
+
+  if (process.platform === 'win32') {
+    if (signal === 'SIGKILL') {
+      return new Promise(resolve => {
+        execFile('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true }, () => resolve());
+      });
+    }
+    proc.kill(signal);
+    return Promise.resolve();
+  }
+
+  try {
+    process.kill(-proc.pid, signal);
+  } catch {
+    proc.kill(signal);
+  }
+  return Promise.resolve();
 }
 
 export function createPwshBridge(context: ExtensionAssetContext): PwshBridge {

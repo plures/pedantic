@@ -2625,7 +2625,7 @@ function Ensure-DscResourcesAvailable {
 }
 
 # Export the functions
-Export-ModuleMember -Function 'Invoke-DscHelper', 'Validate-DscConfiguration', 'Set-DscConfiguration', 'Test-DscConfiguration', 'Export-DscConfiguration', 'Get-DscInstallerCache', 'Update-DscInstallerCache', 'Remove-DscInstallerCache', 'Get-DscInstallerPath', 'Get-Head', 'Get-Tail', 'New-SecureRemoteSession', 'Repair-DscInstallation', 'Get-DscResourceCache', 'Update-DscResourceCache', 'Remove-DscResourceCache', 'Get-DscResourcePath', 'Install-DscResourceOffline', 'Ensure-DscResourcesAvailable', 'Get-MappedResourceInfo'
+Export-ModuleMember -Function 'Invoke-DscHelper', 'Validate-DscConfiguration', 'Set-DscConfiguration', 'Test-DscConfiguration', 'Export-DscConfiguration', 'Get-DscInstallerCache', 'Update-DscInstallerCache', 'Remove-DscInstallerCache', 'Get-DscInstallerPath', 'Get-Head', 'Get-Tail', 'New-SecureRemoteSession', 'Repair-DscInstallation', 'Get-DscResourceCache', 'Update-DscResourceCache', 'Remove-DscResourceCache', 'Get-DscResourcePath', 'Install-DscResourceOffline', 'Ensure-DscResourcesAvailable', 'Get-MappedResourceInfo', 'Test-DscResourceAvailability', 'Get-DscResourceCatalog'
 
 # Initialize caches on module import
 try {

@@ -29,7 +29,9 @@
     'New-SecureRemoteSession',
     'Repair-DscInstallation',
     'Get-DscResourcePath',
-    'Get-MappedResourceInfo'
+    'Get-MappedResourceInfo',
+    'Test-DscResourceAvailability',
+    'Get-DscResourceCatalog'
   )
   CmdletsToExport = @()
   VariablesToExport = '*'

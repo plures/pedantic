@@ -69,16 +69,7 @@ try {
             $result = 'Pedantic PowerShell bridge is available'
         }
         'generate' {
-            Write-Host "Generating DSC configuration from $DslPath..."
-            $result = @"
-# Generated DSC Configuration
-# Source: $DslPath
-# Note: This is a placeholder implementation
-# The actual generation logic needs to be implemented in the Pedantic module
-
-`$schema: https://aka.ms/dsc/schemas/2024/04/config/document.json
-resources: []
-"@
+            throw 'Generating DSC configuration from DSL is not supported by the packaged bridge yet.'
         }
         'test' {
             Write-Host "Testing DSC configuration: $DslPath..."
@@ -169,7 +160,7 @@ resources: []
 
             $cachedResources = @()
             try {
-                $cache = Get-ResourceCache
+                $cache = Get-DscResourceCache
                 foreach ($name in $cache.AvailableResources.PSObject.Properties.Name) {
                     $item = $cache.AvailableResources.$name
                     $typeName = if ($item.PSObject.Properties.Name -contains 'Type' -and $item.Type) { $item.Type }

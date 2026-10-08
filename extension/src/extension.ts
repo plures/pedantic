@@ -31,7 +31,8 @@ export function activate(context: vscode.ExtensionContext) {
   const installResource = async (resourceType: string) => {
     return vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
-      title: `Pedantic: Installing ${resourceType}`
+      title: `Pedantic: Installing ${resourceType}`,
+      cancellable: true
     }, async (_progress, token) => {
       const response = await bridge.invoke({
         command: 'installResource',
@@ -56,7 +57,8 @@ export function activate(context: vscode.ExtensionContext) {
   disposables.push(vscode.commands.registerCommand('pedantic.checkPrereqs', async () => {
     const response = await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
-      title: 'Pedantic: Checking DSC prerequisites'
+      title: 'Pedantic: Checking DSC prerequisites',
+      cancellable: true
     }, async (_progress, token) => {
       return bridge.invoke({
         command: 'prereqs',
@@ -103,7 +105,8 @@ export function activate(context: vscode.ExtensionContext) {
   disposables.push(vscode.commands.registerCommand('pedantic.showResourceInventory', async () => {
     const response = await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
-      title: 'Pedantic: Gathering resource inventory'
+      title: 'Pedantic: Gathering resource inventory',
+      cancellable: true
     }, async (_progress, token) => {
       return bridge.invoke({
         command: 'resources',
@@ -125,7 +128,8 @@ export function activate(context: vscode.ExtensionContext) {
   disposables.push(vscode.commands.registerCommand('pedantic.addResourceToProject', async () => {
     const response = await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
-      title: 'Pedantic: Loading available resources'
+      title: 'Pedantic: Loading available resources',
+      cancellable: true
     }, async (_progress, token) => {
       return bridge.invoke({
         command: 'resources',
