@@ -2,13 +2,17 @@
 //! crate only reports readiness and sanitized observations.
 
 use pedantic_capability::{
-    Capability, CapabilityActivity, CapabilityError, CapabilityRegistry, validate_manifest,
-    validate_readiness,
+    validate_manifest, validate_readiness, Capability, CapabilityActivity, CapabilityError,
+    CapabilityRegistry,
+};
+use pedantic_operation::hyperv_transfer_plan::{
+    HostFailureCategory, HostQueryFailure, HyperVHardDrive, HyperVHostInventory,
+    HyperVInventoryProvider, HyperVVmInventory,
 };
 use pedantic_operation::{
     CapabilityManifest, CapabilityReadiness, Idempotency, RedactionClass, RetryClass, RiskClass,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -467,6 +471,169 @@ impl ProviderBackend for HyperV {
     }
 }
 
+/// Read-only Hyper-V inventory adapter used by transfer planning. It reports
+/// raw host observations and leaves all planning and policy decisions to PX.
+pub struct HyperVInventory;
+
+impl HyperVInventoryProvider for HyperVInventory {
+    fn query_host(&self, host_name: &str) -> Result<HyperVHostInventory, HostQueryFailure> {
+        const INVENTORY_SCRIPT: &str = r#"
+Invoke-Command -ComputerName $env:PEDANTIC_HYPERV_HOST -ScriptBlock {
+    function Get-DifferencingChain([string]$Path) {
+        $chain = @()
+        $vhd = Get-VHD -Path $Path -ErrorAction Stop
+        while ($vhd.VhdType -eq 'Differencing' -and $vhd.ParentPath) {
+            $chain += $vhd.ParentPath
+            $vhd = Get-VHD -Path $vhd.ParentPath -ErrorAction Stop
+        }
+        return $chain
+    }
+    @(
+        Get-VM -ErrorAction Stop | ForEach-Object {
+            $vm = $_
+            [pscustomobject]@{
+                name = $vm.Name
+                vmId = $vm.Id.Guid
+                effectiveMacAddresses = @(Get-VMNetworkAdapter -VM $vm -ErrorAction Stop | ForEach-Object { $_.MacAddress })
+                hardDrives = @(Get-VMHardDiskDrive -VM $vm -ErrorAction Stop | ForEach-Object {
+                    [pscustomobject]@{
+                        path = $_.Path
+                        differencingChain = @(Get-DifferencingChain $_.Path)
+                    }
+                })
+            }
+        }
+    ) | ConvertTo-Json -Compress -Depth 8
+}
+"#;
+        let output = Command::new("powershell.exe")
+            .env("PEDANTIC_HYPERV_HOST", host_name)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                INVENTORY_SCRIPT,
+            ])
+            .output()
+            .map_err(|error| host_failure(host_name, error.to_string(), true))?;
+        if !output.status.success() {
+            return Err(host_failure(
+                host_name,
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                true,
+            ));
+        }
+        parse_hyperv_inventory(host_name, &output.stdout)
+    }
+}
+
+fn host_failure(host_name: &str, error: String, retryable: bool) -> HostQueryFailure {
+    HostQueryFailure {
+        host_name: host_name.into(),
+        category: HostFailureCategory::HostUnavailable,
+        error: if error.is_empty() {
+            "Hyper-V inventory query failed".into()
+        } else {
+            error
+        },
+        retryable,
+    }
+}
+
+fn parse_hyperv_inventory(
+    host_name: &str,
+    output: &[u8],
+) -> Result<HyperVHostInventory, HostQueryFailure> {
+    let value: Value = serde_json::from_slice(output).map_err(|error| HostQueryFailure {
+        host_name: host_name.into(),
+        category: HostFailureCategory::InvalidResponse,
+        error: format!("Hyper-V inventory response was not valid JSON: {error}"),
+        retryable: false,
+    })?;
+    let vms = match value {
+        Value::Null => Vec::new(),
+        Value::Array(vms) => vms,
+        vm => vec![vm],
+    };
+    let virtual_machines = vms
+        .into_iter()
+        .map(|vm| parse_hyperv_vm(host_name, vm))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(HyperVHostInventory {
+        host_name: host_name.into(),
+        virtual_machines,
+    })
+}
+
+fn parse_hyperv_vm(host_name: &str, vm: Value) -> Result<HyperVVmInventory, HostQueryFailure> {
+    let object = vm
+        .as_object()
+        .ok_or_else(|| invalid_inventory(host_name, "VM is not an object"))?;
+    let name = json_string(object, "name", host_name)?;
+    let vm_id = json_string(object, "vmId", host_name)?;
+    let effective_mac_addresses = json_string_array(object, "effectiveMacAddresses", host_name)?;
+    let hard_drives = object
+        .get("hardDrives")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_inventory(host_name, "VM hardDrives is not an array"))?
+        .iter()
+        .map(|drive| {
+            let drive = drive
+                .as_object()
+                .ok_or_else(|| invalid_inventory(host_name, "hard drive is not an object"))?;
+            Ok(HyperVHardDrive {
+                path: json_string(drive, "path", host_name)?,
+                differencing_chain: json_string_array(drive, "differencingChain", host_name)?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(HyperVVmInventory {
+        name,
+        vm_id,
+        effective_mac_addresses,
+        hard_drives,
+    })
+}
+
+fn json_string(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    host_name: &str,
+) -> Result<String, HostQueryFailure> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| invalid_inventory(host_name, &format!("{field} is not a string")))
+}
+
+fn json_string_array(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    host_name: &str,
+) -> Result<Vec<String>, HostQueryFailure> {
+    object
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_inventory(host_name, &format!("{field} is not an array")))?
+        .iter()
+        .map(|value| {
+            value.as_str().map(ToString::to_string).ok_or_else(|| {
+                invalid_inventory(host_name, &format!("{field} contains a non-string"))
+            })
+        })
+        .collect()
+}
+
+fn invalid_inventory(host_name: &str, error: &str) -> HostQueryFailure {
+    HostQueryFailure {
+        host_name: host_name.into(),
+        category: HostFailureCategory::InvalidResponse,
+        error: format!("Hyper-V inventory response is invalid: {error}"),
+        retryable: false,
+    }
+}
+
 fn command_ready(program: &str, arguments: &[&str]) -> Result<(), CapabilityError> {
     Command::new(program)
         .args(arguments)
@@ -771,6 +938,29 @@ mod tests {
         for provider in production_providers() {
             assert_conforms(provider.as_ref()).unwrap();
         }
+    }
+
+    #[test]
+    fn hyperv_inventory_parses_vm_evidence_without_policy() {
+        let inventory = parse_hyperv_inventory(
+            "hyperv-a",
+            br#"[{
+                "name":"vm-a",
+                "vmId":"vm-id-a",
+                "effectiveMacAddresses":["00155D000001"],
+                "hardDrives":[{
+                    "path":"D:\\VMs\\vm-a\\disk.avhdx",
+                    "differencingChain":["D:\\VMs\\vm-a\\base.vhdx"]
+                }]
+            }]"#,
+        )
+        .expect("valid inventory");
+        assert_eq!(inventory.host_name, "hyperv-a");
+        assert_eq!(inventory.virtual_machines[0].vm_id, "vm-id-a");
+        assert_eq!(
+            inventory.virtual_machines[0].hard_drives[0].differencing_chain,
+            ["D:\\VMs\\vm-a\\base.vhdx"]
+        );
     }
 
     #[test]
