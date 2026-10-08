@@ -136,6 +136,26 @@ Describe 'DTMS.Transfer selection policy' {
         $text | Should -Match 'Start-BitsTransfer'
         $text | Should -Match 'Complete-BitsTransfer'
     }
+
+    It 'uses only typed transfer inputs and validates target-initiated SCP keys' {
+        $command = Get-Command New-DurableTransferRequest
+        $text = Get-Content (Join-Path $PSScriptRoot 'DTMS.Transfer.psm1') -Raw
+
+        $command.Parameters.Keys | Should -Not -Contain 'AdditionalArgument'
+        $command.Parameters.Keys | Should -Contain 'SshKeyPath'
+        $text | Should -Match 'SCP transfers must be initiated by the target'
+        $text | Should -Match 'validated target-local SSH key path'
+    }
+
+    It 'records selection evaluation and verification telemetry' {
+        $text = Get-Content (Join-Path $PSScriptRoot 'DTMS.Transfer.psm1') -Raw
+
+        $text | Should -Match 'Evaluation = \$evaluations'
+        $text | Should -Match 'retryCount'
+        $text | Should -Match 'resumeCount'
+        $text | Should -Match 'verificationState'
+        $text | Should -Match 'Transfer verification failed'
+    }
 }
 
 Describe 'DTMS.Transfer terminal telemetry contract' {
