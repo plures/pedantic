@@ -2,13 +2,13 @@
 //! crate only reports readiness and sanitized observations.
 
 use pedantic_capability::{
-    Capability, CapabilityActivity, CapabilityError, CapabilityRegistry, validate_manifest,
-    validate_readiness,
+    validate_manifest, validate_readiness, Capability, CapabilityActivity, CapabilityError,
+    CapabilityRegistry,
 };
 use pedantic_operation::{
     CapabilityManifest, CapabilityReadiness, Idempotency, RedactionClass, RetryClass, RiskClass,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
@@ -57,20 +57,24 @@ impl<B: ProviderBackend> Capability for Provider<B> {
             redaction_class: self.manifest.redaction_class.clone(),
             state: Some(if ready { "ready" } else { "degraded" }.into()),
             required: Some(true),
-            findings: (!ready)
-                .then(|| {
-                    vec![json!({
-                        "code": "provider_unavailable",
-                        "message": "The provider runtime is unavailable"
-                    })]
-                })
-                .unwrap_or_default(),
-            eligible_remediations: (!ready)
-                .then(|| self.remediation.clone())
-                .unwrap_or_default(),
-            diagnostics: (!ready)
-                .then(|| vec![json!({"code": "PROVIDER_UNAVAILABLE"})])
-                .unwrap_or_default(),
+            findings: if ready {
+                Vec::new()
+            } else {
+                vec![json!({
+                    "code": "provider_unavailable",
+                    "message": "The provider runtime is unavailable"
+                })]
+            },
+            eligible_remediations: if ready {
+                Vec::new()
+            } else {
+                self.remediation.clone()
+            },
+            diagnostics: if ready {
+                Vec::new()
+            } else {
+                vec![json!({"code": "PROVIDER_UNAVAILABLE"})]
+            },
         }
     }
 
@@ -92,7 +96,9 @@ impl<B: ProviderBackend> Capability for Provider<B> {
     }
 }
 
-pub fn register_production_providers(registry: &mut CapabilityRegistry) -> Result<(), CapabilityError> {
+pub fn register_production_providers(
+    registry: &mut CapabilityRegistry,
+) -> Result<(), CapabilityError> {
     for provider in production_providers() {
         registry.register(provider)?;
     }
@@ -101,7 +107,11 @@ pub fn register_production_providers(registry: &mut CapabilityRegistry) -> Resul
 
 pub fn production_providers() -> Vec<Arc<dyn Capability>> {
     vec![
-        Arc::new(Provider::new(transfer_manifest(), FilesystemTransfer, vec![])),
+        Arc::new(Provider::new(
+            transfer_manifest(),
+            FilesystemTransfer,
+            vec![],
+        )),
         Arc::new(Provider::new(package_manifest(), WindowsPackage, vec![])),
         Arc::new(Provider::new(feature_manifest(), WindowsFeature, vec![])),
         Arc::new(Provider::new(os_setup_manifest(), WindowsOsSetup, vec![])),
@@ -133,7 +143,9 @@ impl ProviderBackend for FilesystemTransfer {
         let destination = required_string(input, "destinationPath")?;
         let source_path = Path::new(source);
         if !source_path.is_file() {
-            return Err(CapabilityError::Execution("transfer source is unavailable".into()));
+            return Err(CapabilityError::Execution(
+                "transfer source is unavailable".into(),
+            ));
         }
         let bytes_total = fs::metadata(source_path)
             .map_err(|_| CapabilityError::Execution("transfer source is unavailable".into()))?
@@ -141,7 +153,9 @@ impl ProviderBackend for FilesystemTransfer {
         let source_digest = digest_file(source_path)?;
         if Path::new(destination).is_file()
             && fs::metadata(destination)
-                .map_err(|_| CapabilityError::Execution("transfer destination is unavailable".into()))?
+                .map_err(|_| {
+                    CapabilityError::Execution("transfer destination is unavailable".into())
+                })?
                 .len()
                 == bytes_total
             && digest_file(Path::new(destination))? == source_digest
@@ -152,9 +166,16 @@ impl ProviderBackend for FilesystemTransfer {
             .map_err(|_| CapabilityError::Execution("transfer could not complete".into()))?;
         let destination_digest = digest_file(Path::new(destination))?;
         if destination_digest != source_digest {
-            return Err(CapabilityError::Execution("transfer verification failed".into()));
+            return Err(CapabilityError::Execution(
+                "transfer verification failed".into(),
+            ));
         }
-        Ok(transfer_observation(bytes_total, source_digest, bytes_total, 0))
+        Ok(transfer_observation(
+            bytes_total,
+            source_digest,
+            bytes_total,
+            0,
+        ))
     }
 }
 
@@ -170,7 +191,13 @@ impl ProviderBackend for WindowsPackage {
         let package = required_string(input, "packageId")?;
         run_command(
             "winget",
-            &[action, "--id", package, "--exact", "--disable-interactivity"],
+            &[
+                action,
+                "--id",
+                package,
+                "--exact",
+                "--disable-interactivity",
+            ],
         )?;
         Ok(effect_observation(input))
     }
@@ -186,9 +213,21 @@ impl ProviderBackend for WindowsFeature {
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
         let action = enum_value(input, "action", &["enable", "disable"])?;
         let feature = required_string(input, "featureName")?;
-        let mode = if action == "enable" { "/Enable-Feature" } else { "/Disable-Feature" };
-        run_command("dism.exe", &["/Online", mode, &format!("/FeatureName:{feature}"), "/NoRestart"])?;
-        Ok(json!({"outputDigest": digest(input), "rebootRequired": false}))
+        let mode = if action == "enable" {
+            "/Enable-Feature"
+        } else {
+            "/Disable-Feature"
+        };
+        let reboot_required = run_command(
+            "dism.exe",
+            &[
+                "/Online",
+                mode,
+                &format!("/FeatureName:{feature}"),
+                "/NoRestart",
+            ],
+        )?;
+        Ok(json!({"outputDigest": digest(input), "rebootRequired": reboot_required}))
     }
 }
 
@@ -200,7 +239,11 @@ impl ProviderBackend for WindowsOsSetup {
     }
 
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
-        let action = enum_value(input, "action", &["enable-remote-management", "enable-developer-mode"])?;
+        let action = enum_value(
+            input,
+            "action",
+            &["enable-remote-management", "enable-developer-mode"],
+        )?;
         let script = match action {
             "enable-remote-management" => "Enable-PSRemoting -Force -SkipNetworkProfileCheck",
             "enable-developer-mode" => {
@@ -208,7 +251,10 @@ impl ProviderBackend for WindowsOsSetup {
             }
             _ => unreachable!("validated setup action"),
         };
-        run_command("powershell.exe", &["-NoProfile", "-NonInteractive", "-Command", script])?;
+        run_command(
+            "powershell.exe",
+            &["-NoProfile", "-NonInteractive", "-Command", script],
+        )?;
         Ok(effect_observation(input))
     }
 }
@@ -231,7 +277,14 @@ impl ProviderBackend for HyperV {
         };
         run_command(
             "powershell.exe",
-            &["-NoProfile", "-NonInteractive", "-Command", command, "-Name", name],
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                command,
+                "-Name",
+                name,
+            ],
         )?;
         Ok(effect_observation(input))
     }
@@ -251,14 +304,15 @@ fn command_ready(program: &str) -> Result<(), CapabilityError> {
         })
 }
 
-fn run_command(program: &str, arguments: &[&str]) -> Result<(), CapabilityError> {
+fn run_command(program: &str, arguments: &[&str]) -> Result<bool, CapabilityError> {
     let status = Command::new(program)
         .args(arguments)
         .status()
         .map_err(|_| CapabilityError::Execution("provider effect could not start".into()))?;
     status
         .success()
-        .then_some(())
+        .then_some(false)
+        .or_else(|| (status.code() == Some(3010)).then_some(true))
         .ok_or_else(|| CapabilityError::Execution("provider effect failed".into()))
 }
 
@@ -270,7 +324,11 @@ fn required_string<'a>(input: &'a Value, property: &str) -> Result<&'a str, Capa
         .ok_or_else(|| CapabilityError::InvalidInput(format!("{property} is required")))
 }
 
-fn enum_value<'a>(input: &'a Value, property: &str, values: &[&str]) -> Result<&'a str, CapabilityError> {
+fn enum_value<'a>(
+    input: &'a Value,
+    property: &str,
+    values: &[&str],
+) -> Result<&'a str, CapabilityError> {
     let value = required_string(input, property)?;
     values
         .contains(&value)
@@ -295,7 +353,12 @@ fn effect_observation(input: &Value) -> Value {
     json!({"outputDigest": digest(input)})
 }
 
-fn transfer_observation(bytes_total: u64, digest: String, bytes_transferred: u64, resume_count: u64) -> Value {
+fn transfer_observation(
+    bytes_total: u64,
+    digest: String,
+    bytes_transferred: u64,
+    resume_count: u64,
+) -> Value {
     json!({
         "bytesTotal": bytes_total,
         "bytesTransferred": bytes_transferred,
@@ -310,7 +373,13 @@ fn transfer_observation(bytes_total: u64, digest: String, bytes_transferred: u64
     })
 }
 
-fn manifest(capability: &str, risk_class: RiskClass, retry_class: RetryClass, idempotency: Idempotency, input_schema: Value) -> CapabilityManifest {
+fn manifest(
+    capability: &str,
+    risk_class: RiskClass,
+    retry_class: RetryClass,
+    idempotency: Idempotency,
+    input_schema: Value,
+) -> CapabilityManifest {
     CapabilityManifest {
         schema_version: MANIFEST_VERSION.into(),
         capability: capability.into(),
@@ -327,34 +396,64 @@ fn manifest(capability: &str, risk_class: RiskClass, retry_class: RetryClass, id
 }
 
 fn transfer_manifest() -> CapabilityManifest {
-    manifest("transfer.filesystem", RiskClass::Moderate, RetryClass::SafeAfterObservation, Idempotency::ObservationRequired, json!({
-        "type": "object", "additionalProperties": false, "required": ["sourcePath", "destinationPath"],
-        "properties": {"sourcePath": {"type": "string", "minLength": 1}, "destinationPath": {"type": "string", "minLength": 1}}
-    }))
+    manifest(
+        "transfer.filesystem",
+        RiskClass::Moderate,
+        RetryClass::SafeAfterObservation,
+        Idempotency::ObservationRequired,
+        json!({
+            "type": "object", "additionalProperties": false, "required": ["sourcePath", "destinationPath"],
+            "properties": {"sourcePath": {"type": "string", "minLength": 1}, "destinationPath": {"type": "string", "minLength": 1}}
+        }),
+    )
 }
 
 fn package_manifest() -> CapabilityManifest {
-    manifest("package.manage", RiskClass::Moderate, RetryClass::SafeAfterObservation, Idempotency::ObservationRequired, action_input("packageId", "string", &["install", "upgrade", "remove"]))
+    manifest(
+        "package.manage",
+        RiskClass::Moderate,
+        RetryClass::SafeAfterObservation,
+        Idempotency::ObservationRequired,
+        action_input("packageId", &["install", "upgrade", "remove"]),
+    )
 }
 
 fn feature_manifest() -> CapabilityManifest {
-    manifest("windows.feature", RiskClass::High, RetryClass::SafeAfterObservation, Idempotency::ObservationRequired, action_input("featureName", "string", &["enable", "disable"]))
+    manifest(
+        "windows.feature",
+        RiskClass::High,
+        RetryClass::SafeAfterObservation,
+        Idempotency::ObservationRequired,
+        action_input("featureName", &["enable", "disable"]),
+    )
 }
 
 fn os_setup_manifest() -> CapabilityManifest {
-    manifest("windows.os-setup", RiskClass::High, RetryClass::RequiresFreshAuthorization, Idempotency::ObservationRequired, json!({
-        "type": "object", "additionalProperties": false, "required": ["action"],
-        "properties": {"action": {"type": "string", "enum": ["enable-remote-management", "enable-developer-mode"]}}
-    }))
+    manifest(
+        "windows.os-setup",
+        RiskClass::High,
+        RetryClass::RequiresFreshAuthorization,
+        Idempotency::ObservationRequired,
+        json!({
+            "type": "object", "additionalProperties": false, "required": ["action"],
+            "properties": {"action": {"type": "string", "enum": ["enable-remote-management", "enable-developer-mode"]}}
+        }),
+    )
 }
 
 fn hyperv_manifest() -> CapabilityManifest {
-    let mut manifest = manifest("hyperv.vm", RiskClass::Dangerous, RetryClass::RequiresOperatorReview, Idempotency::NonIdempotent, action_input("vmName", "string", &["start", "stop", "checkpoint"]));
+    let mut manifest = manifest(
+        "hyperv.vm",
+        RiskClass::Dangerous,
+        RetryClass::RequiresOperatorReview,
+        Idempotency::NonIdempotent,
+        action_input("vmName", &["start", "stop", "checkpoint"]),
+    );
     manifest.requires_checkpoint = Some(true);
     manifest
 }
 
-fn action_input(name: &str, _kind: &str, actions: &[&str]) -> Value {
+fn action_input(name: &str, actions: &[&str]) -> Value {
     json!({
         "type": "object", "additionalProperties": false, "required": ["action", name],
         "properties": {
@@ -396,17 +495,22 @@ mod tests {
     struct Backend(AtomicUsize);
 
     impl ProviderBackend for Backend {
-        fn ready(&self) -> Result<(), CapabilityError> { Ok(()) }
+        fn ready(&self) -> Result<(), CapabilityError> {
+            Ok(())
+        }
         fn execute(&self, _input: &Value) -> Result<Value, CapabilityError> {
             self.0.fetch_add(1, Ordering::SeqCst);
-            Ok(json!({"outputDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}))
+            Ok(
+                json!({"outputDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+            )
         }
     }
 
     #[test]
-    fn backend_is_only_invoked_by_authorized_agent_execution() {
+    fn conformance_checks_do_not_invoke_provider_effects() {
         let backend = Backend(AtomicUsize::new(0));
         let provider = Provider::new(package_manifest(), backend, vec![]);
+        assert_conforms(&provider).unwrap();
         assert_eq!(provider.backend.0.load(Ordering::SeqCst), 0);
         assert!(provider.activity(&json!({})).len() >= 2);
     }
