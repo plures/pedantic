@@ -376,6 +376,11 @@ impl ServiceFoundation {
             enrollment
                 .validate(now)
                 .map_err(|error| ServiceErrorKind::InvalidRequest(error.to_string()))?;
+            if enrollment.profile_id != self.profile_id {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "Agent enrollment belongs to a different profile.".into(),
+                ));
+            }
             let public_key = URL_SAFE_NO_PAD
                 .decode(&enrollment.public_key)
                 .map_err(|_| ServiceErrorKind::InvalidRequest("Agent public key is invalid.".into()))?;
