@@ -8,6 +8,8 @@ members = [
   "crates/pedantic-mcp",
   "crates/pedantic-service",
   "crates/pedantic-operation",
+  "crates/pedantic-capability",
+  "crates/pedantic-agent",
 ]
 
 [workspace.package]
@@ -28,3 +30,7 @@ tokio = { version = "1.46", features = ["rt-multi-thread", "macros", "process"] 
 tracing = "0.1"
 regex = "1.10"
 async-trait = "0.1"
+base64 = "0.22"
+ed25519-dalek = "2.2"
+sha2 = "0.10"
+jsonschema = "0.18"

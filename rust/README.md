@@ -6,6 +6,9 @@ Pure-Rust rewrite of Pedantic, a DSC v3 configuration management toolkit.
 
 - `pedantic-core` — domain model, parser, validator, planner, praxis engine
 - `pedantic-executor` — IO layer (invokes `dsc` and transports)
+- `pedantic-operation` — typed durable-operation contracts and projections
+- `pedantic-capability` — bounded local capability interfaces and DSC adapters
+- `pedantic-agent` — crash-safe local journal, grant validation, and recovery
 - `pedantic` — CLI
 
 ## CLI

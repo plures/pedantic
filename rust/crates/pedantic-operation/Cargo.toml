@@ -10,6 +10,7 @@ description = "Typed, deterministic durable-operation contracts and projections"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 jsonschema = "0.18"

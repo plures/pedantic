@@ -1,0 +1,15 @@
+[package]
+name = "pedantic-capability"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Local Pedantic capability interfaces and adapters"
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jsonschema.workspace = true
+sha2.workspace = true
+pedantic-operation = { path = "../pedantic-operation" }

@@ -2059,6 +2059,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "pedantic-agent"
+version = "0.8.0"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "pedantic-capability",
+ "pedantic-operation",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pedantic-capability"
+version = "0.8.0"
+dependencies = [
+ "jsonschema",
+ "pedantic-operation",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "pedantic-core"
 version = "0.8.0"
 dependencies = [
@@ -2117,11 +2144,12 @@ dependencies = [
 
 [[package]]
 name = "pedantic-operation"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "jsonschema",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
 ]
 

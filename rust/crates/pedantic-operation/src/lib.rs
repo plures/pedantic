@@ -3,6 +3,7 @@
 //! inputs from PX rather than reimplemented here.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
@@ -26,6 +27,114 @@ pub enum RetryClass {
     RequiresFreshAuthorization,
     RequiresOperatorReview,
     CompensateThenRetry,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RiskClass {
+    Low,
+    Moderate,
+    High,
+    Dangerous,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Idempotency {
+    Idempotent,
+    ObservationRequired,
+    NonIdempotent,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RedactionClass {
+    MetadataOnly,
+    NormalizedFindings,
+    ProtectedArtifactReference,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityManifest {
+    pub schema_version: String,
+    pub capability: String,
+    pub version: String,
+    pub risk_class: RiskClass,
+    pub retry_class: RetryClass,
+    pub idempotency: Idempotency,
+    pub redaction_class: RedactionClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires_approval: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires_checkpoint: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityReadiness {
+    pub schema_version: String,
+    pub capability: String,
+    pub version: String,
+    pub target_id: String,
+    pub agent_id: String,
+    pub observed_at: u64,
+    pub ready: bool,
+    pub redaction_class: RedactionClass,
+    #[serde(default)]
+    pub diagnostics: Vec<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Signature {
+    pub algorithm: String,
+    pub key_id: String,
+    pub payload_digest: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectAuthorization {
+    pub schema_version: String,
+    pub authorization_id: String,
+    pub issuer_id: String,
+    pub actor_id: String,
+    pub profile_id: String,
+    pub operation_id: String,
+    pub step_id: String,
+    pub attempt_id: String,
+    pub target_id: String,
+    pub agent_id: String,
+    pub capability: String,
+    pub input_digest: String,
+    pub idempotency_key: String,
+    pub fencing_token: u64,
+    pub retry_class: RetryClass,
+    pub risk_class: RiskClass,
+    pub reboot_permitted: bool,
+    pub issued_at: u64,
+    pub expires_at: u64,
+    pub revoked_at: u64,
+    pub signature: Signature,
+}
+
+impl EffectAuthorization {
+    pub fn signing_payload(&self) -> Vec<u8> {
+        let mut authorization = self.clone();
+        authorization.signature.value.clear();
+        authorization.signature.payload_digest.clear();
+        serde_json::to_vec(&authorization).expect("effect authorization is serializable")
+    }
+
+    pub fn digest(&self) -> String {
+        format!("sha256:{:x}", Sha256::digest(self.signing_payload()))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -201,6 +310,10 @@ pub struct OperationEvent {
     pub resulting_state: OperationState,
     pub operation_id: String,
     pub plan_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt_id: Option<String>,
     pub profile_id: String,
     pub actor_id: String,
     pub target_id: String,
@@ -208,6 +321,8 @@ pub struct OperationEvent {
     pub causation_id: String,
     pub correlation_id: String,
     pub sequence: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub occurred_at: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -462,6 +577,8 @@ mod tests {
             resulting_state: OperationState::Admitted,
             operation_id: "operation".into(),
             plan_id: "plan".into(),
+            step_id: None,
+            attempt_id: None,
             profile_id: "profile".into(),
             actor_id: "actor".into(),
             target_id: "target".into(),
@@ -469,6 +586,7 @@ mod tests {
             causation_id: "cause".into(),
             correlation_id: "correlation".into(),
             sequence: 1,
+            occurred_at: None,
         };
         projection.apply(&admitted).expect("first delivery");
         projection.apply(&admitted).expect("duplicate delivery");
@@ -523,6 +641,8 @@ mod tests {
             resulting_state: OperationState::Admitted,
             operation_id: "operation".into(),
             plan_id: "plan".into(),
+            step_id: None,
+            attempt_id: None,
             profile_id: "profile".into(),
             actor_id: "actor".into(),
             target_id: "target".into(),
@@ -530,6 +650,7 @@ mod tests {
             causation_id: "cause".into(),
             correlation_id: "correlation".into(),
             sequence,
+            occurred_at: None,
         }
     }
 
