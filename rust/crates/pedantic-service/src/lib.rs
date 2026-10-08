@@ -1462,6 +1462,14 @@ impl ServiceFoundation {
             "constraintId": approval.constraint_id,
             "result": approval,
         });
+        if let Some(existing) = self._store.get(&key) {
+            if existing.data != metadata {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "A remediation approval identifier cannot be reused for a different approval."
+                        .into(),
+                ));
+            }
+        }
         self._store
             .put(key.clone(), SERVICE_ACTOR, metadata.clone());
         let entry = self.timeline.build_entry(
