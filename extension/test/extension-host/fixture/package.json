@@ -1,7 +1,7 @@
 {
   "name": "pedantic-vsix-smoke-test",
   "publisher": "pedantic",
-  "version": "1.0.0",
+  "version": "0.10.0",
   "engines": {
     "vscode": ">=1.90.0"
   },
