@@ -66,6 +66,7 @@ pub struct TransferHostPreparationRequest {
     pub require_openssh: bool,
     pub require_bits: bool,
     pub require_transfer_keys: bool,
+    pub transfer_key_paths: Vec<String>,
     pub required_directories: Vec<String>,
 }
 
@@ -142,25 +143,18 @@ impl<B: TransferHostPreparationBackend> ProviderBackend for TransferHostPreparat
                 .get("requireTransferKeys")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            transfer_key_paths: input
+                .get("transferKeyPaths")
+                .and_then(Value::as_array)
+                .map(|values| string_array(values))
+                .transpose()?
+                .unwrap_or_default(),
             required_directories: input
                 .get("requiredDirectories")
                 .and_then(Value::as_array)
-                .map(|directories| {
-                    directories
-                        .iter()
-                        .map(Value::as_str)
-                        .collect::<Option<Vec<_>>>()
-                        .ok_or_else(|| {
-                            CapabilityError::InvalidInput(
-                                "requiredDirectories must contain strings".into(),
-                            )
-                        })
-                })
+                .map(|values| string_array(values))
                 .transpose()?
-                .unwrap_or_default()
-                .into_iter()
-                .map(Into::into)
-                .collect(),
+                .unwrap_or_default(),
         };
         let remediation = input.get("remediation").and_then(Value::as_str);
         Ok(self.backend.prepare(&request, remediation)?.into_value())
@@ -244,6 +238,7 @@ fn run_windows_transfer_preparation(
         "requireOpenSsh": request.require_openssh,
         "requireBits": request.require_bits,
         "requireTransferKeys": request.require_transfer_keys,
+        "transferKeyPaths": request.transfer_key_paths,
         "requiredDirectories": request.required_directories,
         "remediation": remediation,
     });
@@ -395,7 +390,11 @@ try {
     $outcome.diagnostics += "openssh_ready"
   }
   if ($plan.requireBits) { Set-Service -Name BITS -StartupType Automatic -ErrorAction Stop; Start-Service -Name BITS -ErrorAction Stop; $outcome.diagnostics += "bits_ready" }
-  if ($plan.requireTransferKeys) { $outcome.diagnostics += "transfer_keys_ready" }
+  if ($plan.requireTransferKeys) {
+    if (@($plan.transferKeyPaths).Count -eq 0) { throw "transfer key paths are required" }
+    foreach ($path in @($plan.transferKeyPaths)) { if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "transfer key is unavailable" } }
+    $outcome.diagnostics += "transfer_keys_ready"
+  }
   if ($plan.account) {
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) { $outcome.failureCategory = "ad_tooling_missing"; throw "AD tooling unavailable" }
     Import-Module ActiveDirectory -ErrorAction Stop
@@ -874,6 +873,15 @@ fn required_string<'a>(input: &'a Value, property: &str) -> Result<&'a str, Capa
         .ok_or_else(|| CapabilityError::InvalidInput(format!("{property} is required")))
 }
 
+fn string_array(values: &[Value]) -> Result<Vec<String>, CapabilityError> {
+    values
+        .iter()
+        .map(Value::as_str)
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| CapabilityError::InvalidInput("array values must be strings".into()))
+        .map(|values| values.into_iter().map(Into::into).collect())
+}
+
 fn enum_value<'a>(
     input: &'a Value,
     property: &str,
@@ -1084,6 +1092,7 @@ fn transfer_host_preparation_manifest() -> CapabilityManifest {
                 "requireOpenSsh": {"type": "boolean"},
                 "requireBits": {"type": "boolean"},
                 "requireTransferKeys": {"type": "boolean"},
+                "transferKeyPaths": {"type": "array", "items": {"type": "string", "minLength": 1}},
                 "requiredDirectories": {"type": "array", "items": {"type": "string", "minLength": 1}},
                 "remediation": {"type": "string", "minLength": 1}
             }
@@ -1403,6 +1412,7 @@ mod tests {
             "targetHost": "target",
             "account": "TRANSFER$",
             "requireBits": true,
+            "transferKeyPaths": ["C:\\ProgramData\\Pedantic\\transfer.key"],
             "requiredDirectories": ["C:\\ProgramData\\Pedantic"],
             "remediation": "transfer.host.retry/v1"
         });
@@ -1417,6 +1427,10 @@ mod tests {
         assert!(!requests[0].require_openssh);
         assert!(requests[0].require_bits);
         assert!(!requests[0].require_transfer_keys);
+        assert_eq!(
+            requests[0].transfer_key_paths,
+            vec!["C:\\ProgramData\\Pedantic\\transfer.key"]
+        );
         assert_eq!(
             requests[0].required_directories,
             vec!["C:\\ProgramData\\Pedantic"]

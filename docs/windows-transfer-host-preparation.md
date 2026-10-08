@@ -11,7 +11,8 @@ retrieval permission has just been granted to the host computer:
 
 1. Submit an authorization for `transfer.host-prepare/v1` with the target
    hostname, gMSA account, and only the required OpenSSH, BITS, key, and
-   directory flags.
+   directory flags. When keys are required, provide their local paths, never
+   key contents; each path is verified as a file.
 2. Verify the returned observation names the selected domain controller,
    reports `gmsa_ready` and `system_kerberos_refreshed`, and is `ready: true`.
    The adapter creates a one-shot task as `SYSTEM`; do not use WinRM
