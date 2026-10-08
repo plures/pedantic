@@ -174,9 +174,9 @@
         "revisionId": { "type": "string" },
         "decision": { "type": "string" },
         "constraintId": { "type": "string" },
-        "resourceCount": { "type": "integer", "minimum": 0 },
-        "compliantResourceCount": { "type": "integer", "minimum": 0 },
-        "driftedResourceCount": { "type": "integer", "minimum": 0 },
+        "resourceCount": { "type": ["integer", "null"], "minimum": 0 },
+        "compliantResourceCount": { "type": ["integer", "null"], "minimum": 0 },
+        "driftedResourceCount": { "type": ["integer", "null"], "minimum": 0 },
         "reason": { "type": "string" }
       }
     }

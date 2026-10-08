@@ -35,6 +35,14 @@ entity ComplianceObservation:
     profile_id: String
     source_digest: String
     request_decision: String
+    observed_at: int
+
+entity CurrentEvidence:
+  prefix: "pedantic:compliance-current:"
+  fields:
+    revision_id: String
+    observation_id: String
+    observed_at: int
 
 entity EffectAuthorization:
   prefix: "pedantic:effect-authorization:"
@@ -71,6 +79,7 @@ entity RemediationExecution:
   fields:
     execution_id: String
     authorization_id: String
+    observation_id: String
     idempotency_key: String
     source_digest: String
     decision: String
@@ -147,6 +156,20 @@ constraint remediation_requires_drifted_observation:
   severity: error
   message: "Remediation requires a recorded compliance observation with drift."
 
+constraint remediation_requires_current_observation:
+  scope: remediation_request
+  phase: admission
+  require: observation.observation_id == current_evidence.observation_id
+  severity: error
+  message: "Remediation requires the current compliance observation."
+
+constraint remediation_requires_fresh_observation:
+  scope: remediation_request
+  phase: admission
+  require: observation.observed_at >= current_evidence.minimum_observed_at
+  severity: error
+  message: "Remediation requires a fresh compliance observation."
+
 constraint remediation_requires_matching_revision:
   scope: remediation_request
   phase: admission
@@ -202,6 +225,20 @@ constraint remediation_execution_requires_matching_idempotency_key:
   require: authorization.idempotency_key == execution.idempotency_key
   severity: error
   message: "Remediation execution must use the authorization idempotency key."
+
+constraint remediation_execution_requires_current_observation:
+  scope: remediation_execution
+  phase: execution
+  require: execution.observation_id == current_evidence.observation_id
+  severity: error
+  message: "Remediation execution requires the current compliance observation."
+
+constraint remediation_execution_requires_fresh_observation:
+  scope: remediation_execution
+  phase: execution
+  require: observation.observed_at >= current_evidence.minimum_observed_at
+  severity: error
+  message: "Remediation execution requires a fresh compliance observation."
 
 procedure admit_configuration_revision(revision: ConfigurationRevision from "configuration_revisions") -> AdmissionDecision into "admission_decisions":
   given: "Admit a configuration revision only when its source and validation evidence are acceptable"
