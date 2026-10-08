@@ -133,6 +133,8 @@ jobs:
 
   extension-ci:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: extension
