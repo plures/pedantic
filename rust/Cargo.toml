@@ -7,6 +7,7 @@ members = [
   "crates/pedantic-node",
   "crates/pedantic-mcp",
   "crates/pedantic-service",
+  "crates/pedantic-operation",
 ]
 
 [workspace.package]

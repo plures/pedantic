@@ -1,0 +1,48 @@
+# PX is the sole issuer of bounded effect authorizations.
+
+entity DurableEffectAuthorization:
+  prefix: "pedantic:durable-effect-authorization:"
+  fields:
+    authorization_id: String
+    issuer_id: String
+    actor_id: String
+    profile_id: String
+    operation_id: String
+    step_id: String
+    attempt_id: String
+    target_id: String
+    agent_id: String
+    capability: String
+    input_digest: String
+    idempotency_key: String
+    fencing_token: int
+    retry_class: String
+    risk_class: String
+    reboot_permitted: bool
+    issued_at: int
+    expires_at: int
+    revoked_at: int
+    signature_algorithm: String
+    signing_key_id: String
+    signature_payload_digest: String
+    signature: String
+    decision: String
+
+constraint durable_authorization_is_bound:
+  scope: durable_effect_authorization
+  phase: execution
+  require: authorization.authorization_id != "" AND authorization.issuer_id != "" AND authorization.actor_id != "" AND authorization.profile_id != "" AND authorization.operation_id != "" AND authorization.step_id != "" AND authorization.attempt_id != "" AND authorization.target_id != "" AND authorization.agent_id != "" AND authorization.capability != "" AND authorization.input_digest != "" AND authorization.idempotency_key != "" AND authorization.fencing_token > 0 AND authorization.retry_class != "" AND authorization.risk_class != "" AND authorization.signature_algorithm == "Ed25519" AND authorization.signing_key_id != "" AND authorization.signature_payload_digest != "" AND authorization.signature != ""
+  severity: error
+  message: "Effect authorization must bind all signed identities, policy, validity, revocation, and signature fields."
+
+constraint durable_authorization_has_validity_window:
+  scope: durable_effect_authorization
+  phase: execution
+  require: authorization.issued_at >= 0 AND authorization.expires_at > authorization.issued_at AND authorization.revoked_at >= 0
+  severity: error
+  message: "Effect authorization must have a valid bounded lifetime and explicit revocation state."
+
+procedure authorize_effect(authorization: DurableEffectAuthorization from "durable_effect_authorizations") -> DurableEffectAuthorization into "durable_effect_authorizations":
+  given: "Issue an expiring signed grant only after PX approval and admission"
+  evaluate_effect_authorization authorization -> $decision
+  return {authorization_id: authorization.authorization_id, issuer_id: authorization.issuer_id, actor_id: authorization.actor_id, profile_id: authorization.profile_id, operation_id: authorization.operation_id, step_id: authorization.step_id, attempt_id: authorization.attempt_id, target_id: authorization.target_id, agent_id: authorization.agent_id, capability: authorization.capability, input_digest: authorization.input_digest, idempotency_key: authorization.idempotency_key, fencing_token: authorization.fencing_token, retry_class: authorization.retry_class, risk_class: authorization.risk_class, reboot_permitted: authorization.reboot_permitted, issued_at: authorization.issued_at, expires_at: authorization.expires_at, revoked_at: authorization.revoked_at, signature_algorithm: authorization.signature_algorithm, signing_key_id: authorization.signing_key_id, signature_payload_digest: authorization.signature_payload_digest, signature: authorization.signature, decision: $decision.value}

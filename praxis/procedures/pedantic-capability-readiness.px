@@ -1,0 +1,23 @@
+# PX owns readiness eligibility; providers only emit bounded observations.
+
+entity CapabilityReadiness:
+  prefix: "pedantic:capability-readiness:"
+  fields:
+    capability: String
+    capability_version: String
+    target_id: String
+    agent_id: String
+    observed_at: int
+    decision: String
+
+constraint capability_readiness_requires_fresh_identity:
+  scope: capability_readiness
+  phase: admission
+  require: readiness.capability != "" AND readiness.capability_version != "" AND readiness.target_id != "" AND readiness.agent_id != "" AND readiness.observed_at > 0
+  severity: error
+  message: "Capability readiness requires a fresh identified target observation."
+
+procedure decide_capability_readiness(readiness: CapabilityReadiness from "capability_readiness") -> CapabilityReadiness into "capability_readiness":
+  given: "Determine capability eligibility from redacted provider readiness observations"
+  evaluate_capability_readiness readiness -> $decision
+  return {capability: readiness.capability, capability_version: readiness.capability_version, target_id: readiness.target_id, agent_id: readiness.agent_id, observed_at: readiness.observed_at, decision: $decision.value}

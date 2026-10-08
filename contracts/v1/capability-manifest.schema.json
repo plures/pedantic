@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/capability-manifest.schema.json",
+  "title": "Pedantic capability manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "capability", "version", "riskClass", "retryClass", "idempotency", "redactionClass"],
+  "properties": {
+    "schemaVersion": { "const": "pedantic.capability-manifest.v1" }, "capability": { "type": "string", "minLength": 1 }, "version": { "type": "string", "pattern": "^v[1-9][0-9]*$" },
+    "riskClass": { "enum": ["low", "moderate", "high", "dangerous"] }, "retryClass": { "enum": ["never", "safe", "safe-after-observation", "requires-fresh-authorization", "requires-operator-review", "compensate-then-retry"] },
+    "idempotency": { "enum": ["idempotent", "observation-required", "non-idempotent"] }, "redactionClass": { "enum": ["metadata-only", "normalized-findings", "protected-artifact-reference"] },
+    "requiresApproval": { "type": "boolean" }, "requiresCheckpoint": { "type": "boolean" }, "inputSchema": { "type": "object" }, "outputSchema": { "type": "object" }
+  }
+}

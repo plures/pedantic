@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "pedantic.effect-request.v1",
+  "commandId": "command-1",
+  "authorizationId": "authorization-1",
+  "operationId": "operation-1",
+  "stepId": "step-1",
+  "attemptId": "attempt-1",
+  "targetId": "target-1",
+  "agentId": "agent-1",
+  "capability": "dsc.config.apply/v1",
+  "inputDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "idempotencyKey": "key-1",
+  "fencingToken": 1,
+  "causationId": "cause-1",
+  "correlationId": "correlation-1",
+  "secretReferences": ["secret/db-password"]
+}

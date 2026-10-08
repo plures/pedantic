@@ -1,0 +1,22 @@
+# Retry decisions are PX-owned and never inferred by an adapter.
+
+entity RetryDecision:
+  prefix: "pedantic:retry:"
+  fields:
+    operation_id: String
+    step_id: String
+    retry_class: String
+    prior_outcome: String
+    decision: String
+
+constraint retry_requires_identity:
+  scope: retry_decision
+  phase: admission
+  require: retry.operation_id != "" AND retry.step_id != "" AND retry.retry_class != "" AND retry.prior_outcome != ""
+  severity: error
+  message: "Retry decisions require the operation, step, class, and observed outcome."
+
+procedure decide_retry(retry: RetryDecision from "retry_decisions") -> RetryDecision into "retry_decisions":
+  given: "Allow retries only from explicit PX retry-class and observation evidence"
+  evaluate_retry_policy retry -> $decision
+  return {operation_id: retry.operation_id, step_id: retry.step_id, retry_class: retry.retry_class, prior_outcome: retry.prior_outcome, decision: $decision.value}

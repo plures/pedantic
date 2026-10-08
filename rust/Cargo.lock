@@ -2116,6 +2116,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pedantic-operation"
+version = "0.7.0"
+dependencies = [
+ "jsonschema",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "pedantic-service"
 version = "0.7.0"
 dependencies = [

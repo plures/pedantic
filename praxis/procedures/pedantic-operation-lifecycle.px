@@ -1,0 +1,56 @@
+# Durable operation lifecycle policy. Effects are never performed by PX.
+
+entity OperationLifecycle:
+  prefix: "pedantic:operation:"
+  fields:
+    operation_id: String
+    profile_id: String
+    actor_id: String
+    target_id: String
+    state: String
+    event_type: String
+    resulting_state: String
+    total_steps: int
+    completed_steps: int
+    causation_id: String
+    correlation_id: String
+
+constraint operation_requires_identity:
+  scope: operation_lifecycle
+  phase: admission
+  require: operation.operation_id != "" AND operation.profile_id != "" AND operation.actor_id != "" AND operation.target_id != ""
+  severity: error
+  message: "Operations require operation, profile, actor, and target identities."
+
+constraint operation_requires_causal_links:
+  scope: operation_lifecycle
+  phase: admission
+  require: operation.causation_id != "" AND operation.correlation_id != ""
+  severity: error
+  message: "Operations require causation and correlation identities."
+
+constraint terminal_operation_outcomes_are_immutable:
+  scope: operation_lifecycle
+  phase: execution
+  require: (operation.state != "Succeeded" AND operation.state != "Failed" AND operation.state != "Cancelled") OR operation.state == operation.resulting_state
+  severity: error
+  message: "A terminal operation outcome cannot be changed by a later event."
+
+constraint operation_transition_is_px_authorized:
+  scope: operation_lifecycle
+  phase: execution
+  require: (operation.state == "Requested" AND operation.event_type == "operation.requested" AND operation.resulting_state == "Requested") OR (operation.state == "Requested" AND operation.event_type == "operation.admitted" AND operation.resulting_state == "Admitted") OR (operation.state == "Requested" AND operation.event_type == "operation.rejected" AND operation.resulting_state == "Failed") OR (operation.state == "Admitted" AND operation.event_type == "operation.authorized" AND operation.resulting_state == "Authorized") OR (operation.state == "Authorized" AND operation.event_type == "preparation.started" AND operation.resulting_state == "Preparing") OR (operation.state == "Preparing" AND operation.event_type == "preparation.completed" AND operation.resulting_state == "Prepared") OR (operation.state == "Prepared" AND operation.event_type == "step.offered" AND operation.resulting_state == "Queued") OR (operation.state == "Queued" AND operation.event_type == "step.offered" AND operation.resulting_state == "Queued") OR (operation.state == "Queued" AND (operation.event_type == "step.leased" OR operation.event_type == "step.started") AND operation.resulting_state == "Running") OR (operation.state == "Running" AND (operation.event_type == "step.offered" OR operation.event_type == "step.leased" OR operation.event_type == "step.started") AND operation.resulting_state == "Running") OR (operation.state == "Running" AND (operation.event_type == "step.progressed" OR operation.event_type == "step.heartbeat") AND operation.resulting_state == "Running") OR (operation.state == "Running" AND operation.event_type == "step.suspended" AND operation.resulting_state == "Waiting") OR (operation.state == "Waiting" AND operation.event_type == "step.resumed" AND operation.resulting_state == "Running") OR (operation.state == "Running" AND operation.event_type == "step.reboot_requested" AND operation.resulting_state == "AwaitingReboot") OR (operation.state == "AwaitingReboot" AND operation.event_type == "step.reboot_observed" AND operation.resulting_state == "Running") OR (operation.state == "Running" AND operation.event_type == "step.needs_review" AND operation.resulting_state == "NeedsReview") OR (operation.state == "Running" AND operation.event_type == "step.completed" AND operation.resulting_state == "Running") OR (operation.state == "Running" AND operation.event_type == "operation.succeeded" AND operation.resulting_state == "Succeeded") OR (operation.state == "Running" AND (operation.event_type == "step.failed" OR operation.event_type == "operation.failed") AND operation.resulting_state == "Failed") OR ((operation.state == "Requested" OR operation.state == "Admitted" OR operation.state == "Authorized" OR operation.state == "Preparing" OR operation.state == "Prepared" OR operation.state == "Queued" OR operation.state == "Running" OR operation.state == "Waiting" OR operation.state == "AwaitingReboot" OR operation.state == "NeedsReview") AND operation.event_type == "operation.cancelled" AND operation.resulting_state == "Cancelled") OR (operation.state == "Succeeded" AND operation.event_type == "evidence.finalized" AND operation.resulting_state == "Succeeded") OR (operation.state == "Failed" AND operation.event_type == "evidence.finalized" AND operation.resulting_state == "Failed") OR (operation.state == "Cancelled" AND operation.event_type == "evidence.finalized" AND operation.resulting_state == "Cancelled")
+  severity: error
+  message: "Only the declared lifecycle transitions may be recorded."
+
+constraint operation_success_requires_all_steps_complete:
+  scope: operation_lifecycle
+  phase: execution
+  require: operation.total_steps > 0 AND operation.completed_steps >= 0 AND operation.completed_steps <= operation.total_steps AND (operation.event_type != "operation.succeeded" OR operation.completed_steps == operation.total_steps)
+  severity: error
+  message: "An operation can succeed only after every declared step is complete."
+
+procedure transition_operation(operation: OperationLifecycle from "operation_lifecycle") -> OperationLifecycle into "operation_lifecycle":
+  given: "Record PX-approved lifecycle transitions before a coordinator offers effects"
+  evaluate_operation_transition operation -> $decision
+  return {operation_id: operation.operation_id, profile_id: operation.profile_id, actor_id: operation.actor_id, target_id: operation.target_id, event_type: operation.event_type, resulting_state: $decision.state, causation_id: operation.causation_id, correlation_id: operation.correlation_id}
