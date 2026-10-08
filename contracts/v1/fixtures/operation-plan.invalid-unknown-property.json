@@ -4,6 +4,15 @@
   "operationId": "operation-1",
   "profileId": "default",
   "targetId": "target-1",
-  "steps": [],
+  "steps": [
+    {
+      "stepId": "validate",
+      "stage": "preparation",
+      "capability": "dsc.config.validate/v1",
+      "dependsOn": [],
+      "retryClass": "safe",
+      "inputDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
   "unexpected": true
 }

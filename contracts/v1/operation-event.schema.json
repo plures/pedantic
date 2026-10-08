@@ -4,11 +4,12 @@
   "title": "Pedantic immutable operation event",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "eventId", "eventType", "operationId", "planId", "profileId", "actorId", "targetId", "agentId", "causationId", "correlationId", "sequence"],
+  "required": ["schemaVersion", "eventId", "eventType", "resultingState", "operationId", "planId", "profileId", "actorId", "targetId", "agentId", "causationId", "correlationId", "sequence"],
   "properties": {
     "schemaVersion": { "const": "pedantic.operation-event.v1" },
     "eventId": { "$ref": "#/definitions/id" },
     "eventType": { "enum": ["operation.requested", "operation.admitted", "operation.rejected", "operation.authorized", "operation.cancelled", "preparation.started", "preparation.completed", "step.offered", "step.leased", "step.started", "step.progressed", "step.heartbeat", "step.suspended", "step.resumed", "step.reboot_requested", "step.reboot_observed", "step.completed", "step.failed", "step.needs_review", "operation.succeeded", "operation.failed", "evidence.finalized"] },
+    "resultingState": { "$ref": "#/definitions/state" },
     "operationId": { "$ref": "#/definitions/id" },
     "planId": { "$ref": "#/definitions/id" },
     "stepId": { "$ref": "#/definitions/id" },
@@ -25,5 +26,8 @@
     "sequence": { "type": "integer", "minimum": 1 },
     "occurredAt": { "type": "integer", "minimum": 0 }
   },
-  "definitions": { "id": { "type": "string", "minLength": 1, "maxLength": 256 } }
+  "definitions": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "state": { "enum": ["Requested", "Admitted", "Authorized", "Preparing", "Prepared", "Queued", "Running", "Waiting", "AwaitingReboot", "NeedsReview", "Succeeded", "Failed", "Cancelled"] }
+  }
 }

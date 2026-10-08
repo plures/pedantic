@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "pedantic.effect-authorization.v1",
+  "authorizationId": "authorization-1",
+  "issuerId": "px",
+  "actorId": "user-1",
+  "profileId": "default",
+  "operationId": "operation-1",
+  "stepId": "step-1",
+  "attemptId": "attempt-1",
+  "targetId": "target-1",
+  "agentId": "agent-1",
+  "capability": "dsc.config.apply/v1",
+  "inputDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "idempotencyKey": "key-1",
+  "fencingToken": 1,
+  "retryClass": "never",
+  "riskClass": "high",
+  "rebootPermitted": false,
+  "issuedAt": 1,
+  "expiresAt": 3600,
+  "revokedAt": 0,
+  "signature": {
+    "algorithm": "Ed25519",
+    "keyId": "px-key-1",
+    "payloadDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  }
+}

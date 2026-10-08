@@ -11,7 +11,8 @@
       "capability": "dsc.config.validate/v1",
       "dependsOn": [],
       "retryClass": "safe",
-      "inputDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "inputDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "secretReferences": ["secret/db-password"]
     }
   ]
 }

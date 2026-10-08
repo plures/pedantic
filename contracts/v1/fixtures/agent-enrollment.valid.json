@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "pedantic.agent-enrollment.v1",
+  "enrollmentId": "enrollment-1",
+  "agentId": "agent-1",
+  "targetId": "target-1",
+  "profileId": "default",
+  "publicKey": "ed25519-public-key",
+  "issuedAt": 1,
+  "expiresAt": 3600,
+  "secretReferences": ["secret/agent-key"]
+}
