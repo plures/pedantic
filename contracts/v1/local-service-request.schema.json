@@ -18,6 +18,8 @@
         "compliance.observe",
         "remediation.request",
         "remediation.approve",
+        "approval.record",
+        "effect.authorize",
         "remediation.execute"
       ]
     },
@@ -147,7 +149,7 @@
       }
     },
     {
-      "if": { "properties": { "method": { "const": "remediation.approve" } } },
+      "if": { "properties": { "method": { "enum": ["remediation.approve", "approval.record", "effect.authorize"] } } },
       "then": {
         "required": ["params"],
         "properties": {

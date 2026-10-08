@@ -79,8 +79,19 @@ enum ServiceKind {
         #[arg(long)]
         idempotency_key: String,
     },
-    /// Record an explicit approval and issue a narrow local DSC-set authorization.
+    /// Record an explicit approval for a remediation request.
     RemediationApprove {
+        #[arg(long)]
+        approval_id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        actor_id: String,
+        #[arg(long)]
+        approved: bool,
+    },
+    /// Issue a narrow local DSC-set authorization for a recorded approval.
+    EffectAuthorize {
         #[arg(long)]
         approval_id: String,
         #[arg(long)]
@@ -187,7 +198,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } => {
                     query_service(
                         &profile,
-                        "remediation.approve",
+                        "approval.record",
+                        approval_id.clone(),
+                        serde_json::json!({
+                            "approvalId": approval_id,
+                            "requestId": request_id,
+                            "actorId": actor_id,
+                            "approved": approved,
+                        }),
+                    )
+                    .await?
+                }
+                ServiceKind::EffectAuthorize {
+                    approval_id,
+                    request_id,
+                    actor_id,
+                    approved,
+                } => {
+                    query_service(
+                        &profile,
+                        "effect.authorize",
                         approval_id.clone(),
                         serde_json::json!({
                             "approvalId": approval_id,
@@ -359,5 +389,30 @@ mod tests {
             }
             _ => panic!("expected guarded remediation execution command"),
         }
+    }
+
+    #[test]
+    fn parses_the_effect_authorization_command() {
+        let cli = Cli::try_parse_from([
+            "pedantic",
+            "service",
+            "effect-authorize",
+            "--approval-id",
+            "approval-1",
+            "--request-id",
+            "request-1",
+            "--actor-id",
+            "reviewer@example.test",
+            "--approved",
+        ])
+        .expect("parse effect authorization command");
+
+        assert!(matches!(
+            cli.command,
+            Commands::Service {
+                kind: ServiceKind::EffectAuthorize { .. },
+                ..
+            }
+        ));
     }
 }
