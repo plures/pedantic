@@ -145,7 +145,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 20.19.0
           cache: npm
           cache-dependency-path: extension/package-lock.json
 
@@ -169,6 +169,9 @@ jobs:
 
       - name: Package VSIX
         run: npm run package
+
+      - name: Smoke-test VSIX in VS Code 1.90
+        run: xvfb-run -a npm run test:vsix -- pedantic-dsc.vsix
 
       - name: Assert VSIX contents and size
         run: |

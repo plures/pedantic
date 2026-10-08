@@ -5,7 +5,7 @@
   "version": "0.9.0",
   "engines": {
     "vscode": ">=1.90.0",
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "publisher": "pedantic",
   "license": "BUSL-1.1",
@@ -145,6 +145,7 @@
     "lint": "eslint src test --max-warnings 0",
     "build": "npm run bundle",
     "test": "npm run test:build && node --test dist-test/test/goldenTests.test.js dist-test/test/inventoryService.test.js dist-test/test/sudoParser.test.js dist-test/test/logic/dsl-logic.test.js dist-test/test/logic/praxis-core.test.js dist-test/test/logic/reactive-state.test.js",
+    "test:vsix": "node test/extension-host/run.cjs",
     "test:build": "tsc -p tsconfig.test.json"
   },
   "devDependencies": {

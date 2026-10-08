@@ -144,7 +144,7 @@ npm run compile
 
 The extension supports VS Code 1.90 and later and is type-checked against the
 matching 1.90 VS Code API declarations. Building and packaging require Node.js
-20 or later.
+20.19.0 or later.
 
 ### Running Tests
 
