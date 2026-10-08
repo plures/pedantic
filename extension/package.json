@@ -138,7 +138,7 @@
   },
   "scripts": {
     "compile": "tsc -p . --noEmit",
-    "bundle": "npm run compile && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --outfile=dist/extension.js && node -e \"const fs = require('node:fs'); fs.mkdirSync('dist/vendor', { recursive: true }); fs.copyFileSync('node_modules/echarts/dist/echarts.min.js', 'dist/vendor/echarts.min.js');\"",
+    "bundle": "npm run compile && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && esbuild src/extension.ts src/server/server.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --outdir=dist --outbase=src && node -e \"const fs = require('node:fs'); fs.mkdirSync('dist/vendor', { recursive: true }); fs.copyFileSync('node_modules/echarts/dist/echarts.min.js', 'dist/vendor/echarts.min.js');\"",
     "vscode:prepublish": "npm run bundle",
     "watch": "tsc -w -p .",
     "package": "npm run lint && npm test && vsce package --out pedantic-dsc.vsix",
