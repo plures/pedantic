@@ -1,18 +1,22 @@
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use jsonschema::{Draft, JSONSchema};
 use pedantic_executor::dsc::{
     DscCommand, DscError, DscInput, DscRunOptions, DscTestResult, parse_test_results, run_dsc,
 };
 use pedantic_executor::inventory::{HostRecord, parse_hosts};
+use pedantic_operation::{EffectAuthorization, RetryClass, RiskClass, Signature as GrantSignature};
 use pluresdb::{CrdtStore, SledStorage, StorageEngine};
 use pluresdb_chronos::{ChronosAction, ChronosEntry, ChronosTimeline};
 use px_ast::{ConstraintDecl, Statement};
 use px_eval::{ConstraintOutcome, PureFunctionRegistry};
+use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     future::Future,
-    io,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -36,7 +40,19 @@ const CONFIGURATION_LIFECYCLE_SOURCE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../praxis/procedures/pedantic-configuration-lifecycle.px"
 ));
+const EFFECT_AUTHORIZATION_SOURCE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../praxis/procedures/pedantic-effect-authorization.px"
+));
+const EFFECT_AUTHORIZATION_SCHEMA: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../contracts/v1/effect-authorization.schema.json"
+));
+const EFFECT_AUTHORIZATION_SCHEMA_VERSION: &str = "pedantic.effect-authorization.v1";
+const EFFECT_AUTHORIZATION_LIFETIME: Duration = Duration::from_secs(5 * 60);
 static CONFIGURATION_CONSTRAINTS: OnceLock<Result<Vec<ConstraintDecl>, String>> = OnceLock::new();
+static EFFECT_AUTHORIZATION_CONSTRAINTS: OnceLock<Result<Vec<ConstraintDecl>, String>> =
+    OnceLock::new();
 
 /// A bounded, redacted projection of a Chronos entry for local clients.
 ///
@@ -225,6 +241,8 @@ pub struct RemediationApproval {
     pub request_id: String,
     #[serde(rename = "authorizationId")]
     pub authorization_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<EffectAuthorization>,
     pub decision: String,
     #[serde(rename = "constraintId")]
     pub constraint_id: String,
@@ -272,6 +290,7 @@ pub struct ServiceFoundation {
     timeline: ChronosTimeline,
     _store: Arc<CrdtStore>,
     revision_lock: tokio::sync::Mutex<()>,
+    authorization_signing_key: SigningKey,
 }
 
 impl ServiceFoundation {
@@ -292,6 +311,7 @@ impl ServiceFoundation {
             ));
         }
         std::fs::create_dir_all(store_path)?;
+        let authorization_signing_key = load_or_create_authorization_signing_key(store_path)?;
         let storage = Arc::new(SledStorage::open(store_path).map_err(|error| {
             ServiceErrorKind::Foundation(format!("Unable to open profile PluresDB store: {error}"))
         })?);
@@ -303,6 +323,7 @@ impl ServiceFoundation {
             timeline,
             _store: store,
             revision_lock: tokio::sync::Mutex::new(()),
+            authorization_signing_key,
         };
         Ok(foundation)
     }
@@ -843,6 +864,7 @@ impl ServiceFoundation {
             approval_id: request.approval_id,
             request_id: request.request_id,
             authorization_id: None,
+            authorization: None,
             decision: if accepted {
                 "accepted".into()
             } else {
@@ -920,10 +942,11 @@ impl ServiceFoundation {
             "idempotencyKey",
             "Recorded remediation request is missing its idempotency key.",
         )?;
-        let authorization_id = request.approval_id;
+        let authorization_id = request.approval_id.clone();
         let authorization_key = self.effect_authorization_key(&authorization_id);
-        if let Some(existing) = self._store.get(&authorization_key) {
+        let (authorization, policy) = if let Some(existing) = self._store.get(&authorization_key) {
             let matches = existing.data["requestId"].as_str() == Some(&request.request_id)
+                && existing.data["actorId"].as_str() == Some(&request.actor_id)
                 && existing.data["revisionId"].as_str() == Some(&revision_id)
                 && existing.data["sourceDigest"].as_str() == Some(&source_digest)
                 && existing.data["idempotencyKey"].as_str() == Some(&idempotency_key)
@@ -933,23 +956,197 @@ impl ServiceFoundation {
                     "An approval identifier is already bound to a different authorization.".into(),
                 ));
             }
+            let authorization: EffectAuthorization = serde_json::from_value(
+                existing.data["authorization"].clone(),
+            )
+            .map_err(|error| {
+                ServiceErrorKind::Foundation(format!(
+                    "Recorded effect authorization is invalid: {error}"
+                ))
+            })?;
+            validate_signed_effect_authorization(
+                &authorization,
+                &self.authorization_signing_key.verifying_key(),
+                &EffectAuthorizationBindings {
+                    profile_id: &self.profile_id,
+                    agent_id: SERVICE_ACTOR,
+                    actor_id: &request.actor_id,
+                    authorization_id: &authorization_id,
+                    request_id: &request.request_id,
+                    input_digest: &source_digest,
+                    idempotency_key: &idempotency_key,
+                },
+            )?;
+            let policy = authorization_decision_from_record(&existing.data)?;
+            if !policy.accepted {
+                return Err(ServiceErrorKind::InvalidRequest(policy.reason));
+            }
+            (authorization, policy)
         } else {
-            self.record_effect_authorization(
-                &authorization_id,
-                &request.request_id,
-                &revision_id,
+            let policy = self.evaluate_effect_authorization_policy(
+                &request,
+                &approval.data,
+                &remediation.data,
+                &revision.data,
                 &source_digest,
                 &idempotency_key,
             )?;
+            if !policy.accepted {
+                return Err(ServiceErrorKind::InvalidRequest(policy.reason));
+            }
+            let authorization = self.mint_effect_authorization(
+                &authorization_id,
+                &request,
+                &source_digest,
+                &idempotency_key,
+            )?;
+            validate_effect_authorization_constraints(&authorization)?;
+            validate_effect_authorization_schema(&authorization)?;
+            self.record_effect_authorization(&authorization, &request.actor_id, &policy)?;
+            (authorization, policy)
+        };
+        if self
+            ._store
+            .get(&authorization_key)
+            .is_some_and(|record| record.data["evidenceRecorded"].as_bool() != Some(true))
+        {
+            self.record_effect_authorization(&authorization, &request.actor_id, &policy)?;
         }
         Ok(RemediationApproval {
             approval_id: authorization_id.clone(),
             request_id: request.request_id,
             authorization_id: Some(authorization_id),
-            decision: "accepted".into(),
-            constraint_id: "remediation_approval_requires_explicit_approval".into(),
-            reason: "PX issued a DSC set authorization for the recorded approval.".into(),
+            authorization: Some(authorization),
+            decision: if policy.accepted {
+                "accepted".into()
+            } else {
+                "rejected".into()
+            },
+            constraint_id: policy.constraint_id,
+            reason: policy.reason,
         })
+    }
+
+    fn evaluate_effect_authorization_policy(
+        &self,
+        request: &RemediationApprovalRequest,
+        approval: &serde_json::Value,
+        remediation: &serde_json::Value,
+        revision: &serde_json::Value,
+        source_digest: &str,
+        idempotency_key: &str,
+    ) -> Result<PxConstraintDecision, ServiceErrorKind> {
+        let variables = HashMap::from([
+            (
+                "approval".to_owned(),
+                serde_json::json!({
+                    "approved": approval["approved"],
+                    "decision": approval["decision"],
+                    "request_id": approval["requestId"],
+                    "actor_id": approval["actorId"],
+                }),
+            ),
+            (
+                "remediation".to_owned(),
+                serde_json::json!({
+                    "decision": remediation["decision"],
+                    "request_id": remediation["requestId"],
+                    "revision_id": remediation["revisionId"],
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            (
+                "revision".to_owned(),
+                serde_json::json!({
+                    "revision_id": revision["revisionId"],
+                    "source_digest": revision["sourceDigest"],
+                    "admission_state": revision["admissionState"],
+                    "validation_state": revision["validationState"],
+                }),
+            ),
+            (
+                "profile".to_owned(),
+                serde_json::json!({ "profile_id": self.profile_id }),
+            ),
+            (
+                "authorization".to_owned(),
+                serde_json::json!({
+                    "actor_id": request.actor_id,
+                    "profile_id": self.profile_id,
+                    "operation_id": request.request_id,
+                    "target_id": self.profile_id,
+                    "agent_id": SERVICE_ACTOR,
+                    "capability": "dsc.config.apply/v1",
+                    "input_digest": source_digest,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+        ]);
+        evaluate_effect_authorization_constraint(
+            "effect authorization",
+            "durable_authorization_requires_accepted_approval",
+            &variables,
+        )
+    }
+
+    fn mint_effect_authorization(
+        &self,
+        authorization_id: &str,
+        request: &RemediationApprovalRequest,
+        source_digest: &str,
+        idempotency_key: &str,
+    ) -> Result<EffectAuthorization, ServiceErrorKind> {
+        let issued_at = current_unix_timestamp();
+        let expires_at = issued_at.saturating_add(EFFECT_AUTHORIZATION_LIFETIME.as_secs());
+        let fencing_token_key = format!("pedantic:effect-authorization-fence:{}", self.profile_id);
+        let fencing_token = self
+            ._store
+            .get(&fencing_token_key)
+            .and_then(|record| record.data["value"].as_u64())
+            .unwrap_or_default()
+            .saturating_add(1)
+            .max(1);
+        self._store.put(
+            fencing_token_key,
+            SERVICE_ACTOR,
+            serde_json::json!({ "profileId": self.profile_id, "value": fencing_token }),
+        );
+        let key_id = authorization_signing_key_id(&self.authorization_signing_key);
+        let mut authorization = EffectAuthorization {
+            schema_version: EFFECT_AUTHORIZATION_SCHEMA_VERSION.into(),
+            authorization_id: authorization_id.into(),
+            issuer_id: "px".into(),
+            actor_id: request.actor_id.clone(),
+            profile_id: self.profile_id.clone(),
+            operation_id: request.request_id.clone(),
+            step_id: "dsc-config-set".into(),
+            attempt_id: authorization_id.into(),
+            target_id: self.profile_id.clone(),
+            agent_id: SERVICE_ACTOR.into(),
+            capability: "dsc.config.apply/v1".into(),
+            input_digest: source_digest.into(),
+            idempotency_key: idempotency_key.into(),
+            fencing_token,
+            retry_class: RetryClass::RequiresFreshAuthorization,
+            risk_class: RiskClass::High,
+            reboot_permitted: false,
+            issued_at,
+            expires_at,
+            revoked_at: 0,
+            signature: GrantSignature {
+                algorithm: "Ed25519".into(),
+                key_id,
+                payload_digest: String::new(),
+                value: String::new(),
+            },
+        };
+        authorization.signature.payload_digest = authorization.digest();
+        authorization.signature.value = URL_SAFE_NO_PAD.encode(
+            self.authorization_signing_key
+                .sign(&authorization.signing_payload())
+                .to_bytes(),
+        );
+        Ok(authorization)
     }
 
     /// Runs `dsc config set` locally after PX checks have accepted a persisted
@@ -960,6 +1157,38 @@ impl ServiceFoundation {
     ) -> Result<RemediationExecution, ServiceErrorKind> {
         let _revision_guard = self.revision_lock.lock().await;
         let document_digest = format!("sha256:{:x}", Sha256::digest(request.document.as_bytes()));
+        let idempotency_key = self.remediation_execution_idempotency_key(&request.idempotency_key);
+        if let Some(existing) = self._store.get(&idempotency_key) {
+            let recorded_authorization = required_record_string(
+                &existing.data,
+                "authorizationId",
+                "Recorded remediation execution is missing its authorization.",
+            )?;
+            let recorded_digest = required_record_string(
+                &existing.data,
+                "documentDigest",
+                "Recorded remediation execution is missing its document digest.",
+            )?;
+            if recorded_authorization != request.authorization_id
+                || recorded_digest != document_digest
+            {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "An idempotency key cannot be reused for a different remediation execution."
+                        .into(),
+                ));
+            }
+            if existing.data["status"].as_str() == Some("in_progress") {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "This remediation execution was interrupted after its durable claim; reconcile its effects before retrying."
+                        .into(),
+                ));
+            }
+            return serde_json::from_value(existing.data["result"].clone()).map_err(|error| {
+                ServiceErrorKind::Foundation(format!(
+                    "Recorded remediation execution is invalid: {error}"
+                ))
+            });
+        }
         let authorization = self
             ._store
             .get(self.effect_authorization_key(&request.authorization_id))
@@ -968,6 +1197,60 @@ impl ServiceFoundation {
                     "Remediation authorization was not recorded for this profile.".into(),
                 )
             })?;
+        if authorization.data["decision"].as_str() != Some("accepted")
+            || authorization.data["evidenceRecorded"].as_bool() != Some(true)
+        {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "Remediation authorization is not fully recorded.".into(),
+            ));
+        }
+        let signed_authorization: EffectAuthorization = serde_json::from_value(
+            authorization.data["authorization"].clone(),
+        )
+        .map_err(|error| {
+            ServiceErrorKind::Foundation(format!(
+                "Recorded effect authorization is invalid: {error}"
+            ))
+        })?;
+        let approval = self
+            ._store
+            .get(self.remediation_approval_key(&request.authorization_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest(
+                    "Remediation authorization is missing its recorded approval.".into(),
+                )
+            })?;
+        let actor_id = required_record_string(
+            &approval.data,
+            "actorId",
+            "Recorded remediation approval is missing its actor.",
+        )?;
+        if approval.data["approved"].as_bool() != Some(true)
+            || approval.data["decision"].as_str() != Some("accepted")
+            || approval.data["requestId"].as_str()
+                != Some(signed_authorization.operation_id.as_str())
+        {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "Remediation authorization does not match an accepted approval.".into(),
+            ));
+        }
+        validate_signed_effect_authorization(
+            &signed_authorization,
+            &self.authorization_signing_key.verifying_key(),
+            &EffectAuthorizationBindings {
+                profile_id: &self.profile_id,
+                agent_id: SERVICE_ACTOR,
+                actor_id: &actor_id,
+                authorization_id: &request.authorization_id,
+                request_id: &required_record_string(
+                    &authorization.data,
+                    "requestId",
+                    "Recorded remediation authorization is missing its request.",
+                )?,
+                input_digest: &document_digest,
+                idempotency_key: &request.idempotency_key,
+            },
+        )?;
         let revision_id = required_record_string(
             &authorization.data,
             "revisionId",
@@ -1016,39 +1299,6 @@ impl ServiceFoundation {
             };
             self.record_remediation_binding_failure(&request.authorization_id, &execution)?;
             return Ok(execution);
-        }
-
-        let idempotency_key = self.remediation_execution_idempotency_key(&request.idempotency_key);
-        if let Some(existing) = self._store.get(&idempotency_key) {
-            let recorded_authorization = required_record_string(
-                &existing.data,
-                "authorizationId",
-                "Recorded remediation execution is missing its authorization.",
-            )?;
-            let recorded_digest = required_record_string(
-                &existing.data,
-                "documentDigest",
-                "Recorded remediation execution is missing its document digest.",
-            )?;
-            if recorded_authorization != request.authorization_id
-                || recorded_digest != document_digest
-            {
-                return Err(ServiceErrorKind::InvalidRequest(
-                    "An idempotency key cannot be reused for a different remediation execution."
-                        .into(),
-                ));
-            }
-            if existing.data["status"].as_str() == Some("in_progress") {
-                return Err(ServiceErrorKind::InvalidRequest(
-                    "This remediation execution was interrupted after its durable claim; reconcile its effects before retrying."
-                        .into(),
-                ));
-            }
-            return serde_json::from_value(existing.data["result"].clone()).map_err(|error| {
-                ServiceErrorKind::Foundation(format!(
-                    "Recorded remediation execution is invalid: {error}"
-                ))
-            });
         }
 
         let revision = self
@@ -1543,41 +1793,87 @@ impl ServiceFoundation {
 
     fn record_effect_authorization(
         &self,
-        authorization_id: &str,
-        request_id: &str,
-        revision_id: &str,
-        source_digest: &str,
-        idempotency_key: &str,
+        authorization: &EffectAuthorization,
+        actor_id: &str,
+        policy: &PxConstraintDecision,
     ) -> Result<(), ServiceErrorKind> {
-        let key = self.effect_authorization_key(authorization_id);
+        let key = self.effect_authorization_key(&authorization.authorization_id);
         let metadata = serde_json::json!({
             "profileId": self.profile_id,
-            "authorizationId": authorization_id,
-            "requestId": request_id,
-            "revisionId": revision_id,
-            "sourceDigest": source_digest,
-            "idempotencyKey": idempotency_key,
-            "capability": "dsc_config_set",
+            "authorizationId": authorization.authorization_id,
+            "requestId": authorization.operation_id,
+            "actorId": actor_id,
+            "revisionId": self._store.get(self.remediation_request_key(&authorization.operation_id))
+                .and_then(|record| record.data["revisionId"].as_str().map(str::to_owned))
+                .unwrap_or_default(),
+            "sourceDigest": authorization.input_digest,
+            "idempotencyKey": authorization.idempotency_key,
+            "capability": "dsc.config.apply/v1",
             "decision": "accepted",
+            "constraintId": policy.constraint_id,
+            "reason": policy.reason,
+            "authorization": authorization,
+            "authorizationDecision": {
+                "decision": if policy.accepted { "accepted" } else { "rejected" },
+                "constraintId": policy.constraint_id,
+                "reason": policy.reason,
+            },
+            "evidenceRecorded": false,
         });
-        self._store
-            .put(key.clone(), SERVICE_ACTOR, metadata.clone());
+        let current = self._store.get(&key);
+        if let Some(existing) = current.as_ref() {
+            let matches = existing.data["authorization"] == metadata["authorization"]
+                && existing.data["requestId"] == metadata["requestId"]
+                && existing.data["actorId"] == metadata["actorId"]
+                && existing.data["revisionId"] == metadata["revisionId"]
+                && existing.data["sourceDigest"] == metadata["sourceDigest"]
+                && existing.data["idempotencyKey"] == metadata["idempotencyKey"]
+                && existing.data["constraintId"] == metadata["constraintId"]
+                && existing.data["decision"] == metadata["decision"];
+            if !matches {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "An authorization identifier is already bound to different authorization evidence."
+                        .into(),
+                ));
+            }
+        } else {
+            self._store
+                .put(key.clone(), SERVICE_ACTOR, metadata.clone());
+        }
+        if current
+            .as_ref()
+            .is_some_and(|record| record.data["evidenceRecorded"].as_bool() == Some(true))
+        {
+            return Ok(());
+        }
         let entry = self.timeline.build_entry(
             &key,
             SERVICE_ACTOR,
             ChronosAction::Create,
             &serde_json::json!({
                 "profileId": self.profile_id,
-                "authorizationId": authorization_id,
-                "requestId": request_id,
-                "revisionId": revision_id,
-                "capability": "dsc_config_set",
+                "authorizationId": authorization.authorization_id,
+                "requestId": authorization.operation_id,
+                "revisionId": metadata["revisionId"],
+                "actorId": actor_id,
+                "capability": authorization.capability,
                 "decision": "accepted",
+                "constraintId": policy.constraint_id,
             }),
             Vec::new(),
-            Some("PX issued a bounded local DSC set authorization.".into()),
+            Some("PX issued a signed, bounded local DSC set authorization.".into()),
         );
-        self.record_evidence_summary(entry)
+        self.record_evidence_summary(entry)?;
+        let mut recorded = self
+            ._store
+            .get(&key)
+            .ok_or_else(|| {
+                ServiceErrorKind::Foundation("Pending authorization disappeared.".into())
+            })?
+            .data;
+        recorded["evidenceRecorded"] = serde_json::Value::Bool(true);
+        self._store.put(key, SERVICE_ACTOR, recorded);
+        Ok(())
     }
 
     fn record_remediation_execution(
@@ -1812,6 +2108,202 @@ fn current_unix_timestamp() -> u64 {
         .as_secs()
 }
 
+fn load_or_create_authorization_signing_key(
+    store_path: &Path,
+) -> Result<SigningKey, ServiceErrorKind> {
+    let path = store_path.join(".pedantic-effect-authorization-key");
+    match read_authorization_signing_key(&path) {
+        Ok(key) => return Ok(key),
+        Err(ServiceErrorKind::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let key = SigningKey::generate(&mut OsRng);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(&path) {
+        Ok(mut file) => {
+            file.write_all(&key.to_bytes())?;
+            file.sync_all()?;
+            Ok(key)
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            read_authorization_signing_key(&path)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn read_authorization_signing_key(path: &Path) -> Result<SigningKey, ServiceErrorKind> {
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = [0; 32];
+    file.read_exact(&mut bytes)?;
+    let mut trailing = [0; 1];
+    if file.read(&mut trailing)? != 0 {
+        return Err(ServiceErrorKind::Foundation(
+            "Effect authorization signing key has an invalid length.".into(),
+        ));
+    }
+    Ok(SigningKey::from_bytes(&bytes))
+}
+
+fn authorization_signing_key_id(key: &SigningKey) -> String {
+    authorization_verifying_key_id(&key.verifying_key())
+}
+
+fn authorization_verifying_key_id(key: &VerifyingKey) -> String {
+    let digest = Sha256::digest(key.as_bytes());
+    format!("pedantic-service-sha256:{digest:x}")
+}
+
+struct EffectAuthorizationBindings<'a> {
+    profile_id: &'a str,
+    agent_id: &'a str,
+    actor_id: &'a str,
+    authorization_id: &'a str,
+    request_id: &'a str,
+    input_digest: &'a str,
+    idempotency_key: &'a str,
+}
+
+fn validate_signed_effect_authorization(
+    authorization: &EffectAuthorization,
+    key: &VerifyingKey,
+    bindings: &EffectAuthorizationBindings<'_>,
+) -> Result<(), ServiceErrorKind> {
+    validate_effect_authorization_schema(authorization)?;
+    let now = current_unix_timestamp();
+    if authorization.schema_version != EFFECT_AUTHORIZATION_SCHEMA_VERSION
+        || authorization.issued_at > now
+        || authorization.expires_at <= now
+        || authorization.expires_at <= authorization.issued_at
+        || authorization.revoked_at != 0
+        || authorization.authorization_id != bindings.authorization_id
+        || authorization.actor_id != bindings.actor_id
+        || authorization.profile_id != bindings.profile_id
+        || authorization.operation_id != bindings.request_id
+        || authorization.target_id != bindings.profile_id
+        || authorization.agent_id != bindings.agent_id
+        || authorization.capability != "dsc.config.apply/v1"
+        || authorization.input_digest != bindings.input_digest
+        || authorization.idempotency_key != bindings.idempotency_key
+        || authorization.signature.key_id != authorization_verifying_key_id(key)
+        || authorization.signature.algorithm != "Ed25519"
+        || authorization.signature.payload_digest != authorization.digest()
+    {
+        return Err(ServiceErrorKind::InvalidRequest(
+            "Remediation authorization is expired, revoked, or bound to a different effect.".into(),
+        ));
+    }
+    let signature_bytes = URL_SAFE_NO_PAD
+        .decode(&authorization.signature.value)
+        .map_err(|_| {
+            ServiceErrorKind::InvalidRequest(
+                "Remediation authorization has an invalid signature.".into(),
+            )
+        })?;
+    let signature = Signature::from_slice(&signature_bytes).map_err(|_| {
+        ServiceErrorKind::InvalidRequest(
+            "Remediation authorization has an invalid signature.".into(),
+        )
+    })?;
+    key.verify(&authorization.signing_payload(), &signature)
+        .map_err(|_| {
+            ServiceErrorKind::InvalidRequest(
+                "Remediation authorization signature verification failed.".into(),
+            )
+        })
+}
+
+fn validate_effect_authorization_schema(
+    authorization: &EffectAuthorization,
+) -> Result<(), ServiceErrorKind> {
+    let schema: serde_json::Value = serde_json::from_str(EFFECT_AUTHORIZATION_SCHEMA)
+        .map_err(|error| ServiceErrorKind::Foundation(error.to_string()))?;
+    let validator = JSONSchema::options()
+        .with_draft(Draft::Draft7)
+        .compile(&schema)
+        .map_err(|error| ServiceErrorKind::Foundation(error.to_string()))?;
+    let value = serde_json::to_value(authorization)
+        .map_err(|error| ServiceErrorKind::Foundation(error.to_string()))?;
+    validator.validate(&value).map_err(|mut errors| {
+        ServiceErrorKind::InvalidRequest(
+            errors
+                .next()
+                .map(|error| format!("Effect authorization does not match its schema: {error}"))
+                .unwrap_or_else(|| "Effect authorization does not match its schema.".into()),
+        )
+    })
+}
+
+fn validate_effect_authorization_constraints(
+    authorization: &EffectAuthorization,
+) -> Result<(), ServiceErrorKind> {
+    let variables = HashMap::from([(
+        "authorization".to_owned(),
+        serde_json::json!({
+            "authorization_id": authorization.authorization_id,
+            "issuer_id": authorization.issuer_id,
+            "actor_id": authorization.actor_id,
+            "profile_id": authorization.profile_id,
+            "operation_id": authorization.operation_id,
+            "step_id": authorization.step_id,
+            "attempt_id": authorization.attempt_id,
+            "target_id": authorization.target_id,
+            "agent_id": authorization.agent_id,
+            "capability": authorization.capability,
+            "input_digest": authorization.input_digest,
+            "idempotency_key": authorization.idempotency_key,
+            "fencing_token": authorization.fencing_token,
+            "retry_class": authorization.retry_class,
+            "risk_class": authorization.risk_class,
+            "issued_at": authorization.issued_at,
+            "expires_at": authorization.expires_at,
+            "revoked_at": authorization.revoked_at,
+            "signature_algorithm": authorization.signature.algorithm,
+            "signing_key_id": authorization.signature.key_id,
+            "signature_payload_digest": authorization.signature.payload_digest,
+            "signature": authorization.signature.value,
+        }),
+    )]);
+    let decision = first_effect_authorization_rejection(
+        "effect authorization",
+        [
+            "durable_authorization_is_bound",
+            "durable_authorization_has_validity_window",
+        ],
+        &variables,
+    )?;
+    if !decision.accepted {
+        return Err(ServiceErrorKind::InvalidRequest(decision.reason));
+    }
+    Ok(())
+}
+
+fn authorization_decision_from_record(
+    record: &serde_json::Value,
+) -> Result<PxConstraintDecision, ServiceErrorKind> {
+    let decision = &record["authorizationDecision"];
+    let accepted = decision["decision"].as_str() == Some("accepted");
+    Ok(PxConstraintDecision {
+        accepted,
+        constraint_id: required_record_string(
+            decision,
+            "constraintId",
+            "Recorded authorization is missing its PX constraint.",
+        )?,
+        reason: required_record_string(
+            decision,
+            "reason",
+            "Recorded authorization is missing its PX decision reason.",
+        )?,
+    })
+}
+
 fn remediation_evidence_cutoff() -> u64 {
     current_unix_timestamp().saturating_sub(MAX_REMEDIATION_OBSERVATION_AGE.as_secs())
 }
@@ -1844,6 +2336,26 @@ fn first_configuration_rejection<const N: usize>(
     last.ok_or_else(|| {
         ServiceErrorKind::Foundation(
             "PX remediation procedure has no constraints to evaluate.".into(),
+        )
+    })
+}
+
+fn first_effect_authorization_rejection<const N: usize>(
+    operation: &str,
+    constraints: [&str; N],
+    variables: &HashMap<String, serde_json::Value>,
+) -> Result<PxConstraintDecision, ServiceErrorKind> {
+    let mut last = None;
+    for constraint in constraints {
+        let decision = evaluate_effect_authorization_constraint(operation, constraint, variables)?;
+        if !decision.accepted {
+            return Ok(decision);
+        }
+        last = Some(decision);
+    }
+    last.ok_or_else(|| {
+        ServiceErrorKind::Foundation(
+            "PX effect authorization procedure has no constraints to evaluate.".into(),
         )
     })
 }
@@ -1888,22 +2400,37 @@ fn evaluate_configuration_constraint(
     variables: &HashMap<String, serde_json::Value>,
 ) -> Result<PxConstraintDecision, ServiceErrorKind> {
     let constraint = configuration_constraint(constraint_name)?;
+    evaluate_px_constraint(operation, constraint, variables)
+}
+
+fn evaluate_effect_authorization_constraint(
+    operation: &str,
+    constraint_name: &str,
+    variables: &HashMap<String, serde_json::Value>,
+) -> Result<PxConstraintDecision, ServiceErrorKind> {
+    let constraint = effect_authorization_constraint(constraint_name)?;
+    evaluate_px_constraint(operation, constraint, variables)
+}
+
+fn evaluate_px_constraint(
+    operation: &str,
+    constraint: &ConstraintDecl,
+    variables: &HashMap<String, serde_json::Value>,
+) -> Result<PxConstraintDecision, ServiceErrorKind> {
     let registry = PureFunctionRegistry;
     let outcome = px_eval::eval_constraint(constraint, variables, &registry).map_err(|error| {
-        ServiceErrorKind::Foundation(format!(
-            "PX configuration {operation} evaluation failed: {error}"
-        ))
+        ServiceErrorKind::Foundation(format!("PX {operation} evaluation failed: {error}"))
     })?;
     let constraint_id = constraint.name.name.clone();
     let (accepted, reason) = match outcome {
         ConstraintOutcome::Satisfied => (true, "PX constraint accepted the request.".to_owned()),
         ConstraintOutcome::Violated { message, .. } => (
             false,
-            message.unwrap_or_else(|| "PX constraint rejected the configuration revision.".into()),
+            message.unwrap_or_else(|| format!("PX {operation} constraint rejected the request.")),
         ),
         ConstraintOutcome::NotApplicable => (
             false,
-            "PX configuration constraint was not applicable.".to_owned(),
+            format!("PX {operation} constraint was not applicable."),
         ),
     };
     Ok(PxConstraintDecision {
@@ -1936,6 +2463,36 @@ fn configuration_constraint(name: &str) -> Result<&'static ConstraintDecl, Servi
                 .ok_or_else(|| {
                     ServiceErrorKind::Foundation(format!(
                         "PX configuration constraint '{name}' is missing."
+                    ))
+                })
+        })
+}
+
+fn effect_authorization_constraint(
+    name: &str,
+) -> Result<&'static ConstraintDecl, ServiceErrorKind> {
+    let result = EFFECT_AUTHORIZATION_CONSTRAINTS.get_or_init(|| {
+        let document = px_compiler::parse(EFFECT_AUTHORIZATION_SOURCE)
+            .map_err(|error| format!("PX effect authorization parse failed: {error}"))?;
+        Ok(document
+            .statements
+            .into_iter()
+            .filter_map(|statement| match statement {
+                Statement::Constraint(constraint) => Some(constraint),
+                _ => None,
+            })
+            .collect())
+    });
+    result
+        .as_ref()
+        .map_err(|error| ServiceErrorKind::Foundation(error.clone()))
+        .and_then(|constraints| {
+            constraints
+                .iter()
+                .find(|constraint| constraint.name.name == name)
+                .ok_or_else(|| {
+                    ServiceErrorKind::Foundation(format!(
+                        "PX effect authorization constraint '{name}' is missing."
                     ))
                 })
         })
@@ -2604,12 +3161,23 @@ where
                 };
             approval_request.authorize = true;
             match (handlers.approval)(approval_request).await {
-                Ok(result) => response(
-                    Some(request.id),
-                    true,
-                    Some(serde_json::json!(result)),
-                    None,
-                ),
+                Ok(result) => match result.authorization {
+                    Some(authorization) => response(
+                        Some(request.id),
+                        true,
+                        Some(serde_json::json!(authorization)),
+                        None,
+                    ),
+                    None => response(
+                        Some(request.id),
+                        false,
+                        None,
+                        Some((
+                            "authorization_failed",
+                            "Effect authorization returned no signed grant.".into(),
+                        )),
+                    ),
+                },
                 Err(error) => response(
                     Some(request.id),
                     false,
@@ -3044,6 +3612,29 @@ mod tests {
         assert!(validate_token(&"é".repeat(31)).is_err());
     }
 
+    #[test]
+    fn effect_authorization_signing_key_persists_with_private_permissions() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let first =
+            load_or_create_authorization_signing_key(directory.path()).expect("create signing key");
+        let reopened =
+            load_or_create_authorization_signing_key(directory.path()).expect("reload signing key");
+        assert_eq!(
+            authorization_signing_key_id(&first),
+            authorization_signing_key_id(&reopened)
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions =
+                std::fs::metadata(directory.path().join(".pedantic-effect-authorization-key"))
+                    .expect("key permissions")
+                    .permissions()
+                    .mode();
+            assert_eq!(permissions & 0o777, 0o600);
+        }
+    }
+
     fn test_handlers() -> RequestHandlers<
         impl FnOnce() -> EvidencePage,
         impl FnOnce(
@@ -3101,6 +3692,68 @@ mod tests {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
         }
+    }
+
+    #[tokio::test]
+    async fn effect_authorize_returns_the_schema_conforming_grant() {
+        let grant: EffectAuthorization = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/fixtures/effect-authorization.valid.json"
+        )))
+        .expect("valid authorization fixture");
+        let handlers = RequestHandlers {
+            evidence: || EvidencePage {
+                entries: Vec::new(),
+                truncated: false,
+            },
+            admission: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            validation: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            inventory: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            compliance: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            observation: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            remediation: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+            approval: move |request: RemediationApprovalRequest| {
+                std::future::ready(Ok(RemediationApproval {
+                    approval_id: request.approval_id,
+                    request_id: request.request_id,
+                    authorization_id: Some(grant.authorization_id.clone()),
+                    authorization: Some(grant.clone()),
+                    decision: "accepted".into(),
+                    constraint_id: "durable_authorization_requires_accepted_approval".into(),
+                    reason: "PX accepted the authorization.".into(),
+                }))
+            },
+            execution: |_| {
+                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+            },
+        };
+        let response = handle_request(
+            r#"{"id":"authorize-1","method":"effect.authorize","profileId":"default","authorization":"0123456789abcdef0123456789abcdef","params":{"approvalId":"approval-1","requestId":"request-1","actorId":"actor-1","approved":true}}"#,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            handlers,
+        )
+        .await;
+        assert!(response.ok);
+        let returned_grant: EffectAuthorization =
+            serde_json::from_value(response.result.expect("authorization result"))
+                .expect("effect.authorize returns a grant");
+        validate_effect_authorization_schema(&returned_grant)
+            .expect("returned effect authorization matches published schema");
     }
 
     #[tokio::test]
@@ -4261,15 +4914,59 @@ mod tests {
             Err(ServiceErrorKind::InvalidRequest(_))
         ));
 
+        let partial_approval = foundation
+            .approve_remediation(RemediationApprovalRequest {
+                approval_id: "approval-partial".into(),
+                request_id: "remediation-request".into(),
+                actor_id: "reviewer@example.test".into(),
+                approved: true,
+                authorize: false,
+            })
+            .await
+            .expect("record approval before interrupted authorization");
+        let evidence_before_interruption = foundation.evidence_count();
         foundation
-            .record_effect_authorization(
-                "approval-partial",
-                "remediation-request",
-                "revision-remediation",
-                &source_digest,
-                "remediation-key",
-            )
-            .expect("record interrupted accepted authorization");
+            .timeline
+            .set_level(pluresdb_chronos::ChronosLevel::Error);
+        assert!(matches!(
+            foundation
+                .authorize_remediation(RemediationApprovalRequest {
+                    approval_id: partial_approval.approval_id.clone(),
+                    request_id: partial_approval.request_id.clone(),
+                    actor_id: "reviewer@example.test".into(),
+                    approved: true,
+                    authorize: false,
+                })
+                .await,
+            Err(ServiceErrorKind::Foundation(_))
+        ));
+        assert_eq!(foundation.evidence_count(), evidence_before_interruption);
+        assert_eq!(
+            foundation
+                ._store
+                .get(foundation.effect_authorization_key("approval-partial"))
+                .expect("pending authorization")
+                .data["evidenceRecorded"],
+            false
+        );
+        foundation
+            .timeline
+            .set_level(pluresdb_chronos::ChronosLevel::Info);
+        let repaired_authorization = foundation
+            .authorize_remediation(RemediationApprovalRequest {
+                approval_id: partial_approval.approval_id.clone(),
+                request_id: partial_approval.request_id.clone(),
+                actor_id: "reviewer@example.test".into(),
+                approved: true,
+                authorize: false,
+            })
+            .await
+            .expect("repair authorization evidence on retry");
+        assert_eq!(repaired_authorization.decision, "accepted");
+        assert_eq!(
+            foundation.evidence_count(),
+            evidence_before_interruption + 1
+        );
         assert!(matches!(
             foundation
                 .approve_remediation(RemediationApprovalRequest {
@@ -4286,15 +4983,15 @@ mod tests {
             foundation
                 ._store
                 .get(foundation.remediation_approval_key("approval-partial"))
-                .is_none()
+                .is_some()
         );
         assert_eq!(
             foundation
                 ._store
                 .get(foundation.effect_authorization_key("approval-partial"))
-                .expect("preserved authorization")
-                .data["decision"],
-            "accepted"
+                .expect("repaired authorization")
+                .data["evidenceRecorded"],
+            true
         );
 
         let denied_approval = foundation
@@ -4313,6 +5010,26 @@ mod tests {
             "remediation_approval_requires_explicit_approval"
         );
         assert!(denied_approval.authorization_id.is_none());
+        let denied_evidence_count = foundation.evidence_count();
+        assert!(matches!(
+            foundation
+                .authorize_remediation(RemediationApprovalRequest {
+                    approval_id: "approval-denied".into(),
+                    request_id: "remediation-request".into(),
+                    actor_id: "reviewer@example.test".into(),
+                    approved: true,
+                    authorize: false,
+                })
+                .await,
+            Err(ServiceErrorKind::InvalidRequest(_))
+        ));
+        assert_eq!(foundation.evidence_count(), denied_evidence_count);
+        assert!(
+            foundation
+                ._store
+                .get(foundation.effect_authorization_key("approval-denied"))
+                .is_none()
+        );
         assert!(matches!(
             foundation
                 .approve_remediation(RemediationApprovalRequest {
@@ -4341,6 +5058,46 @@ mod tests {
             missing_actor.constraint_id,
             "remediation_approval_requires_actor_and_identifier"
         );
+        let missing_actor_evidence_count = foundation.evidence_count();
+        assert!(matches!(
+            foundation
+                .authorize_remediation(RemediationApprovalRequest {
+                    approval_id: "approval-missing-actor".into(),
+                    request_id: "remediation-request".into(),
+                    actor_id: String::new(),
+                    approved: true,
+                    authorize: false,
+                })
+                .await,
+            Err(ServiceErrorKind::InvalidRequest(_))
+        ));
+        assert_eq!(foundation.evidence_count(), missing_actor_evidence_count);
+        assert!(
+            foundation
+                ._store
+                .get(foundation.effect_authorization_key("approval-missing-actor"))
+                .is_none()
+        );
+        let missing_approval_evidence_count = foundation.evidence_count();
+        assert!(matches!(
+            foundation
+                .authorize_remediation(RemediationApprovalRequest {
+                    approval_id: "approval-not-recorded".into(),
+                    request_id: "remediation-request".into(),
+                    actor_id: "reviewer@example.test".into(),
+                    approved: true,
+                    authorize: false,
+                })
+                .await,
+            Err(ServiceErrorKind::InvalidRequest(_))
+        ));
+        assert_eq!(foundation.evidence_count(), missing_approval_evidence_count);
+        assert!(
+            foundation
+                ._store
+                .get(foundation.effect_authorization_key("approval-not-recorded"))
+                .is_none()
+        );
 
         let approved = foundation
             .approve_remediation(RemediationApprovalRequest {
@@ -4354,6 +5111,121 @@ mod tests {
             .expect("approve remediation");
         assert_eq!(approved.decision, "accepted");
         assert_eq!(approved.authorization_id.as_deref(), None);
+        let approved_evidence_count = foundation.evidence_count();
+        for invalid_request in [
+            RemediationApprovalRequest {
+                approval_id: approved.approval_id.clone(),
+                request_id: "unrelated-request".into(),
+                actor_id: "reviewer@example.test".into(),
+                approved: true,
+                authorize: false,
+            },
+            RemediationApprovalRequest {
+                approval_id: approved.approval_id.clone(),
+                request_id: approved.request_id.clone(),
+                actor_id: "different-reviewer@example.test".into(),
+                approved: true,
+                authorize: false,
+            },
+            RemediationApprovalRequest {
+                approval_id: approved.approval_id.clone(),
+                request_id: approved.request_id.clone(),
+                actor_id: "reviewer@example.test".into(),
+                approved: false,
+                authorize: false,
+            },
+        ] {
+            assert!(matches!(
+                foundation.authorize_remediation(invalid_request).await,
+                Err(ServiceErrorKind::InvalidRequest(_))
+            ));
+            assert_eq!(foundation.evidence_count(), approved_evidence_count);
+            assert!(
+                foundation
+                    ._store
+                    .get(foundation.effect_authorization_key(&approved.approval_id))
+                    .is_none()
+            );
+        }
+        let px_denied_approval = foundation
+            .approve_remediation(RemediationApprovalRequest {
+                approval_id: "approval-px-denied".into(),
+                request_id: approved.request_id.clone(),
+                actor_id: "reviewer@example.test".into(),
+                approved: true,
+                authorize: false,
+            })
+            .await
+            .expect("record approval for PX denial test");
+        let remediation_key = foundation.remediation_request_key(&approved.request_id);
+        let recorded_remediation = foundation
+            ._store
+            .get(&remediation_key)
+            .expect("accepted remediation request");
+        let mut denied_remediation = recorded_remediation.data.clone();
+        denied_remediation["decision"] = serde_json::Value::String("rejected".into());
+        foundation
+            ._store
+            .put(remediation_key.clone(), SERVICE_ACTOR, denied_remediation);
+        let px_denied_evidence_count = foundation.evidence_count();
+        assert!(matches!(
+            foundation
+                .authorize_remediation(RemediationApprovalRequest {
+                    approval_id: px_denied_approval.approval_id.clone(),
+                    request_id: px_denied_approval.request_id.clone(),
+                    actor_id: "reviewer@example.test".into(),
+                    approved: true,
+                    authorize: false,
+                })
+                .await,
+            Err(ServiceErrorKind::InvalidRequest(_))
+        ));
+        assert_eq!(foundation.evidence_count(), px_denied_evidence_count);
+        assert!(
+            foundation
+                ._store
+                .get(foundation.effect_authorization_key("approval-px-denied"))
+                .is_none()
+        );
+        foundation
+            ._store
+            .put(remediation_key, SERVICE_ACTOR, recorded_remediation.data);
+        let conflicting_approval = foundation
+            .approve_remediation(RemediationApprovalRequest {
+                approval_id: "approval-conflicting".into(),
+                request_id: "remediation-request".into(),
+                actor_id: "reviewer@example.test".into(),
+                approved: true,
+                authorize: false,
+            })
+            .await
+            .expect("record approval for conflicting grant");
+        foundation._store.put(
+            foundation.effect_authorization_key(&conflicting_approval.approval_id),
+            SERVICE_ACTOR,
+            serde_json::json!({
+                "requestId": "different-request",
+                "actorId": "reviewer@example.test",
+                "revisionId": "revision-remediation",
+                "sourceDigest": source_digest,
+                "idempotencyKey": "remediation-key",
+                "decision": "accepted",
+            }),
+        );
+        let conflict_evidence_count = foundation.evidence_count();
+        assert!(matches!(
+            foundation
+                .authorize_remediation(RemediationApprovalRequest {
+                    approval_id: conflicting_approval.approval_id.clone(),
+                    request_id: conflicting_approval.request_id,
+                    actor_id: "reviewer@example.test".into(),
+                    approved: true,
+                    authorize: false,
+                })
+                .await,
+            Err(ServiceErrorKind::InvalidRequest(_))
+        ));
+        assert_eq!(foundation.evidence_count(), conflict_evidence_count);
         let authorization = foundation
             .authorize_remediation(RemediationApprovalRequest {
                 approval_id: "approval-accepted".into(),
@@ -4368,6 +5240,68 @@ mod tests {
             authorization.authorization_id.as_deref(),
             Some("approval-accepted")
         );
+        let signed_authorization = authorization
+            .authorization
+            .as_ref()
+            .expect("signed effect authorization");
+        validate_effect_authorization_schema(signed_authorization)
+            .expect("authorization conforms to the published schema");
+        assert_eq!(signed_authorization.actor_id, "reviewer@example.test");
+        assert_eq!(signed_authorization.target_id, foundation.profile_id);
+        assert_eq!(signed_authorization.agent_id, SERVICE_ACTOR);
+        assert!(signed_authorization.expires_at > current_unix_timestamp());
+        let mut expired_authorization = signed_authorization.clone();
+        expired_authorization.expires_at = current_unix_timestamp().saturating_sub(1);
+        assert!(
+            validate_signed_effect_authorization(
+                &expired_authorization,
+                &foundation.authorization_signing_key.verifying_key(),
+                &EffectAuthorizationBindings {
+                    profile_id: &foundation.profile_id,
+                    agent_id: SERVICE_ACTOR,
+                    actor_id: "reviewer@example.test",
+                    authorization_id: "approval-accepted",
+                    request_id: "remediation-request",
+                    input_digest: &source_digest,
+                    idempotency_key: "remediation-key",
+                },
+            )
+            .is_err()
+        );
+        let mut forged_authorization = signed_authorization.clone();
+        forged_authorization.signature.value = URL_SAFE_NO_PAD.encode([0; 64]);
+        assert!(
+            validate_signed_effect_authorization(
+                &forged_authorization,
+                &foundation.authorization_signing_key.verifying_key(),
+                &EffectAuthorizationBindings {
+                    profile_id: &foundation.profile_id,
+                    agent_id: SERVICE_ACTOR,
+                    actor_id: "reviewer@example.test",
+                    authorization_id: "approval-accepted",
+                    request_id: "remediation-request",
+                    input_digest: &source_digest,
+                    idempotency_key: "remediation-key",
+                },
+            )
+            .is_err()
+        );
+        let authorization_evidence_count = foundation.evidence_count();
+        let retried_authorization = foundation
+            .authorize_remediation(RemediationApprovalRequest {
+                approval_id: "approval-accepted".into(),
+                request_id: "remediation-request".into(),
+                actor_id: "reviewer@example.test".into(),
+                approved: true,
+                authorize: false,
+            })
+            .await
+            .expect("retry effect authorization");
+        assert_eq!(
+            retried_authorization.authorization,
+            authorization.authorization
+        );
+        assert_eq!(foundation.evidence_count(), authorization_evidence_count);
         assert_eq!(
             foundation
                 .approve_remediation(RemediationApprovalRequest {
@@ -4475,19 +5409,17 @@ mod tests {
             .await
             .expect("authorize third remediation request");
 
-        let mismatched_binding = foundation
-            .execute_remediation(RemediationExecutionRequest {
-                execution_id: "execution-mismatched-binding".into(),
-                authorization_id: "approval-accepted".into(),
-                idempotency_key: "remediation-key-second".into(),
-                document: document.into(),
-            })
-            .await
-            .expect("reject mismatched authorization binding");
-        assert_eq!(
-            mismatched_binding.constraint_id,
-            "remediation_execution_requires_matching_idempotency_key"
-        );
+        assert!(matches!(
+            foundation
+                .execute_remediation(RemediationExecutionRequest {
+                    execution_id: "execution-mismatched-binding".into(),
+                    authorization_id: "approval-accepted".into(),
+                    idempotency_key: "remediation-key-second".into(),
+                    document: document.into(),
+                })
+                .await,
+            Err(ServiceErrorKind::InvalidRequest(_))
+        ));
         assert!(
             foundation
                 ._store
@@ -4580,30 +5512,23 @@ mod tests {
             "remediation_requires_fresh_observation"
         );
 
-        let rejected = foundation
-            .execute_remediation(RemediationExecutionRequest {
-                execution_id: "execution-rejected".into(),
-                authorization_id: "approval-accepted".into(),
-                idempotency_key: "remediation-key".into(),
-                document: "different document that must not reach DSC".into(),
-            })
-            .await
-            .expect("evaluate remediation execution precondition");
-        assert_eq!(rejected.decision, "rejected");
-        assert_eq!(
-            rejected.constraint_id,
-            "remediation_execution_requires_matching_source_digest"
+        assert!(matches!(
+            foundation
+                .execute_remediation(RemediationExecutionRequest {
+                    execution_id: "execution-rejected".into(),
+                    authorization_id: "approval-accepted".into(),
+                    idempotency_key: "remediation-key".into(),
+                    document: "different document that must not reach DSC".into(),
+                })
+                .await,
+            Err(ServiceErrorKind::InvalidRequest(_))
+        ));
+        assert!(
+            foundation
+                ._store
+                .get(foundation.remediation_execution_idempotency_key("remediation-key"))
+                .is_none()
         );
-        let replay = foundation
-            .execute_remediation(RemediationExecutionRequest {
-                execution_id: "execution-rejected".into(),
-                authorization_id: "approval-accepted".into(),
-                idempotency_key: "remediation-key".into(),
-                document: "different document that must not reach DSC".into(),
-            })
-            .await
-            .expect("replay remediation execution");
-        assert_eq!(replay, rejected);
         let evidence = serde_json::to_string(&foundation.recent_evidence())
             .expect("serialize redacted evidence projection");
         assert!(!evidence.contains("different document"));

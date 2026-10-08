@@ -35,6 +35,13 @@ constraint durable_authorization_is_bound:
   severity: error
   message: "Effect authorization must bind all signed identities, policy, validity, revocation, and signature fields."
 
+constraint durable_authorization_requires_accepted_approval:
+  scope: durable_effect_authorization
+  phase: execution
+  require: approval.approved == true AND approval.decision == "accepted" AND approval.request_id == authorization.operation_id AND approval.request_id == remediation.request_id AND approval.actor_id == authorization.actor_id AND remediation.decision == "accepted" AND remediation.revision_id == revision.revision_id AND revision.admission_state == "accepted" AND revision.validation_state == "validated" AND authorization.profile_id == profile.profile_id AND authorization.target_id == profile.profile_id AND authorization.agent_id == "pedantic-service" AND authorization.capability == "dsc.config.apply/v1" AND authorization.input_digest == revision.source_digest AND authorization.idempotency_key == remediation.idempotency_key
+  severity: error
+  message: "Effect authorization requires the matching accepted approval, remediation request, profile, target, capability, source, and idempotency binding."
+
 constraint durable_authorization_has_validity_window:
   scope: durable_effect_authorization
   phase: execution

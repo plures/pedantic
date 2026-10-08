@@ -144,7 +144,7 @@ constraint configuration_validation_requires_matching_source_digest:
 constraint set_requires_pedantic_authorization:
   scope: effect_authorization
   phase: execution
-  when: authorization.capability == "dsc_config_set"
+  when: authorization.capability == "dsc.config.apply/v1"
   require: authorization.decision == "accepted"
   severity: error
   message: "DSC set is allowed only after an accepted PX authorization."
@@ -208,7 +208,7 @@ constraint remediation_approval_requires_actor_and_identifier:
 constraint remediation_execution_requires_matching_authorization:
   scope: remediation_execution
   phase: execution
-  require: authorization.capability == "dsc_config_set" AND authorization.decision == "accepted"
+  require: authorization.capability == "dsc.config.apply/v1" AND authorization.decision == "accepted"
   severity: error
   message: "Remediation execution requires an accepted DSC set authorization."
 
@@ -272,12 +272,11 @@ procedure request_remediation(request: RemediationRequest from "remediation_requ
   validate_remediation_request request $observation -> $decision
   return {request_id: request.request_id, revision_id: request.revision_id, observation_id: request.observation_id, decision: $decision.value}
 
-procedure approve_remediation(approval: RemediationApproval from "remediation_approvals") -> EffectAuthorization into "effect_authorizations":
-  given: "Issue a narrow DSC set authorization only after explicit approval of an accepted remediation request"
+procedure approve_remediation(approval: RemediationApproval from "remediation_approvals") -> RemediationApproval into "remediation_approvals":
+  given: "Record explicit approval only for an accepted remediation request"
   resolve_remediation_request approval.request_id -> $request
-  resolve_revision $request.revision_id -> $revision
   validate_remediation_approval approval $request -> $decision
-  return {authorization_id: approval.approval_id, request_id: $request.request_id, revision_id: $request.revision_id, source_digest: $revision.source_digest, idempotency_key: $request.idempotency_key, capability: "dsc_config_set", decision: $decision.value}
+  return {approval_id: approval.approval_id, request_id: $request.request_id, actor_id: approval.actor_id, approved: approval.approved, decision: $decision.value}
 
 procedure execute_remediation(execution: RemediationExecution from "remediation_executions") -> RemediationExecution into "remediation_executions":
   given: "Execute a local DSC set only after PX authorization and record a redacted outcome"
