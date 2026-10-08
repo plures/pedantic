@@ -4,10 +4,15 @@
   "description": "Pedantic: DSC authoring, visualization, and AI-assisted configuration (Simple DSL + SudoLang).",
   "version": "0.9.0",
   "engines": {
-    "vscode": ">=1.90.0"
+    "vscode": ">=1.90.0",
+    "node": ">=20"
   },
   "publisher": "pedantic",
-  "license": "MIT",
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plures/pedantic.git"
+  },
   "categories": [
     "Other"
   ],
@@ -19,6 +24,11 @@
     "onView:pedanticInventory"
   ],
   "main": "dist/extension.js",
+  "files": [
+    "dist/**",
+    "README.md",
+    "LICENSE"
+  ],
   "contributes": {
     "views": {
       "explorer": [
@@ -127,20 +137,26 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p .",
+    "compile": "tsc -p . --noEmit",
+    "bundle": "npm run compile && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --outfile=dist/extension.js && node -e \"const fs = require('node:fs'); fs.mkdirSync('dist/vendor', { recursive: true }); fs.copyFileSync('node_modules/echarts/dist/echarts.min.js', 'dist/vendor/echarts.min.js');\"",
+    "vscode:prepublish": "npm run bundle",
     "watch": "tsc -w -p .",
-    "package": "npm run compile",
-    "lint": "echo '(lint placeholder)'",
-    "build": "npm run compile",
-    "test": "npm run test:build && node --test dist-test/test",
+    "package": "npm run lint && npm test && vsce package --out pedantic-dsc.vsix",
+    "lint": "eslint src test --max-warnings 0",
+    "build": "npm run bundle",
+    "test": "npm run test:build && node --test dist-test/test/goldenTests.test.js dist-test/test/inventoryService.test.js dist-test/test/sudoParser.test.js dist-test/test/logic/dsl-logic.test.js dist-test/test/logic/praxis-core.test.js dist-test/test/logic/reactive-state.test.js",
     "test:build": "tsc -p tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "26.6.4",
-    "@types/vscode": "1.140.0",
+    "@types/vscode": "1.90.0",
+    "@typescript-eslint/eslint-plugin": "8.71.1",
+    "@typescript-eslint/parser": "8.71.1",
     "@vscode/test-electron": "^3.1.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.12.0",
     "@vscode/vsce": "^4.0.0",
-    "typescript": "^7.0.2"
+    "typescript": "6.0.3"
   },
   "dependencies": {
     "chevrotain": "^13.2.0",

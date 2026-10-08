@@ -83,10 +83,10 @@ async function validateDocument(textDocument: TextDocument): Promise<void> {
   try {
     let parsed: any;
     if (dialect === 'sudo') {
-      const { parseSudo } = await import('../dsl/sudoParser');
+      const { parseSudo } = await import('../dsl/sudoParser.js');
       parsed = parseSudo(text);
     } else {
-      const { parseSimple } = await import('../dsl/simpleParser');
+      const { parseSimple } = await import('../dsl/simpleParser.js');
       parsed = parseSimple(text);
     }
 
@@ -194,7 +194,7 @@ connection.onDocumentFormatting(async (params: DocumentFormattingParams): Promis
   }
 
   try {
-    const { parseSimple } = await import('../dsl/simpleParser');
+    const { parseSimple } = await import('../dsl/simpleParser.js');
     const parsed = parseSimple(text);
     const formatted = formatSimpleDsl(parsed);
 
