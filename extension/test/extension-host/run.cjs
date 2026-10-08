@@ -26,6 +26,7 @@ async function main() {
         '--install-extension',
         vsixPath,
         '--force',
+        '--no-sandbox',
         '--user-data-dir',
         userDataDirectory,
         '--extensions-dir',
@@ -44,6 +45,7 @@ async function main() {
         '--extensions-dir',
         extensionsDirectory,
         '--disable-workspace-trust',
+        '--no-sandbox',
       ],
     });
   } finally {
