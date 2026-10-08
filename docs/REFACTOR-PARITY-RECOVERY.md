@@ -1,8 +1,9 @@
 # Refactor parity recovery
 
 **Status:** active recovery. This is the release qualification record for the
-PX-first refactor. It replaces no capability and does not itself authorize an
-effect.
+PX-first refactor. The Windows-local remediation vertical slice now authorizes
+only the bounded service effect described below; it does not authorize remote
+execution, bootstrap, or resource download effects.
 
 ## What the released source actually provides
 
@@ -10,8 +11,8 @@ effect.
 |---|---|---|---|
 | Parse, structural validation, planning, JUnit/SARIF export | Available through the offline Rust CLI | `pedantic` CLI and unit tests | Retain as explicitly offline tooling until it submits service intents. |
 | Configuration admission, validation, local inventory, compliance test, redacted evidence | Windows-local, service-owned vertical slice | `pedantic-service` PX constraints, PluresDB, Chronos, service tests | Retain; package the Windows service and extend the same contract. |
-| Configuration remediation (`dsc config set`) | Not available through the service, CLI, MCP, Radix, or VS Code | No request method, PX procedure, client command, or packaged service entry point | Implement before calling the service architecture a configuration-management replacement. |
-| Legacy local PowerShell apply | Best-effort compatibility only when DSC is already installed | `Set-DscConfiguration` directly runs `dsc.exe` | Keep clearly labelled as legacy until a service-backed remediation path has task-level parity. |
+| Configuration remediation (`dsc config set`) | Available through the Windows-local service and CLI after PX request, explicit approval, and digest-bound authorization | `remediation.request`, `remediation.approve`, and `remediation.execute`; PluresDB projections; Chronos evidence | Validate on an isolated DSC-capable host; do not expose remote execution until its transport contract exists. |
+| Legacy local PowerShell apply | Best-effort compatibility only when DSC is already installed | `Set-DscConfiguration` directly runs `dsc.exe` | Keep clearly labelled as legacy; use the service-backed CLI path for governed local remediation. |
 | Legacy remote PowerShell apply | Broken | `Invoke-DscHelper` unconditionally throws for a non-local `ComputerName` | Restore only behind the service capability boundary; do not revive an untracked remote bypass. |
 | Legacy DSC bootstrap/resource preparation | Broken in the public apply path | Public flags are accepted but `Invoke-DscHelper` calls `Test-DscExecutable` first and never consumes those flags | Move bootstrap and resource preparation to approved, integrity-checked adapters. |
 | Standalone operator app | Absent | No standalone project or packaged application | Deliver after the remediation vertical slice. |
@@ -41,10 +42,10 @@ effect.
    and performs an online installer-cache refresh at import time. Installed
    modules can therefore require elevation and make an unsolicited network
    request before the user invokes an operation.
-6. The documented refactor requires PX approval and fresh test evidence before
-   `dsc config set`, but the released PX file defines neither the remediation,
-   approval, bootstrap, nor execution-observation procedure. The service has
-   no remediation request/approval/execute contract.
+6. Local remediation is now governed by PX request, approval, authorization,
+   source-digest, and idempotency constraints. It still lacks a portable
+   service transport, DSC bootstrap/resource preparation, and a remote target
+   adapter; none of those are silently substituted by the local effect.
 
 ### P1 — incompatible surface claims
 
@@ -83,12 +84,11 @@ effect.
 1. **Release truthfulness (this change):** package the Windows service,
    correct public capability claims, and maintain this inventory. Validate
    installer contents rather than treating a green workflow as proof.
-2. **PX remediation contract:** add `remediation_requested`,
-   `approval_recorded`, `execution_requested`, and
-   `execution_observed` procedures plus bootstrap/resource-preparation intent.
-   Each needs immutable document digest, target identity, actor,
-   idempotency key, fresh compliance observation, approval decision, and
-   Chronos evidence fields.
+2. **PX remediation contract (implemented locally):**
+   `remediation.request`, `remediation.approve`, and
+   `remediation.execute` bind fresh drift evidence, actor, explicit approval,
+   configuration digest, idempotency key, PluresDB projections, and redacted
+   Chronos evidence. Bootstrap/resource-preparation intent remains next.
 3. **Bounded effect adapters:** expose only service-owned local execution
    first. Add remote transport and DSC bootstrap only after an approved
    artifact has an expected digest, an explicit target/transport capability,
@@ -117,3 +117,20 @@ effect.
   redacted Chronos execution observation.
 - Each released installer is opened on a clean VM and verified to contain the
   documented binaries, compatible module version, and declared prerequisites.
+
+## Guarded local remediation CLI
+
+The CLI makes only the service contract available; it cannot select an
+executable, shell command, remote target, or transport. A qualifying
+`compliance.observe` result with drift is required before this sequence:
+
+```powershell
+pedantic service remediation-request --request-id remediation-1 --revision-id revision-1 --observation-id observation-1 --actor-id operator@example.test --idempotency-key change-123
+pedantic service remediation-approve --approval-id approval-1 --request-id remediation-1 --actor-id reviewer@example.test --approved
+pedantic service remediation-execute --execution-id execution-1 --authorization-id approval-1 --idempotency-key change-123 --file .\configuration.yaml
+```
+
+`PEDANTIC_LOCAL_TOKEN` and a running Windows `pedantic-service` are required.
+The effect is `dsc config set` on the service host only and has a 30-second
+timeout. Replaying the same execution idempotency key returns the recorded
+outcome; a mismatched authorization or document is rejected before DSC runs.
