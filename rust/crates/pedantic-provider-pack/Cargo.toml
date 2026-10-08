@@ -1,21 +1,16 @@
 [package]
-name = "pedantic-agent"
+name = "pedantic-provider-pack"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Crash-safe local Pedantic operation agent"
+description = "Production capability packs for Pedantic bounded effects"
 
 [dependencies]
-thiserror.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-base64.workspace = true
-ed25519-dalek.workspace = true
 sha2.workspace = true
 pedantic-operation = { path = "../pedantic-operation" }
 pedantic-capability = { path = "../pedantic-capability" }
-pedantic-provider-pack = { path = "../pedantic-provider-pack" }
 
 [dev-dependencies]
 tempfile = "3.27"

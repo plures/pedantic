@@ -85,6 +85,14 @@ pub struct CapabilityReadiness {
     pub observed_at: u64,
     pub ready: bool,
     pub redaction_class: RedactionClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(default)]
+    pub findings: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub eligible_remediations: Vec<String>,
     #[serde(default)]
     pub diagnostics: Vec<serde_json::Value>,
 }

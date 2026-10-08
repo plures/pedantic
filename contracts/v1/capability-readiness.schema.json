@@ -9,6 +9,26 @@
     "schemaVersion": { "const": "pedantic.capability-readiness.v1" }, "capability": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 },
     "targetId": { "type": "string", "minLength": 1 }, "agentId": { "type": "string", "minLength": 1 }, "observedAt": { "type": "integer", "minimum": 0 }, "ready": { "type": "boolean" },
     "redactionClass": { "enum": ["metadata-only", "normalized-findings", "protected-artifact-reference"] },
+    "state": { "enum": ["ready", "degraded", "unavailable"] },
+    "required": { "type": "boolean" },
+    "findings": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "message": { "type": "string", "maxLength": 256 }
+        }
+      }
+    },
+    "eligibleRemediations": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]*/v[1-9][0-9]*$" }
+    },
     "diagnostics": {
       "type": "array",
       "maxItems": 32,

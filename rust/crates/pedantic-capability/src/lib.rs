@@ -43,7 +43,34 @@ pub trait Capability: Send + Sync {
         Ok(output)
     }
 
+    fn execute_with_activity(
+        &self,
+        input: &Value,
+        activity_sink: &mut dyn FnMut(CapabilityActivity) -> Result<(), CapabilityError>,
+    ) -> Result<Value, CapabilityError> {
+        validate_capability_value(self.manifest().input_schema.as_ref(), input)
+            .map_err(CapabilityError::InvalidInput)?;
+        let output = self.execute_unchecked_with_activity(input, activity_sink)?;
+        validate_capability_value(self.manifest().output_schema.as_ref(), &output)
+            .map_err(CapabilityError::InvalidOutput)?;
+        Ok(output)
+    }
+
     fn execute_unchecked(&self, input: &Value) -> Result<Value, CapabilityError>;
+
+    fn execute_unchecked_with_activity(
+        &self,
+        input: &Value,
+        _activity_sink: &mut dyn FnMut(CapabilityActivity) -> Result<(), CapabilityError>,
+    ) -> Result<Value, CapabilityError> {
+        self.execute_unchecked(input)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapabilityActivity {
+    pub event: &'static str,
+    pub detail: String,
 }
 
 #[derive(Default)]
@@ -86,24 +113,14 @@ impl CapabilityRegistry {
 }
 
 pub fn validate_manifest(manifest: &CapabilityManifest) -> Result<(), CapabilityError> {
-    let schema: Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../contracts/v1/capability-manifest.schema.json"
-    )))
-    .expect("embedded capability manifest schema parses");
-    let compiled = JSONSchema::options()
-        .with_draft(Draft::Draft7)
-        .compile(&schema)
-        .expect("embedded capability manifest schema compiles");
-    let value = serde_json::to_value(manifest).expect("manifest is serializable");
-    if let Err(errors) = compiled.validate(&value) {
-        return Err(CapabilityError::InvalidManifest(
-            errors
-                .map(|error| error.to_string())
-                .collect::<Vec<_>>()
-                .join("; "),
-        ));
-    }
+    validate_against_schema(
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/capability-manifest.schema.json"
+        )),
+        manifest,
+        "manifest",
+    )?;
     for (name, schema) in [
         ("inputSchema", &manifest.input_schema),
         ("outputSchema", &manifest.output_schema),
@@ -114,6 +131,41 @@ pub fn validate_manifest(manifest: &CapabilityManifest) -> Result<(), Capability
                 .compile(schema)
                 .map_err(|error| CapabilityError::InvalidManifest(format!("{name}: {error}")))?;
         }
+    }
+    Ok(())
+}
+
+pub fn validate_readiness(readiness: &CapabilityReadiness) -> Result<(), CapabilityError> {
+    validate_against_schema(
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/capability-readiness.schema.json"
+        )),
+        readiness,
+        "readiness",
+    )
+}
+
+fn validate_against_schema<T: serde::Serialize>(
+    schema: &str,
+    value: &T,
+    name: &str,
+) -> Result<(), CapabilityError> {
+    let schema: Value =
+        serde_json::from_str(schema).expect("embedded capability manifest schema parses");
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft7)
+        .compile(&schema)
+        .expect("embedded capability manifest schema compiles");
+    let value = serde_json::to_value(value).expect("contract value is serializable");
+    if let Err(errors) = compiled.validate(&value) {
+        return Err(CapabilityError::InvalidManifest(format!(
+            "{name}: {}",
+            errors
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>()
+                .join("; "),
+        )));
     }
     Ok(())
 }
@@ -178,6 +230,18 @@ impl<P: DscProcess> Capability for DscCapability<P> {
             observed_at,
             ready,
             redaction_class: self.manifest.redaction_class.clone(),
+            state: Some(if ready { "ready" } else { "degraded" }.into()),
+            required: Some(true),
+            findings: if ready {
+                Vec::new()
+            } else {
+                vec![json!({"code": "dsc_cli_missing", "message": "DSC runtime is unavailable"})]
+            },
+            eligible_remediations: if ready {
+                Vec::new()
+            } else {
+                vec!["dsc.runtime.install/v1".into()]
+            },
             diagnostics: if !ready {
                 vec![json!({"code": "CAPABILITY_NOT_READY"})]
             } else {
@@ -281,6 +345,18 @@ impl<P: DscProcess> Capability for DscRuntimeReadinessCapability<P> {
             observed_at,
             ready,
             redaction_class: self.manifest.redaction_class.clone(),
+            state: Some(if ready { "ready" } else { "degraded" }.into()),
+            required: Some(true),
+            findings: if ready {
+                Vec::new()
+            } else {
+                vec![json!({"code": "dsc_cli_missing", "message": "DSC runtime is unavailable"})]
+            },
+            eligible_remediations: if ready {
+                Vec::new()
+            } else {
+                vec!["dsc.runtime.install/v1".into()]
+            },
             diagnostics: if ready {
                 Vec::new()
             } else {
@@ -325,6 +401,10 @@ impl<P: RebootProcess> Capability for RebootCapability<P> {
             observed_at,
             ready: true,
             redaction_class: self.manifest.redaction_class.clone(),
+            state: Some("ready".into()),
+            required: Some(true),
+            findings: Vec::new(),
+            eligible_remediations: Vec::new(),
             diagnostics: Vec::new(),
         }
     }

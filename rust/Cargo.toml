@@ -9,6 +9,7 @@ members = [
   "crates/pedantic-service",
   "crates/pedantic-operation",
   "crates/pedantic-capability",
+  "crates/pedantic-provider-pack",
   "crates/pedantic-agent",
   "crates/pedantic-transport",
   "crates/pedantic-windows-agent",

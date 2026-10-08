@@ -3,7 +3,7 @@
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
-use pedantic_capability::{CapabilityError, CapabilityRegistry};
+use pedantic_capability::{CapabilityActivity, CapabilityError, CapabilityRegistry};
 use pedantic_operation::{
     EffectAuthorization, OperationEvent, OperationState, RedactionClass, RetryClass,
 };
@@ -21,8 +21,7 @@ use thiserror::Error;
 pub const JOURNAL_SCHEMA_VERSION: &str = "pedantic.agent-journal.v1";
 pub const EFFECT_AUTHORIZATION_SCHEMA_VERSION: &str = "pedantic.effect-authorization.v1";
 pub const AGENT_ENROLLMENT_SCHEMA_VERSION: &str = "pedantic.agent-enrollment.v1";
-pub const AGENT_OBSERVATION_BATCH_SCHEMA_VERSION: &str =
-    "pedantic.agent-observation-batch.v1";
+pub const AGENT_OBSERVATION_BATCH_SCHEMA_VERSION: &str = "pedantic.agent-observation-batch.v1";
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -192,9 +191,18 @@ impl AgentObservationBatch {
             || self.first_sequence == 0
             || self.last_sequence < self.first_sequence
             || self.signature.payload_digest != self.payload_digest()
-            || self.observations.first().is_none_or(|event| event.sequence != self.first_sequence)
-            || self.observations.last().is_none_or(|event| event.sequence != self.last_sequence)
-            || self.observations.windows(2).any(|pair| pair[1].sequence != pair[0].sequence + 1)
+            || self
+                .observations
+                .first()
+                .is_none_or(|event| event.sequence != self.first_sequence)
+            || self
+                .observations
+                .last()
+                .is_none_or(|event| event.sequence != self.last_sequence)
+            || self
+                .observations
+                .windows(2)
+                .any(|pair| pair[1].sequence != pair[0].sequence + 1)
             || self.observations.iter().any(|event| {
                 event.agent_id != self.agent_id
                     || event.target_id != self.target_id
@@ -206,7 +214,8 @@ impl AgentObservationBatch {
         let signature = URL_SAFE_NO_PAD
             .decode(&self.signature.value)
             .map_err(|_| AuthorizationError::Signature)?;
-        let signature = Signature::from_slice(&signature).map_err(|_| AuthorizationError::Signature)?;
+        let signature =
+            Signature::from_slice(&signature).map_err(|_| AuthorizationError::Signature)?;
         key.verify(&self.signing_payload(), &signature)
             .map_err(|_| AuthorizationError::Signature)
     }
@@ -532,6 +541,16 @@ pub struct LocalAgent {
 }
 
 impl LocalAgent {
+    pub fn new_with_production_providers(
+        identity: AgentIdentity,
+        target_id: String,
+        journal: Journal,
+        verifier: Arc<dyn AuthorizationVerifier>,
+    ) -> Result<Self, AgentError> {
+        let registry = pedantic_provider_pack::production_registry()?;
+        Ok(Self::new(identity, target_id, journal, registry, verifier))
+    }
+
     pub fn new(
         identity: AgentIdentity,
         target_id: String,
@@ -567,11 +586,43 @@ impl LocalAgent {
                 now,
             },
         )?;
-        let mut start = JournalRecord::new(started, capability.manifest().redaction_class.clone());
+        let mut start = JournalRecord::new(
+            started.clone(),
+            capability.manifest().redaction_class.clone(),
+        );
         start.authorization_digest = Some(authorization.digest());
         start.retry_class = Some(authorization.retry_class.clone());
         self.journal.append(start)?;
-        let output = capability.execute(input)?;
+        let (output, next_sequence) = {
+            let mut next_sequence = started.sequence.saturating_add(1);
+            let activity_event = started;
+            let journal = &mut self.journal;
+            let mut activity_sink = |activity: CapabilityActivity| {
+                if !matches!(activity.event, "step.progressed" | "step.heartbeat") {
+                    return Err(CapabilityError::Execution(
+                        "capability emitted an unsupported activity event".into(),
+                    ));
+                }
+                let mut event = activity_event.clone();
+                event.event_id = format!("{}:activity:{next_sequence}", activity_event.event_id);
+                event.event_type = activity.event.into();
+                event.resulting_state = OperationState::Running;
+                event.sequence = next_sequence;
+                event.occurred_at = Some(now);
+                next_sequence = next_sequence.saturating_add(1);
+                journal
+                    .append(JournalRecord::new(
+                        event,
+                        capability.manifest().redaction_class.clone(),
+                    ))
+                    .map_err(|error| CapabilityError::Execution(error.to_string()))?;
+                Ok(())
+            };
+            let output = capability.execute_with_activity(input, &mut activity_sink)?;
+            (output, next_sequence)
+        };
+        let mut completed = completed;
+        completed.sequence = completed.sequence.max(next_sequence);
         self.journal.append(JournalRecord::new(
             completed,
             capability.manifest().redaction_class.clone(),
@@ -636,6 +687,10 @@ mod tests {
                 observed_at: now,
                 ready: true,
                 redaction_class: RedactionClass::MetadataOnly,
+                state: Some("ready".into()),
+                required: Some(true),
+                findings: vec![],
+                eligible_remediations: vec![],
                 diagnostics: vec![],
             }
         }
@@ -646,6 +701,18 @@ mod tests {
         ) -> Result<serde_json::Value, CapabilityError> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(json!({"safe": true}))
+        }
+
+        fn execute_unchecked_with_activity(
+            &self,
+            input: &serde_json::Value,
+            activity_sink: &mut dyn FnMut(CapabilityActivity) -> Result<(), CapabilityError>,
+        ) -> Result<serde_json::Value, CapabilityError> {
+            activity_sink(CapabilityActivity {
+                event: "step.progressed",
+                detail: "test capability progress".into(),
+            })?;
+            self.execute_unchecked(input)
         }
     }
 
@@ -775,6 +842,66 @@ mod tests {
             Err(AgentError::Authorization(AuthorizationError::Expired))
         ));
         assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn execution_activity_is_journaled_between_start_and_completion() {
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let mut verifier = Ed25519AuthorizationVerifier::default();
+        verifier.insert("issuer".into(), signing_key.verifying_key());
+        let directory = tempdir().unwrap();
+        let adapter = capability();
+        let mut agent = LocalAgent::new(
+            AgentIdentity {
+                agent_id: "agent".into(),
+                key_id: "local".into(),
+                private_key: "opaque".into(),
+            },
+            "target".into(),
+            Journal::open(directory.path().join("journal")).unwrap(),
+            registry(adapter),
+            Arc::new(verifier),
+        );
+        agent
+            .execute(
+                &authorization(&signing_key, RetryClass::Safe),
+                &json!({}),
+                2,
+                event("start", "step.started", OperationState::Running),
+                event("done", "step.completed", OperationState::Running),
+            )
+            .unwrap();
+
+        let records = agent.journal.records();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].event.event_type, "step.started");
+        assert_eq!(records[1].event.event_type, "step.progressed");
+        assert_eq!(records[2].event.event_type, "step.completed");
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.event.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn production_constructor_registers_the_provider_pack() {
+        let directory = tempdir().unwrap();
+        let agent = LocalAgent::new_with_production_providers(
+            AgentIdentity {
+                agent_id: "agent".into(),
+                key_id: "local".into(),
+                private_key: "opaque".into(),
+            },
+            "target".into(),
+            Journal::open(directory.path().join("journal")).unwrap(),
+            Arc::new(Ed25519AuthorizationVerifier::default()),
+        )
+        .unwrap();
+        assert!(agent.registry.resolve("transfer.filesystem/v1").is_ok());
+        assert!(agent.registry.resolve("hyperv.vm/v1").is_ok());
     }
 
     #[test]
