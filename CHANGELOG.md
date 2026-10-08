@@ -1,3 +1,18 @@
+## [0.7.0] — 2026-10-08
+
+- deps(npm)(deps-dev): bump the dev-dependencies group across 1 directory with 3 updates (#156) (341d1fe)
+- feat: add PX-governed local remediation (#154) (bf17c45)
+- feat: DTMS Priatives (9f928bc)
+- deps(npm)(deps): bump brace-expansion from 5.0.9 to 5.0.12 in /extension (#166) (2d1885d)
+- deps(npm)(deps-dev): bump fast-uri from 3.1.7 to 3.1.8 in /extension (#164) (1821985)
+- deps(npm)(deps-dev): bump markdown-it in /extension (#163) (e6153d7)
+- deps(npm)(deps): bump the production-dependencies group across 1 directory with 4 updates (#160) (caf4317)
+- deps(npm)(deps-dev): bump undici from 7.29.0 to 7.30.0 in /extension (#159) (48ffbe2)
+- chore(deps): bump rmcp in /rust in the cargo group across 1 directory (#155) (bfdb3c2)
+- fix: recover release parity boundaries (#153) (958ef10)
+- chore(release): v0.6.0 (#149) (d22489d)
+- fix(ci): source releases from the Rust workspace (#152) (c900542)
+
 ## [0.6.0] — 2026-09-15
 
 - chore(release): v0.6.0 (#144) (c6cbd7c)
