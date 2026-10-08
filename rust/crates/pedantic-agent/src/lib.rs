@@ -636,6 +636,10 @@ mod tests {
                 observed_at: now,
                 ready: true,
                 redaction_class: RedactionClass::MetadataOnly,
+                state: Some("ready".into()),
+                required: Some(true),
+                findings: vec![],
+                eligible_remediations: vec![],
                 diagnostics: vec![],
             }
         }
