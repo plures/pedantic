@@ -2792,7 +2792,7 @@ async fn serve_connection(
                     compliance: |request| foundation.request_compliance(request),
                     observation: |request| foundation.observe_compliance(request),
                     remediation: |request| foundation.request_remediation(request),
-                    approval: |request| async {
+                    approval: |request: RemediationApprovalRequest| async {
                         if request.authorize {
                             foundation.authorize_remediation(request).await
                         } else {
