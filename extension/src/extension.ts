@@ -9,7 +9,6 @@ import { InventoryService } from './inventory/inventoryService';
 import * as fs from 'fs';
 import * as path from 'path';
 
-let graphPanel: vscode.WebviewPanel | undefined;
 let aiPanel: vscode.WebviewPanel | undefined;
 let inventoryTreeProvider: InventoryTreeProvider | undefined;
 
@@ -261,7 +260,7 @@ export function activate(context: vscode.ExtensionContext) {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
       try {
-        const parserMod: any = await import('./dsl/simpleParser');
+        const parserMod: any = await import('./dsl/simpleParser.js');
         const doc = parserMod.parseSimple(editor.document.getText());
         panel.updateFromSimpleDocument(doc);
       } catch (e: any) {
@@ -279,7 +278,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
     // Graph visualization allowed in untrusted workspaces (read-only parse). If policy changes, gate here.
     try {
-      const parserMod: any = await import('./dsl/simpleParser');
+      const parserMod: any = await import('./dsl/simpleParser.js');
       const doc = parserMod.parseSimple(editor.document.getText());
       panel.updateFromSimpleDocument(doc);
     } catch (e: any) {
@@ -327,7 +326,7 @@ export function activate(context: vscode.ExtensionContext) {
     const text = editor.document.getText();
     let parserMod: any;
     try {
-      parserMod = await import('./dsl/simpleParser');
+      parserMod = await import('./dsl/simpleParser.js');
     } catch (e: any) {
       vscode.window.showErrorMessage('Failed to load parser: ' + e.message);
       return;
@@ -467,7 +466,6 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-  graphPanel = undefined;
   aiPanel = undefined;
   return deactivateLanguageServer();
 }

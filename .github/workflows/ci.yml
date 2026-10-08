@@ -131,3 +131,60 @@ jobs:
           name: module-dist
           path: dist/*.zip
 
+  extension-ci:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: current
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Bundle extension
+        run: npm run bundle
+
+      - name: Validate package file list
+        run: npx --no-install vsce ls | tee vsix-files.txt
+
+      - name: Package VSIX
+        run: npm run package
+
+      - name: Smoke-test VSIX in VS Code 1.90
+        run: xvfb-run -a npm run test:vsix -- pedantic-dsc.vsix
+
+      - name: Assert VSIX contents and size
+        run: |
+          unzip -Z1 pedantic-dsc.vsix | tee vsix-archive-files.txt
+          ! grep -E '(^|/)(src|test|test-fixtures|dist-test)/|\.ts$|\.map$' vsix-archive-files.txt
+          test "$(stat --printf='%s' pedantic-dsc.vsix)" -le 5242880
+          du -h pedantic-dsc.vsix
+
+      - name: Upload VSIX and package manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: extension-vsix
+          path: |
+            extension/pedantic-dsc.vsix
+            extension/vsix-files.txt
+            extension/vsix-archive-files.txt

@@ -138,13 +138,18 @@ Settings are available under `pedantic.*` in VS Code settings:
 
 ```bash
 cd extension
-npm install
+npm ci
 npm run compile
 ```
+
+The extension supports VS Code 1.90 and later and is type-checked against the
+matching 1.90 VS Code API declarations. Building and packaging require Node.js
+20.19.0 or later.
 
 ### Running Tests
 
 ```bash
+npm run lint
 npm test
 ```
 
@@ -154,6 +159,16 @@ All 31 tests should pass, covering:
 - Praxis engine integration
 - Reactive state management
 - Parser round-trip tests
+
+### Packaging a VSIX
+
+```bash
+npm run package
+```
+
+This runs linting and unit tests, bundles the extension host (leaving the
+`vscode` API external), and writes `pedantic-dsc.vsix`. To inspect the package
+file list without creating the VSIX, run `npx --no-install vsce ls`.
 
 ### Debugging
 
