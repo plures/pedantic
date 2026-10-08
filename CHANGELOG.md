@@ -1,3 +1,8 @@
+## [0.9.0] — 2026-10-08
+
+- feat(service): separate approval from effect authorization (#184) (1323b80)
+- feat(agent): add durable local execution primitives (#183) (227d479)
+
 ## [0.8.0] — 2026-10-08
 
 - feat(operation): add durable operation contracts and PX model (#175) (81dc7a8)
