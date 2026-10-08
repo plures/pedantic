@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/agent-observation-batch.schema.json",
+  "title": "Pedantic agent observation batch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "batchId", "agentId", "targetId", "profileId", "firstSequence", "lastSequence", "observations"],
+  "properties": {
+    "schemaVersion": { "const": "pedantic.agent-observation-batch.v1" }, "batchId": { "type": "string", "minLength": 1 },
+    "agentId": { "type": "string", "minLength": 1 }, "targetId": { "type": "string", "minLength": 1 }, "profileId": { "type": "string", "minLength": 1 },
+    "firstSequence": { "type": "integer", "minimum": 1 }, "lastSequence": { "type": "integer", "minimum": 1 },
+    "observations": { "type": "array", "minItems": 1, "items": { "$ref": "https://schemas.pedantic.dev/contracts/v1/effect-observation.schema.json" } }
+  }
+}

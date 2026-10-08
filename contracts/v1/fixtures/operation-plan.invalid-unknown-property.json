@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "pedantic.operation-plan.v1",
+  "planId": "plan-1",
+  "operationId": "operation-1",
+  "profileId": "default",
+  "targetId": "target-1",
+  "steps": [],
+  "unexpected": true
+}

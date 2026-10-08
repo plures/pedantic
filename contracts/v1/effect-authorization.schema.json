@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/effect-authorization.schema.json",
+  "title": "Pedantic signed effect authorization",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "authorizationId", "issuerId", "actorId", "profileId", "operationId", "stepId", "attemptId", "targetId", "agentId", "capability", "inputDigest", "idempotencyKey", "fencingToken", "retryClass", "riskClass", "issuedAt", "expiresAt", "signature"],
+  "properties": {
+    "schemaVersion": { "const": "pedantic.effect-authorization.v1" },
+    "authorizationId": { "$ref": "#/definitions/id" }, "issuerId": { "$ref": "#/definitions/id" }, "actorId": { "$ref": "#/definitions/id" }, "profileId": { "$ref": "#/definitions/id" },
+    "operationId": { "$ref": "#/definitions/id" }, "stepId": { "$ref": "#/definitions/id" }, "attemptId": { "$ref": "#/definitions/id" },
+    "targetId": { "$ref": "#/definitions/id" }, "agentId": { "$ref": "#/definitions/id" }, "capability": { "type": "string", "pattern": "^[a-z][a-z0-9.-]*/v[1-9][0-9]*$" },
+    "inputDigest": { "$ref": "#/definitions/digest" }, "idempotencyKey": { "$ref": "#/definitions/id" }, "fencingToken": { "type": "integer", "minimum": 1 },
+    "retryClass": { "enum": ["never", "safe", "safe-after-observation", "requires-fresh-authorization", "requires-operator-review", "compensate-then-retry"] },
+    "riskClass": { "enum": ["low", "moderate", "high", "dangerous"] }, "rebootPermitted": { "type": "boolean" },
+    "issuedAt": { "type": "integer", "minimum": 0 }, "expiresAt": { "type": "integer", "minimum": 1 }, "revokedAt": { "type": "integer", "minimum": 0 }, "signature": { "type": "string", "minLength": 1 }
+  },
+  "definitions": { "id": { "type": "string", "minLength": 1, "maxLength": 256 }, "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" } }
+}

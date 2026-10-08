@@ -1,0 +1,30 @@
+# PX admits typed immutable plans; native code only validates their structure.
+
+entity OperationPlanAdmission:
+  prefix: "pedantic:operation-plan:"
+  fields:
+    plan_id: String
+    operation_id: String
+    profile_id: String
+    target_id: String
+    source_digest: String
+    decision: String
+
+constraint plan_requires_immutable_identity:
+  scope: operation_plan_admission
+  phase: admission
+  require: plan.plan_id != "" AND plan.operation_id != "" AND plan.profile_id != "" AND plan.target_id != "" AND plan.source_digest != ""
+  severity: error
+  message: "An operation plan requires immutable operation, profile, target, and digest identity."
+
+constraint plan_requires_px_admission:
+  scope: operation_plan_admission
+  phase: execution
+  require: plan.decision == "accepted"
+  severity: error
+  message: "Only a PX-admitted operation plan may be materialized."
+
+procedure admit_operation_plan(plan: OperationPlanAdmission from "operation_plan_admissions") -> OperationPlanAdmission into "operation_plan_admissions":
+  given: "Admit only schema-valid, dependency-safe typed capability plans"
+  evaluate_plan_admission plan -> $decision
+  return {plan_id: plan.plan_id, operation_id: plan.operation_id, profile_id: plan.profile_id, target_id: plan.target_id, source_digest: plan.source_digest, decision: $decision.value}

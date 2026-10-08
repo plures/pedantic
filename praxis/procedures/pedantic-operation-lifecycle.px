@@ -1,0 +1,31 @@
+# Durable operation lifecycle policy. Effects are never performed by PX.
+
+entity OperationLifecycle:
+  prefix: "pedantic:operation:"
+  fields:
+    operation_id: String
+    profile_id: String
+    actor_id: String
+    target_id: String
+    state: String
+    causation_id: String
+    correlation_id: String
+
+constraint operation_requires_identity:
+  scope: operation_lifecycle
+  phase: admission
+  require: operation.operation_id != "" AND operation.profile_id != "" AND operation.actor_id != "" AND operation.target_id != ""
+  severity: error
+  message: "Operations require operation, profile, actor, and target identities."
+
+constraint operation_requires_causal_links:
+  scope: operation_lifecycle
+  phase: admission
+  require: operation.causation_id != "" AND operation.correlation_id != ""
+  severity: error
+  message: "Operations require causation and correlation identities."
+
+procedure transition_operation(operation: OperationLifecycle from "operation_lifecycle") -> OperationLifecycle into "operation_lifecycle":
+  given: "Record PX-approved lifecycle transitions before a coordinator offers effects"
+  evaluate_operation_transition operation -> $decision
+  return {operation_id: operation.operation_id, profile_id: operation.profile_id, actor_id: operation.actor_id, target_id: operation.target_id, state: $decision.state, causation_id: operation.causation_id, correlation_id: operation.correlation_id}

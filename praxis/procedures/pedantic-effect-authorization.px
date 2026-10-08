@@ -1,0 +1,26 @@
+# PX is the sole issuer of bounded effect authorizations.
+
+entity DurableEffectAuthorization:
+  prefix: "pedantic:durable-effect-authorization:"
+  fields:
+    authorization_id: String
+    operation_id: String
+    step_id: String
+    target_id: String
+    agent_id: String
+    capability: String
+    input_digest: String
+    idempotency_key: String
+    decision: String
+
+constraint durable_authorization_is_bound:
+  scope: durable_effect_authorization
+  phase: execution
+  require: authorization.authorization_id != "" AND authorization.operation_id != "" AND authorization.step_id != "" AND authorization.target_id != "" AND authorization.agent_id != "" AND authorization.capability != "" AND authorization.input_digest != "" AND authorization.idempotency_key != ""
+  severity: error
+  message: "Effect authorization must bind operation, target, agent, capability, digest, and idempotency."
+
+procedure authorize_effect(authorization: DurableEffectAuthorization from "durable_effect_authorizations") -> DurableEffectAuthorization into "durable_effect_authorizations":
+  given: "Issue an expiring signed grant only after PX approval and admission"
+  evaluate_effect_authorization authorization -> $decision
+  return {authorization_id: authorization.authorization_id, operation_id: authorization.operation_id, step_id: authorization.step_id, target_id: authorization.target_id, agent_id: authorization.agent_id, capability: authorization.capability, input_digest: authorization.input_digest, idempotency_key: authorization.idempotency_key, decision: $decision.value}
