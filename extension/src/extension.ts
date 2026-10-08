@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ResourceGraphPanel } from './webviews/resourceGraphPanel';
 import { ResourceInventoryPanel } from './webviews/resourceInventoryPanel';
 import { activateLanguageServer, deactivateLanguageServer } from './client';
-import { invokePwsh } from './bridge/pwshBridge';
+import { createPwshBridge } from './bridge/pwshBridge';
 import { InventoryTreeProvider } from './inventory/inventoryTreeProvider';
 import { InventoryDetailPanel } from './inventory/inventoryDetailPanel';
 import { InventoryService } from './inventory/inventoryService';
@@ -13,6 +13,7 @@ let aiPanel: vscode.WebviewPanel | undefined;
 let inventoryTreeProvider: InventoryTreeProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+  const bridge = createPwshBridge(context);
   // Start the language server
   activateLanguageServer(context);
 
@@ -31,12 +32,12 @@ export function activate(context: vscode.ExtensionContext) {
     return vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
       title: `Pedantic: Installing ${resourceType}`
-    }, async () => {
-      const response = await invokePwsh({
+    }, async (_progress, token) => {
+      const response = await bridge.invoke({
         command: 'installResource',
         resourceType,
         options: { timeout: defaultTimeoutMs }
-      });
+      }, token);
 
       if (!response.success) {
         const errors = response.errors?.join('\n') || 'Unknown error';
@@ -56,12 +57,12 @@ export function activate(context: vscode.ExtensionContext) {
     const response = await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
       title: 'Pedantic: Checking DSC prerequisites'
-    }, async () => {
-      return invokePwsh({
+    }, async (_progress, token) => {
+      return bridge.invoke({
         command: 'prereqs',
         resourceTypes: commonResources,
         options: { timeout: defaultTimeoutMs }
-      });
+      }, token);
     });
 
     if (!response.success) {
@@ -103,12 +104,12 @@ export function activate(context: vscode.ExtensionContext) {
     const response = await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
       title: 'Pedantic: Gathering resource inventory'
-    }, async () => {
-      return invokePwsh({
+    }, async (_progress, token) => {
+      return bridge.invoke({
         command: 'resources',
         resourceTypes: commonResources,
         options: { timeout: defaultTimeoutMs }
-      });
+      }, token);
     });
 
     if (!response.success) {
@@ -125,12 +126,12 @@ export function activate(context: vscode.ExtensionContext) {
     const response = await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
       title: 'Pedantic: Loading available resources'
-    }, async () => {
-      return invokePwsh({
+    }, async (_progress, token) => {
+      return bridge.invoke({
         command: 'resources',
         resourceTypes: commonResources,
         options: { timeout: defaultTimeoutMs }
-      });
+      }, token);
     });
 
     if (!response.success) {
@@ -222,7 +223,7 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       vscode.window.showInformationMessage('Pedantic: Generating DSC configuration...');
       
-      const response = await invokePwsh({
+      const response = await bridge.invoke({
         command: 'generate',
         dslPath,
         options: { timeout: 30000 }

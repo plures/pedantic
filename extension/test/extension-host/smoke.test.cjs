@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
@@ -12,6 +13,22 @@ async function run() {
     fs.existsSync(path.join(extension.extensionPath, 'dist/server/server.js')),
     'The packaged language server should be present',
   );
+  const bridgePath = path.join(extension.extensionPath, 'bridge', 'bridge.ps1');
+  assert.ok(fs.existsSync(bridgePath), 'The packaged PowerShell bridge should be present');
+
+  const bridgeResponse = JSON.parse(execFileSync(
+    'pwsh',
+    ['-NoProfile', '-NonInteractive', '-File', bridgePath, '-Command', 'version', '-ProtocolVersion', '1', '-OutputJson'],
+    { encoding: 'utf8' },
+  ));
+  assert.equal(bridgeResponse.protocolVersion, 1, 'The bridge protocol should be compatible');
+  assert.equal(bridgeResponse.success, true, 'The bridge version command should succeed');
+  const incompatibleBridge = spawnSync(
+    'pwsh',
+    ['-NoProfile', '-NonInteractive', '-File', bridgePath, '-Command', 'version', '-ProtocolVersion', '2', '-OutputJson'],
+    { encoding: 'utf8' },
+  );
+  assert.notEqual(incompatibleBridge.status, 0, 'An incompatible bridge protocol should fail');
 
   const commands = await vscode.commands.getCommands(true);
   assert.ok(commands.includes('pedantic.generateConfig'), 'Pedantic commands should be registered');
