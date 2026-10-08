@@ -10,8 +10,8 @@ use pedantic_operation::{
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -196,22 +196,96 @@ impl ProviderBackend for FilesystemTransfer {
             let destination_digest = digest_file(Path::new(destination))?;
             if destination_digest == source_digest {
                 return Ok(transfer_observation(
-                    bytes_total,
                     source_digest,
                     destination_digest,
-                    0,
-                    0,
-                    0,
-                    started_at.elapsed(),
+                    TransferMetrics {
+                        bytes_total,
+                        bytes_transferred: 0,
+                        retry_count: 0,
+                        resume_count: 0,
+                        current_throughput_bps: 0,
+                        elapsed: started_at.elapsed(),
+                    },
                 ));
             }
         }
         let mut source_file = File::open(source_path)
             .map_err(|_| CapabilityError::Execution("transfer source is unavailable".into()))?;
-        let mut destination_file = File::create(destination).map_err(|_| {
-            CapabilityError::Execution("transfer destination is unavailable".into())
-        })?;
+        let mut retry_count = 0u64;
+        let mut resume_count = 0u64;
         let mut source_hasher = Sha256::new();
+        let mut resumed_bytes = 0u64;
+        let mut destination_file;
+        if Path::new(destination).is_file() {
+            let destination_length = fs::metadata(destination)
+                .map_err(|_| {
+                    CapabilityError::Execution("transfer destination is unavailable".into())
+                })?
+                .len();
+            if destination_length > 0 && destination_length < bytes_total {
+                let mut partial_file = File::open(destination).map_err(|_| {
+                    CapabilityError::Execution("transfer destination is unavailable".into())
+                })?;
+                let mut source_prefix = [0; 64 * 1024];
+                let mut destination_prefix = [0; 64 * 1024];
+                let mut matching_prefix = true;
+                while resumed_bytes < destination_length {
+                    let count = (destination_length - resumed_bytes).min(source_prefix.len() as u64)
+                        as usize;
+                    read_exact_with_retry(
+                        &mut source_file,
+                        &mut source_prefix[..count],
+                        &mut retry_count,
+                    )
+                    .map_err(|_| {
+                        CapabilityError::Execution("transfer source could not be read".into())
+                    })?;
+                    read_exact_with_retry(
+                        &mut partial_file,
+                        &mut destination_prefix[..count],
+                        &mut retry_count,
+                    )
+                    .map_err(|_| {
+                        CapabilityError::Execution("transfer destination could not be read".into())
+                    })?;
+                    if source_prefix[..count] != destination_prefix[..count] {
+                        matching_prefix = false;
+                        break;
+                    }
+                    source_hasher.update(&source_prefix[..count]);
+                    resumed_bytes += count as u64;
+                }
+                if matching_prefix {
+                    resume_count = 1;
+                    destination_file =
+                        OpenOptions::new()
+                            .append(true)
+                            .open(destination)
+                            .map_err(|_| {
+                                CapabilityError::Execution(
+                                    "transfer destination is unavailable".into(),
+                                )
+                            })?;
+                } else {
+                    source_file.seek(SeekFrom::Start(0)).map_err(|_| {
+                        CapabilityError::Execution("transfer source could not be read".into())
+                    })?;
+                    source_hasher = Sha256::new();
+                    resumed_bytes = 0;
+                    destination_file = File::create(destination).map_err(|_| {
+                        CapabilityError::Execution("transfer destination is unavailable".into())
+                    })?;
+                }
+            } else {
+                destination_file = File::create(destination).map_err(|_| {
+                    CapabilityError::Execution("transfer destination is unavailable".into())
+                })?;
+            }
+        } else {
+            destination_file = File::create(destination).map_err(|_| {
+                CapabilityError::Execution("transfer destination is unavailable".into())
+            })?;
+        }
         let mut bytes_transferred = 0u64;
         let mut next_progress = (bytes_total / 10).max(1);
         let mut last_progress_bytes = 0;
@@ -219,21 +293,26 @@ impl ProviderBackend for FilesystemTransfer {
         let mut current_throughput_bps = 0;
         let mut buffer = [0; 64 * 1024];
         loop {
-            let bytes_read = source_file.read(&mut buffer).map_err(|_| {
-                CapabilityError::Execution("transfer source could not be read".into())
-            })?;
+            let bytes_read = read_with_retry(&mut source_file, &mut buffer, &mut retry_count)
+                .map_err(|_| {
+                    CapabilityError::Execution("transfer source could not be read".into())
+                })?;
             if bytes_read == 0 {
                 break;
             }
-            destination_file
-                .write_all(&buffer[..bytes_read])
-                .map_err(|_| CapabilityError::Execution("transfer could not complete".into()))?;
+            write_all_with_retry(
+                &mut destination_file,
+                &buffer[..bytes_read],
+                &mut retry_count,
+            )
+            .map_err(|_| CapabilityError::Execution("transfer could not complete".into()))?;
             source_hasher.update(&buffer[..bytes_read]);
             bytes_transferred = bytes_transferred.saturating_add(bytes_read as u64);
-            if bytes_transferred >= next_progress {
+            let total_progress = resumed_bytes.saturating_add(bytes_transferred);
+            if total_progress >= next_progress {
                 activity_sink(CapabilityActivity {
                     event: "step.progressed",
-                    detail: format!("transferred {bytes_transferred} of {bytes_total} bytes"),
+                    detail: format!("transferred {total_progress} of {bytes_total} bytes"),
                 })?;
                 current_throughput_bps = throughput_bps(
                     bytes_transferred.saturating_sub(last_progress_bytes),
@@ -241,7 +320,7 @@ impl ProviderBackend for FilesystemTransfer {
                 );
                 last_progress_bytes = bytes_transferred;
                 last_progress_at = Instant::now();
-                next_progress = bytes_transferred.saturating_add((bytes_total / 10).max(1));
+                next_progress = total_progress.saturating_add((bytes_total / 10).max(1));
             }
         }
         if bytes_transferred > last_progress_bytes {
@@ -250,8 +329,7 @@ impl ProviderBackend for FilesystemTransfer {
                 last_progress_at.elapsed(),
             );
         }
-        destination_file
-            .flush()
+        flush_with_retry(&mut destination_file, &mut retry_count)
             .map_err(|_| CapabilityError::Execution("transfer could not complete".into()))?;
         let source_digest = format!("sha256:{:x}", source_hasher.finalize());
         let destination_digest = digest_file(Path::new(destination))?;
@@ -261,13 +339,16 @@ impl ProviderBackend for FilesystemTransfer {
             ));
         }
         Ok(transfer_observation(
-            bytes_total,
             source_digest,
             destination_digest,
-            bytes_transferred,
-            0,
-            current_throughput_bps,
-            started_at.elapsed(),
+            TransferMetrics {
+                bytes_total,
+                bytes_transferred,
+                retry_count,
+                resume_count,
+                current_throughput_bps,
+                elapsed: started_at.elapsed(),
+            },
         ))
     }
 }
@@ -466,6 +547,66 @@ fn digest_file(path: &Path) -> Result<String, CapabilityError> {
     Ok(format!("sha256:{:x}", hasher.finalize()))
 }
 
+fn read_with_retry(
+    reader: &mut impl Read,
+    buffer: &mut [u8],
+    retry_count: &mut u64,
+) -> io::Result<usize> {
+    loop {
+        match reader.read(buffer) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                *retry_count = retry_count.saturating_add(1);
+            }
+            result => return result,
+        }
+    }
+}
+
+fn read_exact_with_retry(
+    reader: &mut impl Read,
+    buffer: &mut [u8],
+    retry_count: &mut u64,
+) -> io::Result<()> {
+    let mut offset = 0;
+    while offset < buffer.len() {
+        match read_with_retry(reader, &mut buffer[offset..], retry_count)? {
+            0 => return Err(io::ErrorKind::UnexpectedEof.into()),
+            bytes_read => offset += bytes_read,
+        }
+    }
+    Ok(())
+}
+
+fn write_all_with_retry(
+    writer: &mut impl Write,
+    buffer: &[u8],
+    retry_count: &mut u64,
+) -> io::Result<()> {
+    let mut offset = 0;
+    while offset < buffer.len() {
+        match writer.write(&buffer[offset..]) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                *retry_count = retry_count.saturating_add(1);
+            }
+            Err(error) => return Err(error),
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(bytes_written) => offset += bytes_written,
+        }
+    }
+    Ok(())
+}
+
+fn flush_with_retry(writer: &mut impl Write, retry_count: &mut u64) -> io::Result<()> {
+    loop {
+        match writer.flush() {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                *retry_count = retry_count.saturating_add(1);
+            }
+            result => return result,
+        }
+    }
+}
+
 fn effect_observation(observation: &CommandObservation) -> Value {
     json!({"outputDigest": effect_digest(observation)})
 }
@@ -490,25 +631,30 @@ fn normalize_command_output(output: &[u8]) -> String {
         .to_owned()
 }
 
-fn transfer_observation(
+struct TransferMetrics {
     bytes_total: u64,
-    source_digest: String,
-    destination_digest: String,
     bytes_transferred: u64,
+    retry_count: u64,
     resume_count: u64,
     current_throughput_bps: u64,
     elapsed: std::time::Duration,
+}
+
+fn transfer_observation(
+    source_digest: String,
+    destination_digest: String,
+    metrics: TransferMetrics,
 ) -> Value {
-    let elapsed_ms = elapsed.as_millis().max(1).min(u64::MAX as u128) as u64;
-    let average_throughput_bps = throughput_bps(bytes_transferred, elapsed);
+    let elapsed_ms = metrics.elapsed.as_millis().max(1).min(u64::MAX as u128) as u64;
+    let average_throughput_bps = throughput_bps(metrics.bytes_transferred, metrics.elapsed);
     json!({
-        "bytesTotal": bytes_total,
-        "bytesTransferred": bytes_transferred,
+        "bytesTotal": metrics.bytes_total,
+        "bytesTransferred": metrics.bytes_transferred,
         "elapsedMs": elapsed_ms,
-        "currentThroughputBps": current_throughput_bps,
+        "currentThroughputBps": metrics.current_throughput_bps,
         "averageThroughputBps": average_throughput_bps,
-        "resumeCount": resume_count,
-        "retryCount": 0,
+        "resumeCount": metrics.resume_count,
+        "retryCount": metrics.retry_count,
         "sourceDigest": source_digest,
         "destinationDigest": destination_digest,
         "verificationState": "verified"
@@ -656,6 +802,98 @@ mod tests {
                 .iter()
                 .any(|event| event.event == "step.progressed")
         );
+    }
+
+    #[test]
+    fn transfer_resumes_only_from_a_matching_partial_destination() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("source");
+        let destination = directory.path().join("destination");
+        let contents = (0..512 * 1024)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let resumed_bytes = 111_111;
+        fs::write(&source, &contents).unwrap();
+        fs::write(&destination, &contents[..resumed_bytes]).unwrap();
+
+        let provider = Provider::new(transfer_manifest(), FilesystemTransfer, vec![]);
+        let observation = provider
+            .execute(&json!({"sourcePath": source, "destinationPath": destination}))
+            .unwrap();
+
+        assert_eq!(observation["resumeCount"], 1);
+        assert_eq!(
+            observation["bytesTransferred"],
+            (contents.len() - resumed_bytes) as u64
+        );
+        assert_eq!(fs::read(destination).unwrap(), contents);
+
+        let invalid_source = directory.path().join("invalid-source");
+        let invalid_destination = directory.path().join("invalid-destination");
+        fs::write(&invalid_source, &contents).unwrap();
+        fs::write(&invalid_destination, vec![b'z'; resumed_bytes]).unwrap();
+        let observation = provider
+            .execute(&json!({
+                "sourcePath": invalid_source,
+                "destinationPath": invalid_destination
+            }))
+            .unwrap();
+        assert_eq!(observation["resumeCount"], 0);
+        assert_eq!(fs::read(invalid_destination).unwrap(), contents);
+    }
+
+    #[test]
+    fn interrupted_transfer_io_is_counted_as_a_retry() {
+        struct InterruptedReader {
+            first_read: bool,
+        }
+
+        impl std::io::Read for InterruptedReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.first_read {
+                    self.first_read = false;
+                    return Err(std::io::ErrorKind::Interrupted.into());
+                }
+                buffer[0] = b'x';
+                Ok(1)
+            }
+        }
+
+        struct InterruptedWriter {
+            first_write: bool,
+            written: Vec<u8>,
+        }
+
+        impl std::io::Write for InterruptedWriter {
+            fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+                if self.first_write {
+                    self.first_write = false;
+                    return Err(std::io::ErrorKind::Interrupted.into());
+                }
+                self.written.extend_from_slice(buffer);
+                Ok(buffer.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut retries = 0;
+        let mut reader = InterruptedReader { first_read: true };
+        let mut buffer = [0];
+        assert_eq!(
+            read_with_retry(&mut reader, &mut buffer, &mut retries).unwrap(),
+            1
+        );
+
+        let mut writer = InterruptedWriter {
+            first_write: true,
+            written: Vec::new(),
+        };
+        write_all_with_retry(&mut writer, &buffer, &mut retries).unwrap();
+        assert_eq!(writer.written, b"x");
+        assert_eq!(retries, 2);
     }
 
     struct Backend(AtomicUsize);
