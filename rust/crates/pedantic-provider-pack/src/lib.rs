@@ -487,7 +487,7 @@ mod tests {
         let first = provider.execute(&input).unwrap();
         let second = provider.execute(&input).unwrap();
         assert_eq!(first["bytesTotal"], first["bytesTransferred"]);
-        assert_eq!(second["bytesTotal"], second["bytesTotal"]);
+        assert_eq!(first["bytesTotal"], second["bytesTotal"]);
         assert_eq!(second["bytesTransferred"], 0);
         assert_eq!(first["sourceDigest"], second["destinationDigest"]);
     }
