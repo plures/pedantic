@@ -1,0 +1,20 @@
+[package]
+name = "pedantic-transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Authenticated, policy-free Pedantic service-to-agent transport"
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+ed25519-dalek.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio.workspace = true

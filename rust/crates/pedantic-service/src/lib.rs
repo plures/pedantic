@@ -5,6 +5,7 @@ use pedantic_executor::dsc::{
     DscCommand, DscError, DscInput, DscRunOptions, DscTestResult, parse_test_results, run_dsc,
 };
 use pedantic_executor::inventory::{HostRecord, parse_hosts};
+use pedantic_agent::{AgentEnrollment, AgentObservationBatch};
 use pedantic_operation::{EffectAuthorization, RetryClass, RiskClass, Signature as GrantSignature};
 use pluresdb::{CrdtStore, SledStorage, StorageEngine};
 use pluresdb_chronos::{ChronosAction, ChronosEntry, ChronosTimeline};
@@ -84,6 +85,14 @@ impl From<ChronosEntry> for EvidenceSummary {
 pub struct EvidencePage {
     pub entries: Vec<EvidenceSummary>,
     pub truncated: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSyncResult {
+    pub acknowledged_sequence: u64,
+    pub replay_from_sequence: Option<u64>,
+    pub accepted_observations: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,6 +367,192 @@ impl ServiceFoundation {
         }
     }
 
+    pub async fn enroll_agent(
+            &self,
+            enrollment: AgentEnrollment,
+            now: u64,
+        ) -> Result<(), ServiceErrorKind> {
+            let _revision_guard = self.revision_lock.lock().await;
+            enrollment
+                .validate(now)
+                .map_err(|error| ServiceErrorKind::InvalidRequest(error.to_string()))?;
+            if enrollment.profile_id != self.profile_id {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "Agent enrollment belongs to a different profile.".into(),
+                ));
+            }
+            let public_key = URL_SAFE_NO_PAD
+                .decode(&enrollment.public_key)
+                .map_err(|_| ServiceErrorKind::InvalidRequest("Agent public key is invalid.".into()))?;
+            let public_key: [u8; 32] = public_key.try_into().map_err(|_| {
+                ServiceErrorKind::InvalidRequest("Agent public key has the wrong length.".into())
+            })?;
+            VerifyingKey::from_bytes(&public_key)
+                .map_err(|_| ServiceErrorKind::InvalidRequest("Agent public key is invalid.".into()))?;
+            let key = self.agent_enrollment_key(&enrollment.agent_id);
+            if let Some(existing) = self._store.get(&key)
+                && existing.data["enrollmentId"].as_str() != Some(&enrollment.enrollment_id)
+            {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "An agent identity is already enrolled with different trust material.".into(),
+                ));
+            }
+            self._store.put(
+                key.clone(),
+                SERVICE_ACTOR,
+                serde_json::json!({
+                    "profileId": self.profile_id,
+                    "enrollmentId": enrollment.enrollment_id,
+                    "agentId": enrollment.agent_id,
+                    "targetId": enrollment.target_id,
+                    "publicKey": enrollment.public_key,
+                    "expiresAt": enrollment.expires_at,
+                    "revokedAt": 0,
+                }),
+            );
+            let entry = self.timeline.build_entry(
+                &key,
+                SERVICE_ACTOR,
+                ChronosAction::Create,
+                &serde_json::json!({
+                    "profileId": self.profile_id,
+                    "agentId": enrollment.agent_id,
+                    "targetId": enrollment.target_id,
+                    "enrollmentId": enrollment.enrollment_id,
+                }),
+                Vec::new(),
+                Some("Remote agent enrollment trust material recorded.".into()),
+            );
+            self.record_evidence_summary(entry)
+        }
+
+    pub async fn revoke_agent(
+            &self,
+            agent_id: &str,
+            revoked_at: u64,
+        ) -> Result<(), ServiceErrorKind> {
+            let _revision_guard = self.revision_lock.lock().await;
+            let key = self.agent_enrollment_key(agent_id);
+            let mut enrollment = self._store.get(&key).ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest("Agent is not enrolled for this profile.".into())
+            })?.data;
+            enrollment["revokedAt"] = serde_json::json!(revoked_at);
+            self._store.put(key, SERVICE_ACTOR, enrollment);
+            Ok(())
+        }
+
+    pub async fn sync_agent(
+            &self,
+            batch: AgentObservationBatch,
+            now: u64,
+        ) -> Result<AgentSyncResult, ServiceErrorKind> {
+            let _revision_guard = self.revision_lock.lock().await;
+            let enrollment = self
+                ._store
+                .get(self.agent_enrollment_key(&batch.agent_id))
+                .ok_or_else(|| ServiceErrorKind::InvalidRequest("Agent is not enrolled.".into()))?
+                .data;
+            if enrollment["profileId"].as_str() != Some(&self.profile_id)
+                || enrollment["targetId"].as_str() != Some(&batch.target_id)
+                || enrollment["expiresAt"].as_u64().is_none_or(|expires_at| expires_at <= now)
+                || enrollment["revokedAt"].as_u64().is_some_and(|revoked_at| revoked_at != 0 && revoked_at <= now)
+            {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "Agent enrollment is no longer eligible for synchronization.".into(),
+                ));
+            }
+            let public_key = enrollment["publicKey"]
+                .as_str()
+                .ok_or_else(|| ServiceErrorKind::Foundation("Enrollment key is missing.".into()))?;
+            let public_key = URL_SAFE_NO_PAD.decode(public_key).map_err(|_| {
+                ServiceErrorKind::Foundation("Enrollment key is malformed.".into())
+            })?;
+            let public_key: [u8; 32] = public_key.try_into().map_err(|_| {
+                ServiceErrorKind::Foundation("Enrollment key has the wrong length.".into())
+            })?;
+            batch
+                .verify(&VerifyingKey::from_bytes(&public_key).map_err(|_| {
+                    ServiceErrorKind::Foundation("Enrollment key is malformed.".into())
+                })?)
+                .map_err(|_| ServiceErrorKind::InvalidRequest("Agent batch signature is invalid.".into()))?;
+            if batch.profile_id != self.profile_id {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "Agent batch belongs to a different profile.".into(),
+                ));
+            }
+            let acknowledgement_key = self.agent_acknowledgement_key(&batch.agent_id);
+            let acknowledged_sequence = self._store.get(&acknowledgement_key)
+                .and_then(|record| record.data["sequence"].as_u64())
+                .unwrap_or(0);
+            if batch.first_sequence > acknowledged_sequence + 1 {
+                return Ok(AgentSyncResult {
+                    acknowledged_sequence,
+                    replay_from_sequence: Some(acknowledged_sequence + 1),
+                    accepted_observations: 0,
+                });
+            }
+            if batch.last_sequence <= acknowledged_sequence {
+                return Ok(AgentSyncResult {
+                    acknowledged_sequence,
+                    replay_from_sequence: None,
+                    accepted_observations: 0,
+                });
+            }
+            if batch.first_sequence != acknowledged_sequence + 1 {
+                return Ok(AgentSyncResult {
+                    acknowledged_sequence,
+                    replay_from_sequence: Some(acknowledged_sequence + 1),
+                    accepted_observations: 0,
+                });
+            }
+            let mut accepted = 0;
+            for observation in &batch.observations {
+                let key = self.agent_observation_key(&observation.event_id);
+                if self._store.get(&key).is_none() {
+                    self._store.put(
+                        key.clone(),
+                        SERVICE_ACTOR,
+                        serde_json::json!({
+                            "profileId": self.profile_id,
+                            "agentId": batch.agent_id,
+                            "targetId": batch.target_id,
+                            "eventId": observation.event_id,
+                            "sequence": observation.sequence,
+                            "status": observation.status,
+                            "redactionClass": observation.redaction_class,
+                            "outputDigest": observation.output_digest,
+                        }),
+                    );
+                    let entry = self.timeline.build_entry(
+                        &key,
+                        SERVICE_ACTOR,
+                        ChronosAction::Create,
+                        &serde_json::json!({
+                            "profileId": self.profile_id,
+                            "agentId": batch.agent_id,
+                            "targetId": batch.target_id,
+                            "eventId": observation.event_id,
+                            "sequence": observation.sequence,
+                            "status": observation.status,
+                        }),
+                        Vec::new(),
+                        Some("Authenticated remote agent observation recorded.".into()),
+                    );
+                    self.record_evidence_summary(entry)?;
+                    accepted += 1;
+                }
+            }
+            self._store.put(
+                acknowledgement_key,
+                SERVICE_ACTOR,
+                serde_json::json!({ "sequence": batch.last_sequence }),
+            );
+            Ok(AgentSyncResult {
+                acknowledged_sequence: batch.last_sequence,
+                replay_from_sequence: None,
+                accepted_observations: accepted,
+            })
+        }
     pub async fn admit_configuration(
         &self,
         request: ConfigurationAdmissionRequest,
@@ -1602,6 +1797,18 @@ impl ServiceFoundation {
 
     fn configuration_key(&self, revision_id: &str) -> String {
         format!("pedantic:configuration:{}:{revision_id}", self.profile_id)
+    }
+
+    fn agent_enrollment_key(&self, agent_id: &str) -> String {
+        format!("pedantic:agent-enrollment:{}:{agent_id}", self.profile_id)
+    }
+
+    fn agent_acknowledgement_key(&self, agent_id: &str) -> String {
+        format!("pedantic:agent-acknowledgement:{}:{agent_id}", self.profile_id)
+    }
+
+    fn agent_observation_key(&self, event_id: &str) -> String {
+        format!("pedantic:agent-observation:{}:{event_id}", self.profile_id)
     }
 
     fn inventory_observation_key(&self, observation_id: &str) -> String {
@@ -3538,6 +3745,72 @@ mod tests {
                 .into())
             }
         }
+    }
+
+    #[tokio::test]
+    async fn agent_sync_is_signed_idempotent_gap_aware_and_revocable() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = ServiceFoundation::open_at("profile", directory.path(), "test").unwrap();
+        let signing_key = SigningKey::from_bytes(&[11; 32]);
+        service
+            .enroll_agent(
+                AgentEnrollment {
+                    schema_version: "pedantic.agent-enrollment.v1".into(),
+                    enrollment_id: "enrollment".into(),
+                    agent_id: "agent".into(),
+                    target_id: "target".into(),
+                    profile_id: "profile".into(),
+                    public_key: URL_SAFE_NO_PAD.encode(signing_key.verifying_key().as_bytes()),
+                    issued_at: 1,
+                    expires_at: 100,
+                    secret_references: Vec::new(),
+                },
+                1,
+            )
+            .await
+            .unwrap();
+        let observation = pedantic_agent::AgentObservation {
+            schema_version: "pedantic.effect-observation.v1".into(),
+            event_id: "event-1".into(),
+            command_id: "command".into(),
+            operation_id: "operation".into(),
+            step_id: "step".into(),
+            attempt_id: "attempt".into(),
+            target_id: "target".into(),
+            agent_id: "agent".into(),
+            sequence: 1,
+            status: "completed".into(),
+            causation_id: "cause".into(),
+            correlation_id: "correlation".into(),
+            redaction_class: pedantic_operation::RedactionClass::MetadataOnly,
+            output_digest: None,
+        };
+        let batch = AgentObservationBatch::sign(
+            "batch".into(),
+            "profile".into(),
+            vec![observation.clone()],
+            "key".into(),
+            &signing_key,
+        )
+        .unwrap();
+        assert_eq!(service.sync_agent(batch.clone(), 2).await.unwrap().accepted_observations, 1);
+        assert_eq!(service.sync_agent(batch, 2).await.unwrap().accepted_observations, 0);
+        service.revoke_agent("agent", 2).await.unwrap();
+        assert!(service.sync_agent(
+            AgentObservationBatch::sign(
+                "batch-2".into(),
+                "profile".into(),
+                vec![pedantic_agent::AgentObservation {
+                    event_id: "event-2".into(),
+                    sequence: 2,
+                    ..observation
+                }],
+                "key".into(),
+                &signing_key,
+            )
+            .unwrap(),
+            2,
+        ).await.is_err());
     }
 
     fn assert_contract(schema_source: &str, instance: serde_json::Value) {

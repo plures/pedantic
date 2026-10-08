@@ -17,6 +17,7 @@ jsonschema = { workspace = true }
 base64 = { workspace = true }
 ed25519-dalek = { workspace = true, features = ["rand_core"] }
 pedantic-operation = { path = "../pedantic-operation" }
+pedantic-agent = { path = "../pedantic-agent" }
 rand_core = { workspace = true }
 sha2 = "0.10"
 thiserror = { workspace = true }

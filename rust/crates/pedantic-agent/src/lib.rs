@@ -2,7 +2,7 @@
 //! observed facts; it deliberately does not decide admission or retry policy.
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
 use pedantic_capability::{CapabilityError, CapabilityRegistry};
 use pedantic_operation::{
     EffectAuthorization, OperationEvent, OperationState, RedactionClass, RetryClass,
@@ -20,6 +20,9 @@ use thiserror::Error;
 
 pub const JOURNAL_SCHEMA_VERSION: &str = "pedantic.agent-journal.v1";
 pub const EFFECT_AUTHORIZATION_SCHEMA_VERSION: &str = "pedantic.effect-authorization.v1";
+pub const AGENT_ENROLLMENT_SCHEMA_VERSION: &str = "pedantic.agent-enrollment.v1";
+pub const AGENT_OBSERVATION_BATCH_SCHEMA_VERSION: &str =
+    "pedantic.agent-observation-batch.v1";
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -35,6 +38,178 @@ pub enum AgentError {
     DuplicateEvent(String),
     #[error("a reboot was requested but the boot identity did not change")]
     UnchangedBootIdentity,
+    #[error("agent enrollment is invalid: {0}")]
+    Enrollment(&'static str),
+    #[error("staged artifact digest does not match its immutable reference")]
+    ArtifactDigest,
+    #[error("staged artifact path is not a file")]
+    ArtifactPath,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentEnrollment {
+    pub schema_version: String,
+    pub enrollment_id: String,
+    pub agent_id: String,
+    pub target_id: String,
+    pub profile_id: String,
+    pub public_key: String,
+    pub issued_at: u64,
+    pub expires_at: u64,
+    #[serde(default)]
+    pub secret_references: Vec<String>,
+}
+
+impl AgentEnrollment {
+    pub fn validate(&self, now: u64) -> Result<(), AgentError> {
+        if self.schema_version != AGENT_ENROLLMENT_SCHEMA_VERSION {
+            return Err(AgentError::Enrollment("unsupported schema version"));
+        }
+        if self.enrollment_id.is_empty()
+            || self.agent_id.is_empty()
+            || self.target_id.is_empty()
+            || self.profile_id.is_empty()
+            || self.public_key.is_empty()
+        {
+            return Err(AgentError::Enrollment("required identity is empty"));
+        }
+        if self.agent_id == self.target_id {
+            return Err(AgentError::Enrollment(
+                "agent and target identities must remain distinct",
+            ));
+        }
+        if self.expires_at <= now {
+            return Err(AgentError::Enrollment("enrollment expired"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservationSignature {
+    pub algorithm: String,
+    pub key_id: String,
+    pub payload_digest: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentObservation {
+    pub schema_version: String,
+    pub event_id: String,
+    pub command_id: String,
+    pub operation_id: String,
+    pub step_id: String,
+    pub attempt_id: String,
+    pub target_id: String,
+    pub agent_id: String,
+    pub sequence: u64,
+    pub status: String,
+    pub causation_id: String,
+    pub correlation_id: String,
+    pub redaction_class: RedactionClass,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_digest: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentObservationBatch {
+    pub schema_version: String,
+    pub batch_id: String,
+    pub agent_id: String,
+    pub target_id: String,
+    pub profile_id: String,
+    pub first_sequence: u64,
+    pub last_sequence: u64,
+    pub observations: Vec<AgentObservation>,
+    pub signature: ObservationSignature,
+}
+
+impl AgentObservationBatch {
+    pub fn sign(
+        batch_id: String,
+        profile_id: String,
+        observations: Vec<AgentObservation>,
+        key_id: String,
+        key: &ed25519_dalek::SigningKey,
+    ) -> Result<Self, AgentError> {
+        let first = observations
+            .first()
+            .ok_or(AgentError::Enrollment("observation batch is empty"))?;
+        let last = observations
+            .last()
+            .ok_or(AgentError::Enrollment("observation batch is empty"))?;
+        if observations.iter().any(|observation| {
+            observation.agent_id != first.agent_id || observation.target_id != first.target_id
+        }) {
+            return Err(AgentError::Enrollment("batch identities differ"));
+        }
+        let mut batch = Self {
+            schema_version: AGENT_OBSERVATION_BATCH_SCHEMA_VERSION.into(),
+            batch_id,
+            agent_id: first.agent_id.clone(),
+            target_id: first.target_id.clone(),
+            profile_id,
+            first_sequence: first.sequence,
+            last_sequence: last.sequence,
+            observations,
+            signature: ObservationSignature {
+                algorithm: "Ed25519".into(),
+                key_id,
+                payload_digest: String::new(),
+                value: String::new(),
+            },
+        };
+        batch.signature.payload_digest = batch.payload_digest();
+        batch.signature.value =
+            URL_SAFE_NO_PAD.encode(key.sign(&batch.signing_payload()).to_bytes());
+        Ok(batch)
+    }
+
+    pub fn signing_payload(&self) -> Vec<u8> {
+        let mut batch = self.clone();
+        batch.signature.payload_digest.clear();
+        batch.signature.value.clear();
+        serde_json::to_vec(&batch).expect("observation batch is serializable")
+    }
+
+    pub fn payload_digest(&self) -> String {
+        format!("sha256:{:x}", Sha256::digest(self.signing_payload()))
+    }
+
+    pub fn verify(&self, key: &VerifyingKey) -> Result<(), AuthorizationError> {
+        if self.schema_version != AGENT_OBSERVATION_BATCH_SCHEMA_VERSION
+            || self.signature.algorithm != "Ed25519"
+            || self.batch_id.is_empty()
+            || self.agent_id.is_empty()
+            || self.target_id.is_empty()
+            || self.profile_id.is_empty()
+            || self.observations.is_empty()
+            || self.first_sequence == 0
+            || self.last_sequence < self.first_sequence
+            || self.signature.payload_digest != self.payload_digest()
+            || self.observations.first().is_none_or(|event| event.sequence != self.first_sequence)
+            || self.observations.last().is_none_or(|event| event.sequence != self.last_sequence)
+            || self.observations.windows(2).any(|pair| pair[1].sequence != pair[0].sequence + 1)
+            || self.observations.iter().any(|event| {
+                event.agent_id != self.agent_id
+                    || event.target_id != self.target_id
+                    || event.event_id.is_empty()
+            })
+        {
+            return Err(AuthorizationError::PayloadDigest);
+        }
+        let signature = URL_SAFE_NO_PAD
+            .decode(&self.signature.value)
+            .map_err(|_| AuthorizationError::Signature)?;
+        let signature = Signature::from_slice(&signature).map_err(|_| AuthorizationError::Signature)?;
+        key.verify(&self.signing_payload(), &signature)
+            .map_err(|_| AuthorizationError::Signature)
+    }
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -746,5 +921,69 @@ mod tests {
             )
             .unwrap();
         assert_eq!(agent.journal.records().len(), 1);
+    }
+
+    #[test]
+    fn enrollment_requires_distinct_unexpired_agent_and_target_identities() {
+        let enrollment = AgentEnrollment {
+            schema_version: AGENT_ENROLLMENT_SCHEMA_VERSION.into(),
+            enrollment_id: "enrollment".into(),
+            agent_id: "agent".into(),
+            target_id: "target".into(),
+            profile_id: "profile".into(),
+            public_key: "public-key".into(),
+            issued_at: 1,
+            expires_at: 2,
+            secret_references: Vec::new(),
+        };
+        enrollment.validate(1).unwrap();
+
+        let mut conflated = enrollment.clone();
+        conflated.target_id = conflated.agent_id.clone();
+        assert!(matches!(
+            conflated.validate(1),
+            Err(AgentError::Enrollment(
+                "agent and target identities must remain distinct"
+            ))
+        ));
+        assert!(matches!(
+            enrollment.validate(2),
+            Err(AgentError::Enrollment("enrollment expired"))
+        ));
+    }
+
+    #[test]
+    fn signed_observation_batches_reject_tampering_and_sequence_gaps() {
+        let key = SigningKey::from_bytes(&[9; 32]);
+        let observation = AgentObservation {
+            schema_version: "pedantic.effect-observation.v1".into(),
+            event_id: "event-1".into(),
+            command_id: "command-1".into(),
+            operation_id: "operation".into(),
+            step_id: "step".into(),
+            attempt_id: "attempt".into(),
+            target_id: "target".into(),
+            agent_id: "agent".into(),
+            sequence: 1,
+            status: "completed".into(),
+            causation_id: "cause".into(),
+            correlation_id: "correlation".into(),
+            redaction_class: RedactionClass::MetadataOnly,
+            output_digest: None,
+        };
+        let mut batch = AgentObservationBatch::sign(
+            "batch".into(),
+            "profile".into(),
+            vec![observation],
+            "key".into(),
+            &key,
+        )
+        .unwrap();
+        batch.verify(&key.verifying_key()).unwrap();
+        batch.observations[0].event_id = "tampered".into();
+        assert_eq!(
+            batch.verify(&key.verifying_key()),
+            Err(AuthorizationError::PayloadDigest)
+        );
     }
 }
