@@ -2161,6 +2161,7 @@ dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
  "jsonschema",
+ "pedantic-agent",
  "pedantic-executor",
  "pedantic-operation",
  "pluresdb",
