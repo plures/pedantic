@@ -1,3 +1,4 @@
+use jsonschema::{Draft, JSONSchema};
 use pedantic_executor::dsc::{
     DscCommand, DscError, DscInput, DscRunOptions, DscTestResult, parse_test_results, run_dsc,
 };
@@ -212,6 +213,8 @@ pub struct RemediationApprovalRequest {
     #[serde(rename = "actorId")]
     pub actor_id: String,
     pub approved: bool,
+    #[serde(skip)]
+    authorize: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -812,20 +815,6 @@ impl ServiceFoundation {
                     "Remediation request was not recorded for this profile.".into(),
                 )
             })?;
-        let revision_id = required_record_string(
-            &remediation.data,
-            "revisionId",
-            "Recorded remediation request is missing its configuration revision.",
-        )?;
-        let revision = self
-            ._store
-            .get(self.configuration_key(&revision_id))
-            .ok_or_else(|| {
-                ServiceErrorKind::Foundation(
-                    "Recorded remediation request refers to a missing configuration revision."
-                        .into(),
-                )
-            })?;
         let variables = HashMap::from([
             (
                 "remediation".to_owned(),
@@ -850,11 +839,10 @@ impl ServiceFoundation {
             &variables,
         )?;
         let accepted = policy.accepted;
-        let authorization_id = accepted.then(|| request.approval_id.clone());
         let approval = RemediationApproval {
             approval_id: request.approval_id,
             request_id: request.request_id,
-            authorization_id: authorization_id.clone(),
+            authorization_id: None,
             decision: if accepted {
                 "accepted".into()
             } else {
@@ -863,6 +851,65 @@ impl ServiceFoundation {
             constraint_id: policy.constraint_id,
             reason: policy.reason,
         };
+        if self
+            ._store
+            .get(self.effect_authorization_key(&approval.approval_id))
+            .is_some()
+        {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "An approval identifier is already bound to an authorization.".into(),
+            ));
+        }
+        self.record_remediation_approval(&approval, &request.actor_id, request.approved)?;
+        Ok(approval)
+    }
+
+    /// Mints a DSC-set authorization only for an already-recorded approval.
+    pub async fn authorize_remediation(
+        &self,
+        request: RemediationApprovalRequest,
+    ) -> Result<RemediationApproval, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let approval = self
+            ._store
+            .get(self.remediation_approval_key(&request.approval_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest(
+                    "A recorded approval is required before effect authorization.".into(),
+                )
+            })?;
+        if approval.data["requestId"].as_str() != Some(&request.request_id)
+            || approval.data["actorId"].as_str() != Some(&request.actor_id)
+            || approval.data["approved"].as_bool() != Some(true)
+            || approval.data["decision"].as_str() != Some("accepted")
+            || !request.approved
+        {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "Effect authorization must match an accepted recorded approval.".into(),
+            ));
+        }
+        let remediation = self
+            ._store
+            .get(self.remediation_request_key(&request.request_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::Foundation(
+                    "Recorded approval refers to a missing remediation request.".into(),
+                )
+            })?;
+        let revision_id = required_record_string(
+            &remediation.data,
+            "revisionId",
+            "Recorded remediation request is missing its configuration revision.",
+        )?;
+        let revision = self
+            ._store
+            .get(self.configuration_key(&revision_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::Foundation(
+                    "Recorded remediation request refers to a missing configuration revision."
+                        .into(),
+                )
+            })?;
         let source_digest = required_record_string(
             &revision.data,
             "sourceDigest",
@@ -873,10 +920,10 @@ impl ServiceFoundation {
             "idempotencyKey",
             "Recorded remediation request is missing its idempotency key.",
         )?;
-        let authorization_key = self.effect_authorization_key(&approval.approval_id);
+        let authorization_id = request.approval_id;
+        let authorization_key = self.effect_authorization_key(&authorization_id);
         if let Some(existing) = self._store.get(&authorization_key) {
-            let matches = accepted
-                && existing.data["requestId"].as_str() == Some(&approval.request_id)
+            let matches = existing.data["requestId"].as_str() == Some(&request.request_id)
                 && existing.data["revisionId"].as_str() == Some(&revision_id)
                 && existing.data["sourceDigest"].as_str() == Some(&source_digest)
                 && existing.data["idempotencyKey"].as_str() == Some(&idempotency_key)
@@ -886,18 +933,23 @@ impl ServiceFoundation {
                     "An approval identifier is already bound to a different authorization.".into(),
                 ));
             }
-        }
-        if let Some(authorization_id) = authorization_id {
+        } else {
             self.record_effect_authorization(
                 &authorization_id,
-                &approval.request_id,
+                &request.request_id,
                 &revision_id,
                 &source_digest,
                 &idempotency_key,
             )?;
         }
-        self.record_remediation_approval(&approval, &request.actor_id, request.approved)?;
-        Ok(approval)
+        Ok(RemediationApproval {
+            approval_id: authorization_id.clone(),
+            request_id: request.request_id,
+            authorization_id: Some(authorization_id),
+            decision: "accepted".into(),
+            constraint_id: "remediation_approval_requires_explicit_approval".into(),
+            reason: "PX issued a DSC set authorization for the recorded approval.".into(),
+        })
     }
 
     /// Runs `dsc config set` locally after PX checks have accepted a persisted
@@ -1943,6 +1995,24 @@ pub struct LocalServiceRequest {
     pub params: serde_json::Value,
 }
 
+fn validate_local_service_request(request: &serde_json::Value) -> Result<(), String> {
+    let schema: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../contracts/v1/local-service-request.schema.json"
+    )))
+    .expect("embedded local service request contract parses");
+    let validator = JSONSchema::options()
+        .with_draft(Draft::Draft7)
+        .compile(&schema)
+        .expect("embedded local service request contract compiles");
+    validator.validate(request).map_err(|errors| {
+        errors
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct LocalServiceResponse {
     pub id: Option<String>,
@@ -2166,7 +2236,21 @@ where
     ApprovalFuture: Future<Output = Result<RemediationApproval, ServiceErrorKind>>,
     ExecutionFuture: Future<Output = Result<RemediationExecution, ServiceErrorKind>>,
 {
-    let request = match serde_json::from_str::<LocalServiceRequest>(frame) {
+    let request_value = match serde_json::from_str::<serde_json::Value>(frame) {
+        Ok(request) => request,
+        Err(error) => {
+            return response(
+                None,
+                false,
+                None,
+                Some((
+                    "invalid_request",
+                    format!("Request must be valid JSON: {error}"),
+                )),
+            );
+        }
+    };
+    let request = match serde_json::from_value::<LocalServiceRequest>(request_value.clone()) {
         Ok(request) => request,
         Err(error) => {
             return response(
@@ -2201,6 +2285,16 @@ where
                 "unauthorized",
                 "Request profile does not match this service instance.".into(),
             )),
+        );
+    }
+    if is_registered_method(&request.method)
+        && let Err(error) = validate_local_service_request(&request_value)
+    {
+        return response(
+            Some(request.id),
+            false,
+            None,
+            Some(("invalid_request", error)),
         );
     }
     match request.method.as_str() {
@@ -2455,21 +2549,22 @@ where
                 ),
             }
         }
-        "remediation.approve" => {
-            let approval_request = match serde_json::from_value(request.params) {
-                Ok(approval_request) => approval_request,
-                Err(error) => {
-                    return response(
-                        Some(request.id),
-                        false,
-                        None,
-                        Some((
-                            "invalid_request",
-                            format!("remediation.approve parameters are invalid: {error}"),
-                        )),
-                    );
-                }
-            };
+        "remediation.approve" | "approval.record" => {
+            let approval_request: RemediationApprovalRequest =
+                match serde_json::from_value(request.params) {
+                    Ok(approval_request) => approval_request,
+                    Err(error) => {
+                        return response(
+                            Some(request.id),
+                            false,
+                            None,
+                            Some((
+                                "invalid_request",
+                                format!("remediation.approve parameters are invalid: {error}"),
+                            )),
+                        );
+                    }
+                };
             match (handlers.approval)(approval_request).await {
                 Ok(result) if result.decision == "rejected" => response(
                     Some(request.id),
@@ -2477,6 +2572,38 @@ where
                     Some(serde_json::json!(result)),
                     Some(("remediation_rejected", result.reason.clone())),
                 ),
+                Ok(result) => response(
+                    Some(request.id),
+                    true,
+                    Some(serde_json::json!(result)),
+                    None,
+                ),
+                Err(error) => response(
+                    Some(request.id),
+                    false,
+                    None,
+                    Some(("remediation_failed", error.to_string())),
+                ),
+            }
+        }
+        "effect.authorize" => {
+            let mut approval_request: RemediationApprovalRequest =
+                match serde_json::from_value(request.params) {
+                    Ok(approval_request) => approval_request,
+                    Err(error) => {
+                        return response(
+                            Some(request.id),
+                            false,
+                            None,
+                            Some((
+                                "invalid_request",
+                                format!("effect.authorize parameters are invalid: {error}"),
+                            )),
+                        );
+                    }
+                };
+            approval_request.authorize = true;
+            match (handlers.approval)(approval_request).await {
                 Ok(result) => response(
                     Some(request.id),
                     true,
@@ -2543,6 +2670,24 @@ where
             )),
         ),
     }
+}
+
+fn is_registered_method(method: &str) -> bool {
+    matches!(
+        method,
+        "service.health"
+            | "evidence.list"
+            | "configuration.admit"
+            | "configuration.validate"
+            | "inventory.observe"
+            | "compliance.request"
+            | "compliance.observe"
+            | "remediation.request"
+            | "remediation.approve"
+            | "approval.record"
+            | "effect.authorize"
+            | "remediation.execute"
+    )
 }
 
 pub fn validate_token(token: &str) -> Result<(), ServiceErrorKind> {
@@ -2647,7 +2792,13 @@ async fn serve_connection(
                     compliance: |request| foundation.request_compliance(request),
                     observation: |request| foundation.observe_compliance(request),
                     remediation: |request| foundation.request_remediation(request),
-                    approval: |request| foundation.approve_remediation(request),
+                    approval: |request| async {
+                        if request.authorize {
+                            foundation.authorize_remediation(request).await
+                        } else {
+                            foundation.approve_remediation(request).await
+                        }
+                    },
                     execution: |request| foundation.execute_remediation(request),
                 },
             )
@@ -3077,6 +3228,20 @@ mod tests {
             RESPONSE_SCHEMA,
             EVIDENCE_SCHEMA,
             serde_json::to_value(unauthorized).expect("serialize rejected response"),
+        );
+        let unknown_field = handle_request(
+            r#"{"id":"health-extra","method":"service.health","profileId":"default","authorization":"0123456789abcdef0123456789abcdef","unexpected":true}"#,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            test_handlers(),
+        )
+        .await;
+        assert!(!unknown_field.ok);
+        assert_eq!(
+            unknown_field.error.expect("schema rejection").code,
+            "invalid_request"
         );
 
         let rejected_request = serde_json::json!({
@@ -4112,6 +4277,7 @@ mod tests {
                     request_id: "remediation-request".into(),
                     actor_id: "reviewer@example.test".into(),
                     approved: false,
+                    authorize: false,
                 })
                 .await,
             Err(ServiceErrorKind::InvalidRequest(_))
@@ -4137,6 +4303,7 @@ mod tests {
                 request_id: "remediation-request".into(),
                 actor_id: "reviewer@example.test".into(),
                 approved: false,
+                authorize: false,
             })
             .await
             .expect("evaluate denied approval");
@@ -4153,6 +4320,7 @@ mod tests {
                     request_id: "remediation-request".into(),
                     actor_id: "reviewer@example.test".into(),
                     approved: true,
+                    authorize: false,
                 })
                 .await,
             Err(ServiceErrorKind::InvalidRequest(_))
@@ -4164,6 +4332,7 @@ mod tests {
                 request_id: "remediation-request".into(),
                 actor_id: String::new(),
                 approved: true,
+                authorize: false,
             })
             .await
             .expect("evaluate incomplete approval");
@@ -4179,12 +4348,24 @@ mod tests {
                 request_id: "remediation-request".into(),
                 actor_id: "reviewer@example.test".into(),
                 approved: true,
+                authorize: false,
             })
             .await
             .expect("approve remediation");
         assert_eq!(approved.decision, "accepted");
+        assert_eq!(approved.authorization_id.as_deref(), None);
+        let authorization = foundation
+            .authorize_remediation(RemediationApprovalRequest {
+                approval_id: "approval-accepted".into(),
+                request_id: "remediation-request".into(),
+                actor_id: "reviewer@example.test".into(),
+                approved: true,
+                authorize: false,
+            })
+            .await
+            .expect("authorize recorded approval");
         assert_eq!(
-            approved.authorization_id.as_deref(),
+            authorization.authorization_id.as_deref(),
             Some("approval-accepted")
         );
         assert_eq!(
@@ -4194,6 +4375,7 @@ mod tests {
                     request_id: "remediation-request".into(),
                     actor_id: "reviewer@example.test".into(),
                     approved: true,
+                    authorize: false,
                 })
                 .await
                 .expect("retry approval"),
@@ -4206,6 +4388,7 @@ mod tests {
                     request_id: "another-request".into(),
                     actor_id: "reviewer@example.test".into(),
                     approved: true,
+                    authorize: false,
                 })
                 .await,
             Err(ServiceErrorKind::InvalidRequest(_))
@@ -4228,10 +4411,21 @@ mod tests {
                 request_id: "remediation-request-second".into(),
                 actor_id: "reviewer@example.test".into(),
                 approved: true,
+                authorize: false,
             })
             .await
             .expect("approve second remediation request");
         assert_eq!(second_approval.decision, "accepted");
+        foundation
+            .authorize_remediation(RemediationApprovalRequest {
+                approval_id: "approval-second".into(),
+                request_id: "remediation-request-second".into(),
+                actor_id: "reviewer@example.test".into(),
+                approved: true,
+                authorize: false,
+            })
+            .await
+            .expect("authorize second remediation request");
         assert_eq!(
             foundation
                 .request_remediation(RemediationRequest {
@@ -4263,12 +4457,23 @@ mod tests {
                     request_id: "remediation-request-third".into(),
                     actor_id: "reviewer@example.test".into(),
                     approved: true,
+                    authorize: false,
                 })
                 .await
                 .expect("approve third remediation request")
                 .decision,
             "accepted"
         );
+        foundation
+            .authorize_remediation(RemediationApprovalRequest {
+                approval_id: "approval-third".into(),
+                request_id: "remediation-request-third".into(),
+                actor_id: "reviewer@example.test".into(),
+                approved: true,
+                authorize: false,
+            })
+            .await
+            .expect("authorize third remediation request");
 
         let mismatched_binding = foundation
             .execute_remediation(RemediationExecutionRequest {

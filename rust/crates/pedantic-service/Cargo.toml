@@ -13,6 +13,7 @@ px-compiler = { git = "https://github.com/plures/praxis-lang.git", rev = "6d367f
 px-eval = { git = "https://github.com/plures/praxis-lang.git", rev = "6d367fe673756dabaa6085bc6b5202debaaabe6f" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+jsonschema = { workspace = true }
 sha2 = "0.10"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net", "sync", "time"] }
@@ -24,6 +25,5 @@ tokio = { workspace = true, features = ["net"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
 
 [dev-dependencies]
-jsonschema = "0.18"
 tempfile = "3"
 url = "2"
