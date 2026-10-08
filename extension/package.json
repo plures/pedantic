@@ -160,7 +160,7 @@
     "typescript": "6.0.3"
   },
   "dependencies": {
-    "chevrotain": "^13.2.0",
+    "chevrotain": "9.1.0",
     "echarts": "^6.1.0",
     "vscode-languageclient": "^10.1.2",
     "vscode-languageserver": "^10.1.2",
