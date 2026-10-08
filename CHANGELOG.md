@@ -1,3 +1,9 @@
+## [0.10.0] — 2026-10-08
+
+- [WIP] Restore deterministic build, test, and VSIX release pipeline (#203) (77b44c7)
+- feat: add typed production provider packs (#187) (0a7f475)
+- feat: add authenticated remote agent synchronization foundation (#186) (c859d03)
+
 ## [0.9.0] — 2026-10-08
 
 - feat(service): separate approval from effect authorization (#184) (1323b80)
