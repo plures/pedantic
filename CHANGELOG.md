@@ -1,3 +1,8 @@
+## [0.8.0] — 2026-10-08
+
+- feat(operation): add durable operation contracts and PX model (#175) (81dc7a8)
+- chore(release): v0.7.0 (#172) (474a2d1)
+
 ## [0.7.0] — 2026-10-08
 
 - deps(npm)(deps-dev): bump the dev-dependencies group across 1 directory with 3 updates (#156) (341d1fe)
