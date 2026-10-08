@@ -24,6 +24,8 @@ pub enum CapabilityError {
     Missing(String),
     #[error("capability input is invalid: {0}")]
     InvalidInput(String),
+    #[error("capability output is invalid: {0}")]
+    InvalidOutput(String),
     #[error("bounded adapter failed: {0}")]
     Execution(String),
 }
@@ -31,7 +33,17 @@ pub enum CapabilityError {
 pub trait Capability: Send + Sync {
     fn manifest(&self) -> &CapabilityManifest;
     fn readiness(&self, target_id: &str, agent_id: &str, observed_at: u64) -> CapabilityReadiness;
-    fn execute(&self, input: &Value) -> Result<Value, CapabilityError>;
+
+    fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
+        validate_capability_value(self.manifest().input_schema.as_ref(), input)
+            .map_err(CapabilityError::InvalidInput)?;
+        let output = self.execute_unchecked(input)?;
+        validate_capability_value(self.manifest().output_schema.as_ref(), &output)
+            .map_err(CapabilityError::InvalidOutput)?;
+        Ok(output)
+    }
+
+    fn execute_unchecked(&self, input: &Value) -> Result<Value, CapabilityError>;
 }
 
 #[derive(Default)]
@@ -92,7 +104,34 @@ pub fn validate_manifest(manifest: &CapabilityManifest) -> Result<(), Capability
                 .join("; "),
         ));
     }
+    for (name, schema) in [
+        ("inputSchema", &manifest.input_schema),
+        ("outputSchema", &manifest.output_schema),
+    ] {
+        if let Some(schema) = schema {
+            JSONSchema::options()
+                .with_draft(Draft::Draft7)
+                .compile(schema)
+                .map_err(|error| CapabilityError::InvalidManifest(format!("{name}: {error}")))?;
+        }
+    }
     Ok(())
+}
+
+fn validate_capability_value(schema: Option<&Value>, value: &Value) -> Result<(), String> {
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft7)
+        .compile(schema)
+        .map_err(|error| error.to_string())?;
+    compiled.validate(value).map_err(|errors| {
+        errors
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -147,7 +186,7 @@ impl<P: DscProcess> Capability for DscCapability<P> {
         }
     }
 
-    fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
+    fn execute_unchecked(&self, input: &Value) -> Result<Value, CapabilityError> {
         let document = input
             .get("document")
             .and_then(Value::as_str)
@@ -250,7 +289,7 @@ impl<P: DscProcess> Capability for DscRuntimeReadinessCapability<P> {
         }
     }
 
-    fn execute(&self, _input: &Value) -> Result<Value, CapabilityError> {
+    fn execute_unchecked(&self, _input: &Value) -> Result<Value, CapabilityError> {
         self.process.ready()?;
         Ok(json!({}))
     }
@@ -290,7 +329,7 @@ impl<P: RebootProcess> Capability for RebootCapability<P> {
         }
     }
 
-    fn execute(&self, _input: &Value) -> Result<Value, CapabilityError> {
+    fn execute_unchecked(&self, _input: &Value) -> Result<Value, CapabilityError> {
         self.process.request_reboot()?;
         Ok(json!({}))
     }
@@ -350,5 +389,41 @@ mod tests {
                 .starts_with("sha256:")
         );
         assert!(output.get("raw").is_none());
+    }
+
+    #[test]
+    fn capability_enforces_declared_input_and_output_schemas() {
+        let mut input_manifest = manifest();
+        input_manifest.input_schema = Some(json!({
+            "type": "object",
+            "required": ["document"],
+            "properties": { "document": { "type": "string" } }
+        }));
+        let input_capability = DscCapability::new(input_manifest, Process, DscAction::Test);
+        assert!(matches!(
+            input_capability.execute(&json!({"document": 42})),
+            Err(CapabilityError::InvalidInput(_))
+        ));
+
+        let mut output_manifest = manifest();
+        output_manifest.output_schema = Some(json!({
+            "type": "object",
+            "required": ["raw"]
+        }));
+        let output_capability = DscCapability::new(output_manifest, Process, DscAction::Test);
+        assert!(matches!(
+            output_capability.execute(&json!({"document": "configuration"})),
+            Err(CapabilityError::InvalidOutput(_))
+        ));
+    }
+
+    #[test]
+    fn malformed_declared_schema_is_rejected_at_registration() {
+        let mut manifest = manifest();
+        manifest.input_schema = Some(json!({"type": "not-a-json-schema-type"}));
+        assert!(matches!(
+            validate_manifest(&manifest),
+            Err(CapabilityError::InvalidManifest(_))
+        ));
     }
 }

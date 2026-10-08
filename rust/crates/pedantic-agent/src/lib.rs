@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
@@ -153,7 +155,11 @@ impl AgentIdentity {
             private_key: private_key.into(),
         };
         let temporary = path.with_extension("tmp");
-        let mut file = File::create(&temporary)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&temporary)?;
         serde_json::to_writer(&mut file, &identity)?;
         file.sync_all()?;
         std::fs::rename(temporary, path)?;
@@ -459,7 +465,7 @@ mod tests {
             }
         }
 
-        fn execute(
+        fn execute_unchecked(
             &self,
             _input: &serde_json::Value,
         ) -> Result<serde_json::Value, CapabilityError> {
@@ -548,6 +554,18 @@ mod tests {
             },
             calls: std::sync::atomic::AtomicUsize::new(0),
         })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_identity_private_key_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("identity.json");
+        AgentIdentity::load_or_create(&path, "agent", "key", "private").unwrap();
+        let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]
