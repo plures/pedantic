@@ -2,25 +2,53 @@
 //! crate only reports readiness and sanitized observations.
 
 use pedantic_capability::{
-    validate_manifest, validate_readiness, Capability, CapabilityActivity, CapabilityError,
-    CapabilityRegistry,
+    Capability, CapabilityActivity, CapabilityError, CapabilityRegistry, validate_manifest,
+    validate_readiness,
 };
 use pedantic_operation::{
     CapabilityManifest, CapabilityReadiness, Idempotency, RedactionClass, RetryClass, RiskClass,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::fs;
+use std::fs::{self, File};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Instant;
 
 const MANIFEST_VERSION: &str = "pedantic.capability-manifest.v1";
 const READINESS_VERSION: &str = "pedantic.capability-readiness.v1";
+const WINGET_PROBE: &[&str] = &["--version"];
+const DISM_PROBE: &[&str] = &["/English", "/?"];
+const POWERSHELL_PROBE: &[&str] = &[
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "$PSVersionTable.PSVersion.Major",
+];
+const HYPERV_PROBE: &[&str] = &[
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "Get-Command Start-VM, Stop-VM, Checkpoint-VM -ErrorAction Stop | Out-Null",
+];
 
 pub trait ProviderBackend: Send + Sync {
     fn ready(&self) -> Result<(), CapabilityError>;
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError>;
+
+    fn execute_with_activity(
+        &self,
+        input: &Value,
+        activity_sink: &mut dyn FnMut(CapabilityActivity) -> Result<(), CapabilityError>,
+    ) -> Result<Value, CapabilityError> {
+        activity_sink(CapabilityActivity {
+            event: "step.progressed",
+            detail: "provider effect is running".into(),
+        })?;
+        self.execute(input)
+    }
 }
 
 pub struct Provider<B> {
@@ -82,17 +110,12 @@ impl<B: ProviderBackend> Capability for Provider<B> {
         self.backend.execute(input)
     }
 
-    fn activity(&self, _input: &Value) -> Vec<CapabilityActivity> {
-        vec![
-            CapabilityActivity {
-                event: "step.started",
-                detail: "bounded provider effect started".into(),
-            },
-            CapabilityActivity {
-                event: "step.progressed",
-                detail: "bounded provider effect is in progress".into(),
-            },
-        ]
+    fn execute_unchecked_with_activity(
+        &self,
+        input: &Value,
+        activity_sink: &mut dyn FnMut(CapabilityActivity) -> Result<(), CapabilityError>,
+    ) -> Result<Value, CapabilityError> {
+        self.backend.execute_with_activity(input, activity_sink)
     }
 }
 
@@ -103,6 +126,12 @@ pub fn register_production_providers(
         registry.register(provider)?;
     }
     Ok(())
+}
+
+pub fn production_registry() -> Result<CapabilityRegistry, CapabilityError> {
+    let mut registry = CapabilityRegistry::default();
+    register_production_providers(&mut registry)?;
+    Ok(registry)
 }
 
 pub fn production_providers() -> Vec<Arc<dyn Capability>> {
@@ -123,11 +152,6 @@ pub fn assert_conforms(provider: &dyn Capability) -> Result<(), CapabilityError>
     validate_manifest(provider.manifest())?;
     let readiness = provider.readiness("conformance-target", "conformance-agent", 1);
     validate_readiness(&readiness)?;
-    if provider.activity(&json!({})).is_empty() {
-        return Err(CapabilityError::Execution(
-            "provider did not emit activity metadata".into(),
-        ));
-    }
     Ok(())
 }
 
@@ -139,6 +163,16 @@ impl ProviderBackend for FilesystemTransfer {
     }
 
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
+        let mut activity_sink = |_| Ok(());
+        self.execute_with_activity(input, &mut activity_sink)
+    }
+
+    fn execute_with_activity(
+        &self,
+        input: &Value,
+        activity_sink: &mut dyn FnMut(CapabilityActivity) -> Result<(), CapabilityError>,
+    ) -> Result<Value, CapabilityError> {
+        let started_at = Instant::now();
         let source = required_string(input, "sourcePath")?;
         let destination = required_string(input, "destinationPath")?;
         let source_path = Path::new(source);
@@ -150,7 +184,6 @@ impl ProviderBackend for FilesystemTransfer {
         let bytes_total = fs::metadata(source_path)
             .map_err(|_| CapabilityError::Execution("transfer source is unavailable".into()))?
             .len();
-        let source_digest = digest_file(source_path)?;
         if Path::new(destination).is_file()
             && fs::metadata(destination)
                 .map_err(|_| {
@@ -158,12 +191,69 @@ impl ProviderBackend for FilesystemTransfer {
                 })?
                 .len()
                 == bytes_total
-            && digest_file(Path::new(destination))? == source_digest
         {
-            return Ok(transfer_observation(bytes_total, source_digest, 0, 0));
+            let source_digest = digest_file(source_path)?;
+            let destination_digest = digest_file(Path::new(destination))?;
+            if destination_digest == source_digest {
+                return Ok(transfer_observation(
+                    bytes_total,
+                    source_digest,
+                    destination_digest,
+                    0,
+                    0,
+                    0,
+                    started_at.elapsed(),
+                ));
+            }
         }
-        fs::copy(source_path, destination)
+        let mut source_file = File::open(source_path)
+            .map_err(|_| CapabilityError::Execution("transfer source is unavailable".into()))?;
+        let mut destination_file = File::create(destination).map_err(|_| {
+            CapabilityError::Execution("transfer destination is unavailable".into())
+        })?;
+        let mut source_hasher = Sha256::new();
+        let mut bytes_transferred = 0u64;
+        let mut next_progress = (bytes_total / 10).max(1);
+        let mut last_progress_bytes = 0;
+        let mut last_progress_at = Instant::now();
+        let mut current_throughput_bps = 0;
+        let mut buffer = [0; 64 * 1024];
+        loop {
+            let bytes_read = source_file.read(&mut buffer).map_err(|_| {
+                CapabilityError::Execution("transfer source could not be read".into())
+            })?;
+            if bytes_read == 0 {
+                break;
+            }
+            destination_file
+                .write_all(&buffer[..bytes_read])
+                .map_err(|_| CapabilityError::Execution("transfer could not complete".into()))?;
+            source_hasher.update(&buffer[..bytes_read]);
+            bytes_transferred = bytes_transferred.saturating_add(bytes_read as u64);
+            if bytes_transferred >= next_progress {
+                activity_sink(CapabilityActivity {
+                    event: "step.progressed",
+                    detail: format!("transferred {bytes_transferred} of {bytes_total} bytes"),
+                })?;
+                current_throughput_bps = throughput_bps(
+                    bytes_transferred.saturating_sub(last_progress_bytes),
+                    last_progress_at.elapsed(),
+                );
+                last_progress_bytes = bytes_transferred;
+                last_progress_at = Instant::now();
+                next_progress = bytes_transferred.saturating_add((bytes_total / 10).max(1));
+            }
+        }
+        if bytes_transferred > last_progress_bytes {
+            current_throughput_bps = throughput_bps(
+                bytes_transferred.saturating_sub(last_progress_bytes),
+                last_progress_at.elapsed(),
+            );
+        }
+        destination_file
+            .flush()
             .map_err(|_| CapabilityError::Execution("transfer could not complete".into()))?;
+        let source_digest = format!("sha256:{:x}", source_hasher.finalize());
         let destination_digest = digest_file(Path::new(destination))?;
         if destination_digest != source_digest {
             return Err(CapabilityError::Execution(
@@ -173,8 +263,11 @@ impl ProviderBackend for FilesystemTransfer {
         Ok(transfer_observation(
             bytes_total,
             source_digest,
-            bytes_total,
+            destination_digest,
+            bytes_transferred,
             0,
+            current_throughput_bps,
+            started_at.elapsed(),
         ))
     }
 }
@@ -183,13 +276,13 @@ pub struct WindowsPackage;
 
 impl ProviderBackend for WindowsPackage {
     fn ready(&self) -> Result<(), CapabilityError> {
-        command_ready("winget")
+        command_ready("winget", WINGET_PROBE)
     }
 
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
         let action = enum_value(input, "action", &["install", "upgrade", "remove"])?;
         let package = required_string(input, "packageId")?;
-        run_command(
+        let observation = run_command(
             "winget",
             &[
                 action,
@@ -199,7 +292,7 @@ impl ProviderBackend for WindowsPackage {
                 "--disable-interactivity",
             ],
         )?;
-        Ok(effect_observation(input))
+        Ok(effect_observation(&observation))
     }
 }
 
@@ -207,7 +300,7 @@ pub struct WindowsFeature;
 
 impl ProviderBackend for WindowsFeature {
     fn ready(&self) -> Result<(), CapabilityError> {
-        command_ready("dism.exe")
+        command_ready("dism.exe", DISM_PROBE)
     }
 
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
@@ -218,7 +311,7 @@ impl ProviderBackend for WindowsFeature {
         } else {
             "/Disable-Feature"
         };
-        let reboot_required = run_command(
+        let observation = run_command(
             "dism.exe",
             &[
                 "/Online",
@@ -227,7 +320,10 @@ impl ProviderBackend for WindowsFeature {
                 "/NoRestart",
             ],
         )?;
-        Ok(json!({"outputDigest": digest(input), "rebootRequired": reboot_required}))
+        Ok(json!({
+            "outputDigest": effect_digest(&observation),
+            "rebootRequired": observation.reboot_required
+        }))
     }
 }
 
@@ -235,7 +331,7 @@ pub struct WindowsOsSetup;
 
 impl ProviderBackend for WindowsOsSetup {
     fn ready(&self) -> Result<(), CapabilityError> {
-        command_ready("powershell.exe")
+        command_ready("powershell.exe", POWERSHELL_PROBE)
     }
 
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
@@ -251,11 +347,11 @@ impl ProviderBackend for WindowsOsSetup {
             }
             _ => unreachable!("validated setup action"),
         };
-        run_command(
+        let observation = run_command(
             "powershell.exe",
             &["-NoProfile", "-NonInteractive", "-Command", script],
         )?;
-        Ok(effect_observation(input))
+        Ok(effect_observation(&observation))
     }
 }
 
@@ -263,7 +359,7 @@ pub struct HyperV;
 
 impl ProviderBackend for HyperV {
     fn ready(&self) -> Result<(), CapabilityError> {
-        command_ready("powershell.exe")
+        command_ready("powershell.exe", HYPERV_PROBE)
     }
 
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
@@ -275,7 +371,7 @@ impl ProviderBackend for HyperV {
             "checkpoint" => "Checkpoint-VM",
             _ => unreachable!("validated Hyper-V action"),
         };
-        run_command(
+        let observation = run_command(
             "powershell.exe",
             &[
                 "-NoProfile",
@@ -286,13 +382,13 @@ impl ProviderBackend for HyperV {
                 name,
             ],
         )?;
-        Ok(effect_observation(input))
+        Ok(effect_observation(&observation))
     }
 }
 
-fn command_ready(program: &str) -> Result<(), CapabilityError> {
+fn command_ready(program: &str, arguments: &[&str]) -> Result<(), CapabilityError> {
     Command::new(program)
-        .arg("--version")
+        .args(arguments)
         .output()
         .map_err(|_| CapabilityError::Execution("provider runtime is unavailable".into()))
         .and_then(|output| {
@@ -304,16 +400,26 @@ fn command_ready(program: &str) -> Result<(), CapabilityError> {
         })
 }
 
-fn run_command(program: &str, arguments: &[&str]) -> Result<bool, CapabilityError> {
-    let status = Command::new(program)
+struct CommandObservation {
+    output_digest: String,
+    reboot_required: bool,
+}
+
+fn run_command(program: &str, arguments: &[&str]) -> Result<CommandObservation, CapabilityError> {
+    let output = Command::new(program)
         .args(arguments)
-        .status()
+        .output()
         .map_err(|_| CapabilityError::Execution("provider effect could not start".into()))?;
-    status
+    let reboot_required = output
+        .status
         .success()
         .then_some(false)
-        .or_else(|| (status.code() == Some(3010)).then_some(true))
-        .ok_or_else(|| CapabilityError::Execution("provider effect failed".into()))
+        .or_else(|| (output.status.code() == Some(3010)).then_some(true))
+        .ok_or_else(|| CapabilityError::Execution("provider effect failed".into()))?;
+    Ok(CommandObservation {
+        output_digest: observed_output_digest(output.status.code(), &output.stdout, &output.stderr),
+        reboot_required,
+    })
 }
 
 fn required_string<'a>(input: &'a Value, property: &str) -> Result<&'a str, CapabilityError> {
@@ -344,33 +450,78 @@ fn digest(value: &Value) -> String {
 }
 
 fn digest_file(path: &Path) -> Result<String, CapabilityError> {
-    fs::read(path)
-        .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)))
-        .map_err(|_| CapabilityError::Execution("transfer file cannot be read".into()))
+    let mut file = File::open(path)
+        .map_err(|_| CapabilityError::Execution("transfer file cannot be read".into()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let bytes_read = file
+            .read(&mut buffer)
+            .map_err(|_| CapabilityError::Execution("transfer file cannot be read".into()))?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Ok(format!("sha256:{:x}", hasher.finalize()))
 }
 
-fn effect_observation(input: &Value) -> Value {
-    json!({"outputDigest": digest(input)})
+fn effect_observation(observation: &CommandObservation) -> Value {
+    json!({"outputDigest": effect_digest(observation)})
+}
+
+fn effect_digest(observation: &CommandObservation) -> &str {
+    &observation.output_digest
+}
+
+fn observed_output_digest(exit_code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> String {
+    let normalized = json!({
+        "exitCode": exit_code,
+        "stdout": normalize_command_output(stdout),
+        "stderr": normalize_command_output(stderr),
+    });
+    digest(&normalized)
+}
+
+fn normalize_command_output(output: &[u8]) -> String {
+    String::from_utf8_lossy(output)
+        .replace("\r\n", "\n")
+        .trim()
+        .to_owned()
 }
 
 fn transfer_observation(
     bytes_total: u64,
-    digest: String,
+    source_digest: String,
+    destination_digest: String,
     bytes_transferred: u64,
     resume_count: u64,
+    current_throughput_bps: u64,
+    elapsed: std::time::Duration,
 ) -> Value {
+    let elapsed_ms = elapsed.as_millis().max(1).min(u64::MAX as u128) as u64;
+    let average_throughput_bps = throughput_bps(bytes_transferred, elapsed);
     json!({
         "bytesTotal": bytes_total,
         "bytesTransferred": bytes_transferred,
-        "elapsedMs": 0,
-        "currentThroughputBps": 0,
-        "averageThroughputBps": 0,
+        "elapsedMs": elapsed_ms,
+        "currentThroughputBps": current_throughput_bps,
+        "averageThroughputBps": average_throughput_bps,
         "resumeCount": resume_count,
         "retryCount": 0,
-        "sourceDigest": digest,
-        "destinationDigest": digest,
+        "sourceDigest": source_digest,
+        "destinationDigest": destination_digest,
         "verificationState": "verified"
     })
+}
+
+fn throughput_bps(bytes: u64, elapsed: std::time::Duration) -> u64 {
+    let elapsed_ms = elapsed.as_millis().max(1);
+    (bytes as u128)
+        .saturating_mul(1000)
+        .checked_div(elapsed_ms)
+        .unwrap_or_default()
+        .min(u64::MAX as u128) as u64
 }
 
 fn manifest(
@@ -481,15 +632,30 @@ mod tests {
         let directory = tempdir().unwrap();
         let source = directory.path().join("source");
         let destination = directory.path().join("destination");
-        fs::write(&source, b"provider content").unwrap();
+        fs::write(&source, vec![b'x'; 1024 * 1024]).unwrap();
         let provider = Provider::new(transfer_manifest(), FilesystemTransfer, vec![]);
         let input = json!({"sourcePath": source, "destinationPath": destination});
-        let first = provider.execute(&input).unwrap();
+        let mut activity = Vec::new();
+        let first = provider
+            .execute_with_activity(&input, &mut |event| {
+                activity.push(event);
+                Ok(())
+            })
+            .unwrap();
         let second = provider.execute(&input).unwrap();
         assert_eq!(first["bytesTotal"], first["bytesTransferred"]);
         assert_eq!(first["bytesTotal"], second["bytesTotal"]);
         assert_eq!(second["bytesTransferred"], 0);
         assert_eq!(first["sourceDigest"], second["destinationDigest"]);
+        assert!(first["elapsedMs"].as_u64().unwrap() > 0);
+        assert!(first["currentThroughputBps"].as_u64().unwrap() > 0);
+        assert!(first["averageThroughputBps"].as_u64().unwrap() > 0);
+        assert_eq!(second["retryCount"], 0);
+        assert!(
+            activity
+                .iter()
+                .any(|event| event.event == "step.progressed")
+        );
     }
 
     struct Backend(AtomicUsize);
@@ -512,6 +678,31 @@ mod tests {
         let provider = Provider::new(package_manifest(), backend, vec![]);
         assert_conforms(&provider).unwrap();
         assert_eq!(provider.backend.0.load(Ordering::SeqCst), 0);
-        assert!(provider.activity(&json!({})).len() >= 2);
+    }
+
+    #[test]
+    fn readiness_probes_are_specific_to_each_windows_backend() {
+        assert_eq!(WINGET_PROBE, &["--version"]);
+        assert_eq!(DISM_PROBE, &["/English", "/?"]);
+        assert!(POWERSHELL_PROBE.contains(&&"$PSVersionTable.PSVersion.Major"));
+        assert!(
+            HYPERV_PROBE
+                .iter()
+                .any(|argument| argument.contains("Get-Command Start-VM"))
+        );
+        assert!(
+            HYPERV_PROBE
+                .iter()
+                .any(|argument| argument.contains("Checkpoint-VM"))
+        );
+    }
+
+    #[test]
+    fn command_observation_digest_tracks_normalized_observed_output() {
+        let first = observed_output_digest(Some(0), b"completed\r\n", b"");
+        let same_normalized_output = observed_output_digest(Some(0), b"completed\n", b"");
+        let different_output = observed_output_digest(Some(0), b"no change\n", b"");
+        assert_eq!(first, same_normalized_output);
+        assert_ne!(first, different_output);
     }
 }

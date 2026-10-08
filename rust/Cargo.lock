@@ -2067,6 +2067,7 @@ dependencies = [
  "ed25519-dalek",
  "pedantic-capability",
  "pedantic-operation",
+ "pedantic-provider-pack",
  "serde",
  "serde_json",
  "sha2 0.10.9",

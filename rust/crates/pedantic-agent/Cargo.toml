@@ -15,6 +15,7 @@ ed25519-dalek.workspace = true
 sha2.workspace = true
 pedantic-operation = { path = "../pedantic-operation" }
 pedantic-capability = { path = "../pedantic-capability" }
+pedantic-provider-pack = { path = "../pedantic-provider-pack" }
 
 [dev-dependencies]
 tempfile = "3.27"

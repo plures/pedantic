@@ -43,10 +43,27 @@ pub trait Capability: Send + Sync {
         Ok(output)
     }
 
+    fn execute_with_activity(
+        &self,
+        input: &Value,
+        activity_sink: &mut dyn FnMut(CapabilityActivity) -> Result<(), CapabilityError>,
+    ) -> Result<Value, CapabilityError> {
+        validate_capability_value(self.manifest().input_schema.as_ref(), input)
+            .map_err(CapabilityError::InvalidInput)?;
+        let output = self.execute_unchecked_with_activity(input, activity_sink)?;
+        validate_capability_value(self.manifest().output_schema.as_ref(), &output)
+            .map_err(CapabilityError::InvalidOutput)?;
+        Ok(output)
+    }
+
     fn execute_unchecked(&self, input: &Value) -> Result<Value, CapabilityError>;
 
-    fn activity(&self, _input: &Value) -> Vec<CapabilityActivity> {
-        Vec::new()
+    fn execute_unchecked_with_activity(
+        &self,
+        input: &Value,
+        _activity_sink: &mut dyn FnMut(CapabilityActivity) -> Result<(), CapabilityError>,
+    ) -> Result<Value, CapabilityError> {
+        self.execute_unchecked(input)
     }
 }
 
@@ -134,8 +151,8 @@ fn validate_against_schema<T: serde::Serialize>(
     value: &T,
     name: &str,
 ) -> Result<(), CapabilityError> {
-    let schema: Value = serde_json::from_str(schema)
-    .expect("embedded capability manifest schema parses");
+    let schema: Value =
+        serde_json::from_str(schema).expect("embedded capability manifest schema parses");
     let compiled = JSONSchema::options()
         .with_draft(Draft::Draft7)
         .compile(&schema)
