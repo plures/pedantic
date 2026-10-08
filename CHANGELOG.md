@@ -2,7 +2,7 @@
 
 - deps(npm)(deps-dev): bump the dev-dependencies group across 1 directory with 3 updates (#156) (341d1fe)
 - feat: add PX-governed local remediation (#154) (bf17c45)
-- feat: DTMS Priatives (9f928bc)
+- feat: DTMS Primitives (9f928bc)
 - deps(npm)(deps): bump brace-expansion from 5.0.9 to 5.0.12 in /extension (#166) (2d1885d)
 - deps(npm)(deps-dev): bump fast-uri from 3.1.7 to 3.1.8 in /extension (#164) (1821985)
 - deps(npm)(deps-dev): bump markdown-it in /extension (#163) (e6153d7)
