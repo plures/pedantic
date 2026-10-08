@@ -10,6 +10,7 @@ use thiserror::Error;
 pub const OPERATION_PLAN_SCHEMA_VERSION: &str = "pedantic.operation-plan.v1";
 pub const OPERATION_EVENT_SCHEMA_VERSION: &str = "pedantic.operation-event.v1";
 pub const OPERATION_PROJECTION_SCHEMA_VERSION: &str = "pedantic.operation-projection.v1";
+pub const TRANSFER_REGISTRY_SCHEMA_VERSION: &str = "pedantic.transfer-registry.v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -369,7 +370,318 @@ impl OperationProjection {
             event_ids: BTreeSet::new(),
         }
     }
+}
 
+/// Safe, provider-neutral measurements retained as durable transfer evidence.
+/// Paths, credentials, tool output, and infrastructure addresses are excluded
+/// deliberately; callers must not project them into this type.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferObservation {
+    pub provider: String,
+    pub bytes_transferred: u64,
+    pub elapsed_millis: u64,
+    pub throughput_bps: u64,
+    pub retry_count: u64,
+    pub resume_count: u64,
+    pub verification_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_category: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferEvent {
+    pub schema_version: String,
+    pub operation: OperationEvent,
+    pub source_vm: String,
+    pub target_vm: String,
+    pub target_host: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation: Option<TransferObservation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_vm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_vm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconciliationFinding {
+    pub operation_id: String,
+    pub code: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferOperation {
+    pub operation_id: String,
+    pub source_vm: String,
+    pub target_vm: String,
+    pub target_host: String,
+    pub state: OperationState,
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_result: Option<TransferObservation>,
+    pub findings: Vec<ReconciliationFinding>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TransferReportState {
+    Incomplete,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Conflicted,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferReport {
+    pub operation_id: String,
+    pub state: TransferReportState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes_transferred: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput_bps: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_category: Option<String>,
+    pub findings: Vec<ReconciliationFinding>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FederatedTransferRegistry {
+    events: BTreeMap<String, TransferEvent>,
+}
+
+impl FederatedTransferRegistry {
+    /// Merges immutable events from a local or federated replica. Event IDs are
+    /// idempotency keys, so a duplicate cannot overwrite prior evidence.
+    pub fn ingest(&mut self, event: TransferEvent) -> bool {
+        if event.schema_version != TRANSFER_REGISTRY_SCHEMA_VERSION
+            || event.operation.event_id.is_empty()
+            || event.operation.operation_id.is_empty()
+            || event.source_vm.is_empty()
+            || event.target_vm.is_empty()
+            || event.target_host.is_empty()
+        {
+            return false;
+        }
+        self.events
+            .entry(event.operation.event_id.clone())
+            .or_insert(event);
+        true
+    }
+
+    pub fn merge(&mut self, replica: &Self) {
+        for event in replica.events.values().cloned() {
+            self.ingest(event);
+        }
+    }
+
+    pub fn event(&self, event_id: &str) -> Option<&TransferEvent> {
+        self.events.get(event_id)
+    }
+
+    pub fn query(&self, query: &TransferQuery) -> Vec<TransferOperation> {
+        let mut operations = self.operations();
+        operations.retain(|operation| {
+            query
+                .operation_id
+                .as_ref()
+                .is_none_or(|value| value == &operation.operation_id)
+                && query
+                    .source_vm
+                    .as_ref()
+                    .is_none_or(|value| value == &operation.source_vm)
+                && query
+                    .target_vm
+                    .as_ref()
+                    .is_none_or(|value| value == &operation.target_vm)
+                && query
+                    .target_host
+                    .as_ref()
+                    .is_none_or(|value| value == &operation.target_host)
+                && query.active.is_none_or(|value| value == operation.active)
+        });
+        operations
+    }
+
+    pub fn report(&self, operation_id: &str) -> Option<TransferReport> {
+        let operation = self
+            .operations()
+            .into_iter()
+            .find(|operation| operation.operation_id == operation_id)?;
+        let observation = operation.latest_result;
+        let state = if !operation.findings.is_empty() {
+            TransferReportState::Conflicted
+        } else {
+            match operation.state {
+                OperationState::Succeeded if observation.is_some() => {
+                    TransferReportState::Succeeded
+                }
+                OperationState::Failed => TransferReportState::Failed,
+                OperationState::Cancelled => TransferReportState::Cancelled,
+                _ => TransferReportState::Incomplete,
+            }
+        };
+        Some(TransferReport {
+            operation_id: operation.operation_id,
+            state,
+            provider: observation.as_ref().map(|value| value.provider.clone()),
+            bytes_transferred: observation.as_ref().map(|value| value.bytes_transferred),
+            elapsed_millis: observation.as_ref().map(|value| value.elapsed_millis),
+            throughput_bps: observation.as_ref().map(|value| value.throughput_bps),
+            retry_count: observation.as_ref().map(|value| value.retry_count),
+            resume_count: observation.as_ref().map(|value| value.resume_count),
+            verification_state: observation
+                .as_ref()
+                .map(|value| value.verification_state.clone()),
+            failure_category: observation.and_then(|value| value.failure_category),
+            findings: operation.findings,
+        })
+    }
+
+    /// Terminal history may be pruned after `retain_after`, while active event
+    /// history remains immutable and discoverable.
+    pub fn retain_terminal_after(&mut self, retain_after: u64) {
+        let terminal_operations = self
+            .operations()
+            .into_iter()
+            .filter(|operation| !operation.active)
+            .map(|operation| operation.operation_id)
+            .collect::<BTreeSet<_>>();
+        self.events.retain(|_, event| {
+            !terminal_operations.contains(&event.operation.operation_id)
+                || event
+                    .operation
+                    .occurred_at
+                    .is_none_or(|at| at >= retain_after)
+        });
+    }
+
+    fn operations(&self) -> Vec<TransferOperation> {
+        let mut grouped = BTreeMap::<String, Vec<&TransferEvent>>::new();
+        for event in self.events.values() {
+            grouped
+                .entry(event.operation.operation_id.clone())
+                .or_default()
+                .push(event);
+        }
+        grouped
+            .into_values()
+            .filter_map(|events| operation_from_events(events))
+            .collect()
+    }
+}
+
+fn operation_from_events(mut events: Vec<&TransferEvent>) -> Option<TransferOperation> {
+    events.sort_by_key(|event| (event.operation.sequence, event.operation.event_id.clone()));
+    let first = events.first()?;
+    let mut findings = Vec::new();
+    if events.iter().any(|event| {
+        event.source_vm != first.source_vm
+            || event.target_vm != first.target_vm
+            || event.target_host != first.target_host
+    }) {
+        findings.push(finding(
+            first,
+            "replica-identity-conflict",
+            "replicas disagree on transfer identity",
+        ));
+    }
+    let mut projection = OperationProjection::requested(
+        first.operation.operation_id.clone(),
+        first.operation.profile_id.clone(),
+    );
+    for event in &events {
+        if let Err(error) = projection.apply(&event.operation) {
+            findings.push(finding(
+                first,
+                "event-history-incomplete",
+                &error.to_string(),
+            ));
+            break;
+        }
+    }
+    let terminal_states = events
+        .iter()
+        .filter(|event| is_terminal(&event.operation.resulting_state))
+        .map(|event| event.operation.resulting_state.clone())
+        .collect::<BTreeSet<_>>();
+    if terminal_states.len() > 1 {
+        findings.push(finding(
+            first,
+            "terminal-state-conflict",
+            "replicas contain conflicting terminal states",
+        ));
+    }
+    let latest_result = events
+        .iter()
+        .rev()
+        .find_map(|event| event.observation.clone());
+    let state = if findings
+        .iter()
+        .any(|finding| finding.code == "event-history-incomplete")
+    {
+        events
+            .iter()
+            .find(|event| event.operation.sequence == 1)
+            .map(|event| event.operation.resulting_state.clone())
+            .unwrap_or(OperationState::Requested)
+    } else {
+        projection.state
+    };
+    Some(TransferOperation {
+        operation_id: first.operation.operation_id.clone(),
+        source_vm: first.source_vm.clone(),
+        target_vm: first.target_vm.clone(),
+        target_host: first.target_host.clone(),
+        active: !is_terminal(&state),
+        state,
+        latest_result,
+        findings,
+    })
+}
+
+fn finding(event: &TransferEvent, code: &str, detail: &str) -> ReconciliationFinding {
+    ReconciliationFinding {
+        operation_id: event.operation.operation_id.clone(),
+        code: code.into(),
+        detail: detail.into(),
+    }
+}
+
+fn is_terminal(state: &OperationState) -> bool {
+    matches!(
+        state,
+        OperationState::Succeeded | OperationState::Failed | OperationState::Cancelled
+    )
+}
+impl OperationProjection {
     /// Reduces immutable events in sequence order. An already-seen event ID is
     /// an idempotent delivery and therefore changes nothing.
     pub fn apply(&mut self, event: &OperationEvent) -> Result<(), ProjectionError> {
@@ -660,6 +972,152 @@ mod tests {
             sequence,
             occurred_at: None,
         }
+    }
+
+    fn transfer_event(
+        event_id: &str,
+        sequence: u64,
+        state: OperationState,
+        occurred_at: u64,
+        observation: Option<TransferObservation>,
+    ) -> TransferEvent {
+        TransferEvent {
+            schema_version: TRANSFER_REGISTRY_SCHEMA_VERSION.into(),
+            operation: OperationEvent {
+                resulting_state: state,
+                occurred_at: Some(occurred_at),
+                ..event(event_id, sequence)
+            },
+            source_vm: "source-vm".into(),
+            target_vm: "target-vm".into(),
+            target_host: "target-host".into(),
+            observation,
+        }
+    }
+
+    fn observation() -> TransferObservation {
+        TransferObservation {
+            provider: "filesystem".into(),
+            bytes_transferred: 1024,
+            elapsed_millis: 50,
+            throughput_bps: 20_480,
+            retry_count: 1,
+            resume_count: 1,
+            verification_state: "verified".into(),
+            failure_category: None,
+        }
+    }
+
+    #[test]
+    fn federated_registry_reconciles_delayed_replication_and_duplicate_events() {
+        let mut source = FederatedTransferRegistry::default();
+        let mut target = FederatedTransferRegistry::default();
+        let started = transfer_event("started", 1, OperationState::Running, 10, None);
+        let completed = transfer_event(
+            "completed",
+            2,
+            OperationState::Succeeded,
+            20,
+            Some(observation()),
+        );
+
+        assert!(source.ingest(started.clone()));
+        assert!(target.ingest(completed));
+        assert!(source.ingest(started));
+        source.merge(&target);
+        target.merge(&source);
+
+        let operations = target.query(&TransferQuery {
+            operation_id: Some("operation".into()),
+            source_vm: Some("source-vm".into()),
+            target_vm: Some("target-vm".into()),
+            target_host: Some("target-host".into()),
+            active: Some(false),
+        });
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0].state, OperationState::Succeeded);
+        assert!(operations[0].findings.is_empty());
+        assert_eq!(
+            target.report("operation").expect("report").state,
+            TransferReportState::Succeeded
+        );
+    }
+
+    #[test]
+    fn terminal_before_history_is_incomplete_not_a_success_report() {
+        let mut registry = FederatedTransferRegistry::default();
+        registry.ingest(transfer_event(
+            "completed",
+            2,
+            OperationState::Succeeded,
+            20,
+            Some(observation()),
+        ));
+
+        let report = registry.report("operation").expect("report");
+        assert_eq!(report.state, TransferReportState::Conflicted);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "event-history-incomplete")
+        );
+    }
+
+    #[test]
+    fn stale_terminal_replicas_remain_visible_and_active_history_survives_retention() {
+        let mut first = FederatedTransferRegistry::default();
+        let mut stale = FederatedTransferRegistry::default();
+        first.ingest(transfer_event(
+            "started",
+            1,
+            OperationState::Running,
+            100,
+            None,
+        ));
+        first.ingest(transfer_event(
+            "succeeded",
+            2,
+            OperationState::Succeeded,
+            110,
+            Some(observation()),
+        ));
+        stale.ingest(transfer_event(
+            "started",
+            1,
+            OperationState::Running,
+            100,
+            None,
+        ));
+        stale.ingest(transfer_event(
+            "failed",
+            2,
+            OperationState::Failed,
+            111,
+            Some(TransferObservation {
+                failure_category: Some("provider-unavailable".into()),
+                ..observation()
+            }),
+        ));
+
+        first.merge(&stale);
+        assert_eq!(
+            first.report("operation").expect("report").state,
+            TransferReportState::Conflicted
+        );
+        first.retain_terminal_after(105);
+        assert_eq!(
+            first
+                .query(&TransferQuery {
+                    operation_id: Some("operation".into()),
+                    source_vm: None,
+                    target_vm: None,
+                    target_host: None,
+                    active: None,
+                })
+                .len(),
+            1
+        );
     }
 
     #[test]

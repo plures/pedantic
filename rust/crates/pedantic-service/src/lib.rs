@@ -6,7 +6,10 @@ use pedantic_executor::dsc::{
 };
 use pedantic_executor::inventory::{HostRecord, parse_hosts};
 use pedantic_agent::{AgentEnrollment, AgentObservationBatch};
-use pedantic_operation::{EffectAuthorization, RetryClass, RiskClass, Signature as GrantSignature};
+use pedantic_operation::{
+    EffectAuthorization, FederatedTransferRegistry, RetryClass, RiskClass,
+    Signature as GrantSignature, TransferEvent, TransferQuery, TransferReport,
+};
 use pluresdb::{CrdtStore, SledStorage, StorageEngine};
 use pluresdb_chronos::{ChronosAction, ChronosEntry, ChronosTimeline};
 use px_ast::{ConstraintDecl, Statement};
@@ -299,6 +302,7 @@ pub struct ServiceFoundation {
     timeline: ChronosTimeline,
     _store: Arc<CrdtStore>,
     revision_lock: tokio::sync::Mutex<()>,
+    transfer_registry: tokio::sync::Mutex<FederatedTransferRegistry>,
     authorization_signing_key: SigningKey,
 }
 
@@ -327,11 +331,16 @@ impl ServiceFoundation {
         let store =
             Arc::new(CrdtStore::default().with_persistence(storage as Arc<dyn StorageEngine>));
         let timeline = ChronosTimeline::new(Arc::clone(&store));
+        let transfer_registry = store
+            .get(format!("pedantic:transfer-registry:{profile_id}"))
+            .and_then(|record| serde_json::from_value(record.data["registry"].clone()).ok())
+            .unwrap_or_default();
         let foundation = Self {
             profile_id: profile_id.clone(),
             timeline,
             _store: store,
             revision_lock: tokio::sync::Mutex::new(()),
+            transfer_registry: tokio::sync::Mutex::new(transfer_registry),
             authorization_signing_key,
         };
         Ok(foundation)
@@ -365,6 +374,77 @@ impl ServiceFoundation {
             truncated: count > entries.len(),
             entries,
         }
+    }
+
+    /// Stores redacted immutable transfer evidence in the profile PluresDB
+    /// store. Repeated identical event IDs are idempotent; conflicting IDs fail.
+    pub async fn record_transfer_event(
+        &self,
+        event: TransferEvent,
+    ) -> Result<bool, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let mut registry = self.transfer_registry.lock().await;
+        if let Some(existing) = registry.event(&event.operation.event_id) {
+            if existing == &event {
+                return Ok(false);
+            }
+            return Err(ServiceErrorKind::InvalidRequest(
+                "Transfer event ID conflicts with immutable durable evidence.".into(),
+            ));
+        }
+        if !registry.ingest(event.clone()) {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "Transfer event is missing required safe identity fields.".into(),
+            ));
+        }
+        self.persist_transfer_registry(&registry);
+        let entry = self.timeline.build_entry(
+            &self.transfer_event_key(&event.operation.event_id),
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &serde_json::json!({
+                "operationId": event.operation.operation_id,
+                "eventId": event.operation.event_id,
+                "sequence": event.operation.sequence,
+                "state": event.operation.resulting_state,
+                "sourceVm": event.source_vm,
+                "targetVm": event.target_vm,
+                "targetHost": event.target_host,
+            }),
+            Vec::new(),
+            Some("Redacted immutable transfer evidence recorded.".into()),
+        );
+        self.record_evidence_summary(entry)?;
+        Ok(true)
+    }
+
+    pub async fn reconcile_transfer_registry(
+        &self,
+        replica: FederatedTransferRegistry,
+    ) -> Result<(), ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let mut registry = self.transfer_registry.lock().await;
+        registry.merge(&replica);
+        self.persist_transfer_registry(&registry);
+        Ok(())
+    }
+
+    pub async fn query_transfers(
+        &self,
+        query: &TransferQuery,
+    ) -> Vec<pedantic_operation::TransferOperation> {
+        self.transfer_registry.lock().await.query(query)
+    }
+
+    pub async fn transfer_report(&self, operation_id: &str) -> Option<TransferReport> {
+        self.transfer_registry.lock().await.report(operation_id)
+    }
+
+    pub async fn retain_terminal_transfer_history(&self, retain_after: u64) {
+        let _revision_guard = self.revision_lock.lock().await;
+        let mut registry = self.transfer_registry.lock().await;
+        registry.retain_terminal_after(retain_after);
+        self.persist_transfer_registry(&registry);
     }
 
     pub async fn enroll_agent(
@@ -1793,6 +1873,25 @@ impl ServiceFoundation {
             Some("Configuration validation rejection recorded without changing the admitted projection.".into()),
         );
         self.record_evidence_summary(entry)
+    }
+
+    fn persist_transfer_registry(&self, registry: &FederatedTransferRegistry) {
+        self._store.put(
+            self.transfer_registry_key(),
+            SERVICE_ACTOR,
+            serde_json::json!({
+                "profileId": self.profile_id,
+                "registry": registry,
+            }),
+        );
+    }
+
+    fn transfer_registry_key(&self) -> String {
+        format!("pedantic:transfer-registry:{}", self.profile_id)
+    }
+
+    fn transfer_event_key(&self, event_id: &str) -> String {
+        format!("pedantic:transfer-event:{}:{event_id}", self.profile_id)
     }
 
     fn configuration_key(&self, revision_id: &str) -> String {
@@ -3719,6 +3818,7 @@ fn parse_current_user_sid(output: &str) -> Result<String, ServiceErrorKind> {
 mod tests {
     use super::*;
     use jsonschema::{Draft, JSONSchema, SchemaResolver, SchemaResolverError};
+    use pedantic_operation::{OperationEvent, OperationState, TransferObservation};
     use std::sync::Arc;
     use url::Url;
 
@@ -4424,6 +4524,85 @@ mod tests {
         let reopened = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
             .expect("reopen profile store");
         assert_eq!(reopened.evidence_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn transfer_registry_is_durable_idempotent_and_reconciles_replicas() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let service = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("open profile store");
+        let started = transfer_registry_event("started", 1, OperationState::Running, None);
+        assert!(service.record_transfer_event(started.clone()).await.expect("record start"));
+        assert!(!service.record_transfer_event(started).await.expect("deduplicate start"));
+
+        let mut replica = FederatedTransferRegistry::default();
+        replica.ingest(transfer_registry_event(
+            "completed",
+            2,
+            OperationState::Succeeded,
+            Some(TransferObservation {
+                provider: "filesystem".into(),
+                bytes_transferred: 1024,
+                elapsed_millis: 50,
+                throughput_bps: 20_480,
+                retry_count: 1,
+                resume_count: 1,
+                verification_state: "verified".into(),
+                failure_category: None,
+            }),
+        ));
+        service.reconcile_transfer_registry(replica).await.expect("merge replica");
+        assert_eq!(
+            service.transfer_report("transfer").await.expect("report").state,
+            pedantic_operation::TransferReportState::Succeeded
+        );
+        drop(service);
+
+        let restarted = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("reopen profile store");
+        assert_eq!(
+            restarted.query_transfers(&TransferQuery {
+                operation_id: Some("transfer".into()),
+                source_vm: None,
+                target_vm: None,
+                target_host: None,
+                active: Some(false),
+            }).await.len(),
+            1
+        );
+    }
+
+    fn transfer_registry_event(
+        event_id: &str,
+        sequence: u64,
+        state: OperationState,
+        observation: Option<TransferObservation>,
+    ) -> TransferEvent {
+        TransferEvent {
+            schema_version: pedantic_operation::TRANSFER_REGISTRY_SCHEMA_VERSION.into(),
+            operation: OperationEvent {
+                schema_version: pedantic_operation::OPERATION_EVENT_SCHEMA_VERSION.into(),
+                event_id: event_id.into(),
+                event_type: "transfer.observed".into(),
+                resulting_state: state,
+                operation_id: "transfer".into(),
+                plan_id: "plan".into(),
+                step_id: Some("step".into()),
+                attempt_id: Some("attempt".into()),
+                profile_id: "default".into(),
+                actor_id: "agent".into(),
+                target_id: "target".into(),
+                agent_id: "agent".into(),
+                causation_id: "cause".into(),
+                correlation_id: "correlation".into(),
+                sequence,
+                occurred_at: Some(sequence),
+            },
+            source_vm: "source-vm".into(),
+            target_vm: "target-vm".into(),
+            target_host: "target-host".into(),
+            observation,
+        }
     }
 
     #[test]
