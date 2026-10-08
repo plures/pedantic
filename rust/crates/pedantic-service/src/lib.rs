@@ -873,21 +873,21 @@ impl ServiceFoundation {
             "idempotencyKey",
             "Recorded remediation request is missing its idempotency key.",
         )?;
-        if let Some(authorization_id) = authorization_id {
-            let authorization_key = self.effect_authorization_key(&authorization_id);
-            if let Some(existing) = self._store.get(&authorization_key) {
-                let matches = existing.data["requestId"].as_str() == Some(&approval.request_id)
-                    && existing.data["revisionId"].as_str() == Some(&revision_id)
-                    && existing.data["sourceDigest"].as_str() == Some(&source_digest)
-                    && existing.data["idempotencyKey"].as_str() == Some(&idempotency_key)
-                    && existing.data["decision"].as_str() == Some("accepted");
-                if !matches {
-                    return Err(ServiceErrorKind::InvalidRequest(
-                        "An approval identifier is already bound to a different authorization."
-                            .into(),
-                    ));
-                }
+        let authorization_key = self.effect_authorization_key(&approval.approval_id);
+        if let Some(existing) = self._store.get(&authorization_key) {
+            let matches = accepted
+                && existing.data["requestId"].as_str() == Some(&approval.request_id)
+                && existing.data["revisionId"].as_str() == Some(&revision_id)
+                && existing.data["sourceDigest"].as_str() == Some(&source_digest)
+                && existing.data["idempotencyKey"].as_str() == Some(&idempotency_key)
+                && existing.data["decision"].as_str() == Some("accepted");
+            if !matches {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "An approval identifier is already bound to a different authorization.".into(),
+                ));
             }
+        }
+        if let Some(authorization_id) = authorization_id {
             self.record_effect_authorization(
                 &authorization_id,
                 &approval.request_id,
@@ -4079,6 +4079,41 @@ mod tests {
                 .await,
             Err(ServiceErrorKind::InvalidRequest(_))
         ));
+
+        foundation
+            .record_effect_authorization(
+                "approval-partial",
+                "remediation-request",
+                "revision-remediation",
+                &source_digest,
+                "remediation-key",
+            )
+            .expect("record interrupted accepted authorization");
+        assert!(matches!(
+            foundation
+                .approve_remediation(RemediationApprovalRequest {
+                    approval_id: "approval-partial".into(),
+                    request_id: "remediation-request".into(),
+                    actor_id: "reviewer@example.test".into(),
+                    approved: false,
+                })
+                .await,
+            Err(ServiceErrorKind::InvalidRequest(_))
+        ));
+        assert!(
+            foundation
+                ._store
+                .get(foundation.remediation_approval_key("approval-partial"))
+                .is_none()
+        );
+        assert_eq!(
+            foundation
+                ._store
+                .get(foundation.effect_authorization_key("approval-partial"))
+                .expect("preserved authorization")
+                .data["decision"],
+            "accepted"
+        );
 
         let denied_approval = foundation
             .approve_remediation(RemediationApprovalRequest {
