@@ -11,6 +11,7 @@ pub const OPERATION_PLAN_SCHEMA_VERSION: &str = "pedantic.operation-plan.v1";
 pub const OPERATION_EVENT_SCHEMA_VERSION: &str = "pedantic.operation-event.v1";
 pub const OPERATION_PROJECTION_SCHEMA_VERSION: &str = "pedantic.operation-projection.v1";
 pub const TRANSFER_REGISTRY_SCHEMA_VERSION: &str = "pedantic.transfer-registry.v1";
+pub const TRANSFER_REGISTRY_STORAGE_SCHEMA_VERSION: &str = "pedantic.transfer-registry-storage.v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -488,7 +489,7 @@ pub enum TransferIngestResult {
 impl FederatedTransferRegistry {
     /// Merges immutable events from a local or federated replica. Event IDs are
     /// idempotency keys, so conflicting contents are retained for reconciliation.
-    pub fn ingest(&mut self, event: TransferEvent) -> TransferIngestResult {
+    pub fn ingest(&mut self, mut event: TransferEvent) -> TransferIngestResult {
         if event.schema_version != TRANSFER_REGISTRY_SCHEMA_VERSION
             || event.operation.event_id.is_empty()
             || event.operation.operation_id.is_empty()
@@ -498,6 +499,9 @@ impl FederatedTransferRegistry {
         {
             return TransferIngestResult::Invalid;
         }
+        event.source_vm = redact_transfer_identifier(&event.source_vm);
+        event.target_vm = redact_transfer_identifier(&event.target_vm);
+        event.target_host = redact_transfer_identifier(&event.target_host);
         match self.events.entry(event.operation.event_id.clone()) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(vec![event]);
@@ -522,26 +526,28 @@ impl FederatedTransferRegistry {
     }
 
     pub fn event(&self, event_id: &str) -> Option<&TransferEvent> {
-        self.events.get(event_id).and_then(|variants| variants.first())
+        self.events
+            .get(event_id)
+            .and_then(|variants| variants.first())
     }
 
     pub fn query(&self, query: &TransferQuery) -> Vec<TransferOperation> {
+        let source_vm = query.source_vm.as_deref().map(redact_transfer_identifier);
+        let target_vm = query.target_vm.as_deref().map(redact_transfer_identifier);
+        let target_host = query.target_host.as_deref().map(redact_transfer_identifier);
         let mut operations = self.operations();
         operations.retain(|operation| {
             query
                 .operation_id
                 .as_ref()
                 .is_none_or(|value| value == &operation.operation_id)
-                && query
-                    .source_vm
+                && source_vm
                     .as_ref()
                     .is_none_or(|value| value == &operation.source_vm)
-                && query
-                    .target_vm
+                && target_vm
                     .as_ref()
                     .is_none_or(|value| value == &operation.target_vm)
-                && query
-                    .target_host
+                && target_host
                     .as_ref()
                     .is_none_or(|value| value == &operation.target_host)
                 && query.active.is_none_or(|value| value == operation.active)
@@ -593,8 +599,7 @@ impl FederatedTransferRegistry {
         let expired_operations = groups
             .iter()
             .filter_map(|(operation_id, events)| {
-                let operation =
-                    operation_from_events(events.clone(), &conflicting_event_ids)?;
+                let operation = operation_from_events(events.clone(), &conflicting_event_ids)?;
                 (!operation.active
                     && events.iter().all(|event| {
                         event
@@ -637,6 +642,18 @@ impl FederatedTransferRegistry {
             .map(|(event_id, _)| event_id.clone())
             .collect()
     }
+}
+
+fn redact_transfer_identifier(value: &str) -> String {
+    if value.strip_prefix("opaque:").is_some_and(|digest| {
+        digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        return value.to_owned();
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"pedantic.transfer-identity.v1\0");
+    hasher.update(value.as_bytes());
+    format!("opaque:{:x}", hasher.finalize())
 }
 
 fn operation_from_events(
@@ -1131,11 +1148,12 @@ mod tests {
             registry.ingest(original.clone()),
             TransferIngestResult::Inserted
         );
-        assert_eq!(
-            registry.ingest(conflicting),
-            TransferIngestResult::Conflict
-        );
-        assert_eq!(registry.event("event-1"), Some(&original));
+        assert_eq!(registry.ingest(conflicting), TransferIngestResult::Conflict);
+        let stored = registry.event("event-1").expect("canonical event");
+        assert_eq!(stored.operation, original.operation);
+        assert!(stored.source_vm.starts_with("opaque:"));
+        assert!(stored.target_vm.starts_with("opaque:"));
+        assert!(stored.target_host.starts_with("opaque:"));
         assert!(
             registry
                 .report("operation")
@@ -1219,13 +1237,8 @@ mod tests {
             110,
             Some(observation()),
         ));
-        let mut expired_start = transfer_event(
-            "expired-start",
-            1,
-            OperationState::Running,
-            90,
-            None,
-        );
+        let mut expired_start =
+            transfer_event("expired-start", 1, OperationState::Running, 90, None);
         expired_start.operation.operation_id = "expired-operation".into();
         registry.ingest(expired_start);
         let mut expired_finish = transfer_event(

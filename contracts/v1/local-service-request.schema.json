@@ -20,7 +20,12 @@
         "remediation.approve",
         "approval.record",
         "effect.authorize",
-        "remediation.execute"
+        "remediation.execute",
+        "transfer.record",
+        "transfer.reconcile",
+        "transfer.query",
+        "transfer.report",
+        "transfer.retain"
       ]
     },
     "profileId": {
@@ -40,6 +45,81 @@
     {
       "if": { "properties": { "method": { "const": "evidence.list" } } },
       "then": { "properties": { "params": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.record" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event"],
+            "properties": { "event": { "type": "object" } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.reconcile" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["registry"],
+            "properties": { "registry": { "type": "object" } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.query" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operationId": { "type": "string" },
+              "sourceVm": { "type": "string" },
+              "targetVm": { "type": "string" },
+              "targetHost": { "type": "string" },
+              "active": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.report" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operationId"],
+            "properties": { "operationId": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.retain" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["retainAfter"],
+            "properties": { "retainAfter": { "type": "integer", "minimum": 0 } }
+          }
+        }
+      }
     },
     {
       "if": { "properties": { "method": { "const": "configuration.admit" } } },
