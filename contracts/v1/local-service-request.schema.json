@@ -25,7 +25,10 @@
         "transfer.reconcile",
         "transfer.query",
         "transfer.report",
-        "transfer.retain"
+        "transfer.retain",
+        "transfer.batch.create",
+        "transfer.batch.get",
+        "transfer.batch.transition"
       ]
     },
     "profileId": {
@@ -117,6 +120,56 @@
             "additionalProperties": false,
             "required": ["retainAfter"],
             "properties": { "retainAfter": { "type": "integer", "minimum": 0 } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.batch.create" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["plan"],
+            "properties": { "plan": { "type": "object" } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.batch.get" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["batchId"],
+            "properties": { "batchId": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.batch.transition" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["batchId", "expectedRevision", "command"],
+            "properties": {
+              "batchId": { "type": "string", "minLength": 1 },
+              "expectedRevision": { "type": "integer", "minimum": 0 },
+              "command": {
+                "type": "object",
+                "required": ["type"],
+                "properties": { "type": { "enum": ["approve", "start", "finish", "deny", "skip", "exclude"] } }
+              }
+            }
           }
         }
       }
