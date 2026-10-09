@@ -333,7 +333,10 @@ impl TransferBatchProgress {
                     operation_id: transfer.transfer.operation_id.clone(),
                     source_vm: transfer.transfer.source_vm.clone(),
                     state: transfer.state.clone(),
-                    provider: transfer.transfer.provider.clone(),
+                    provider: transfer.observation.as_ref().map_or_else(
+                        || transfer.transfer.provider.clone(),
+                        |observation| observation.provider.clone(),
+                    ),
                     elapsed_millis: transfer
                         .observation
                         .as_ref()
