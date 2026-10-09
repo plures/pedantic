@@ -240,7 +240,9 @@ impl TransferLaunchCheckpoint {
 fn is_sha256_digest(value: &str) -> bool {
     value.len() == 71
         && value.starts_with("sha256:")
-        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -1021,11 +1023,19 @@ mod tests {
             &serde_json::to_string(&checkpoint).expect("serialize transfer launch")
         ));
 
-        let mut invalid = checkpoint;
+        let mut invalid = checkpoint.clone();
         invalid.preflight_evidence.clear();
         assert_eq!(
             invalid.validate(),
             Err(TransferLaunchError::MissingIdentifier)
+        );
+
+        let mut uppercase_digest = checkpoint;
+        uppercase_digest.plan_digest =
+            "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into();
+        assert_eq!(
+            uppercase_digest.validate(),
+            Err(TransferLaunchError::InvalidDigest)
         );
     }
 }
