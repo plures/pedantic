@@ -8,6 +8,27 @@ import {
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient | undefined;
+let stopping: { client: LanguageClient; promise: Promise<void> } | undefined;
+
+function stopLanguageClient(activeClient: LanguageClient): Promise<void> {
+  if (client === activeClient) {
+    client = undefined;
+  }
+  if (stopping?.client === activeClient) {
+    return stopping.promise;
+  }
+  const promise = Promise.resolve().then(() => activeClient.stop());
+  stopping = { client: activeClient, promise };
+  void promise.then(
+    () => {
+      if (stopping?.promise === promise) stopping = undefined;
+    },
+    () => {
+      if (stopping?.promise === promise) stopping = undefined;
+    },
+  );
+  return promise;
+}
 
 export async function activateLanguageServer(context: ExtensionContext): Promise<void> {
   // The server is implemented in Node
@@ -58,12 +79,9 @@ export async function activateLanguageServer(context: ExtensionContext): Promise
   try {
     await languageClient.start();
   } catch (error) {
-    if (client === languageClient) {
-      client = undefined;
-    }
     fileEvents.dispose();
     try {
-      await languageClient.stop();
+      await stopLanguageClient(languageClient);
     } catch {
       // Startup errors are reported below.
     }
@@ -75,7 +93,10 @@ export async function activateLanguageServer(context: ExtensionContext): Promise
   context.subscriptions.push({
     dispose: () => {
       if (client === languageClient) {
-        void deactivateLanguageServer();
+        void deactivateLanguageServer().catch(error => {
+          const message = error instanceof Error ? error.message : String(error);
+          window.showErrorMessage(`Pedantic: Language server failed to stop: ${message}`);
+        });
       }
     }
   });
@@ -83,9 +104,11 @@ export async function activateLanguageServer(context: ExtensionContext): Promise
 
 export async function deactivateLanguageServer(): Promise<void> {
   if (!client) {
+    if (stopping) {
+      await stopping.promise;
+    }
     return;
   }
   const activeClient = client;
-  client = undefined;
-  await activeClient.stop();
+  await stopLanguageClient(activeClient);
 }
