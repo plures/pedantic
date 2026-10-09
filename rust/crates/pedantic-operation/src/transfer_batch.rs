@@ -306,7 +306,9 @@ impl TransferBatchProgress {
         state: BatchTransferState,
         observation: Option<TransferObservation>,
     ) -> Result<(), BatchError> {
-        if !state.terminal() {
+        if !state.terminal()
+            || (state == BatchTransferState::Succeeded && observation.is_none())
+        {
             return Err(BatchError::InvalidPlan);
         }
         let transfer = self.transfer_mut(number)?;
