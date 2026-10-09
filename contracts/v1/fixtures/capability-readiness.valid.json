@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "pedantic.capability-readiness.v1",
+  "capability": "dsc.config.test",
+  "version": "v1",
+  "targetId": "target-1",
+  "agentId": "agent-1",
+  "observedAt": 1,
+  "ready": false,
+  "redactionClass": "metadata-only",
+  "state": "degraded",
+  "required": true,
+  "findings": [{ "code": "dependency_missing", "message": "The required runtime is unavailable" }],
+  "eligibleRemediations": ["dsc.runtime.install/v1"],
+  "diagnostics": [{ "code": "CAPABILITY_NOT_READY" }]
+}

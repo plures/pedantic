@@ -1,6 +1,7 @@
 # Build artifacts
 dist/
 *.zip
+*.vsix
 
 # Test results
 testResults.xml

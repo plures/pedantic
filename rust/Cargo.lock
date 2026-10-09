@@ -849,6 +849,7 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "rand_core 0.6.4",
  "serde",
  "sha2 0.10.9",
  "signature",
@@ -2044,7 +2045,7 @@ checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "pedantic"
-version = "0.6.0"
+version = "0.11.0"
 dependencies = [
  "clap",
  "pedantic-core",
@@ -2059,8 +2060,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "pedantic-agent"
+version = "0.11.0"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "pedantic-capability",
+ "pedantic-operation",
+ "pedantic-provider-pack",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pedantic-capability"
+version = "0.11.0"
+dependencies = [
+ "jsonschema",
+ "pedantic-operation",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "pedantic-core"
-version = "0.6.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "minijinja",
@@ -2074,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "pedantic-executor"
-version = "0.6.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2089,7 +2118,7 @@ dependencies = [
 
 [[package]]
 name = "pedantic-mcp"
-version = "0.6.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "pedantic-core",
@@ -2106,7 +2135,7 @@ dependencies = [
 
 [[package]]
 name = "pedantic-node"
-version = "0.6.0"
+version = "0.11.0"
 dependencies = [
  "napi",
  "napi-derive",
@@ -2116,16 +2145,47 @@ dependencies = [
 ]
 
 [[package]]
-name = "pedantic-service"
-version = "0.6.0"
+name = "pedantic-operation"
+version = "0.11.0"
 dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
  "jsonschema",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pedantic-provider-pack"
+version = "0.11.0"
+dependencies = [
+ "base64 0.22.1",
+ "pedantic-capability",
+ "pedantic-operation",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
+name = "pedantic-service"
+version = "0.11.0"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "jsonschema",
+ "pedantic-agent",
  "pedantic-executor",
+ "pedantic-operation",
  "pluresdb",
  "pluresdb-chronos",
  "px-ast",
  "px-compiler",
  "px-eval",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2135,6 +2195,28 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "pedantic-transport"
+version = "0.11.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "pedantic-windows-agent"
+version = "0.11.0"
+dependencies = [
+ "thiserror 2.0.18",
  "windows-sys 0.61.2",
 ]
 
@@ -2703,9 +2785,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d52d21e5b342699bc4de690e6104fc4e43255e4e8420ff0f2cbb963aac09da6f"
+checksum = "f00a32c3b81b7b254076a65abd5ab2551209146713ba38f73818657e865e9433"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2766,9 +2848,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.43"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "once_cell",
  "ring",
@@ -2790,9 +2872,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",

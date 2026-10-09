@@ -15,7 +15,10 @@
         { "$ref": "#/definitions/configurationDecision" },
         { "$ref": "#/definitions/inventoryObservation" },
         { "$ref": "#/definitions/complianceDecision" },
-        { "$ref": "#/definitions/complianceObservation" }
+        { "$ref": "#/definitions/complianceObservation" },
+        { "$ref": "#/definitions/remediationDecision" },
+        { "$ref": "#/definitions/remediationApproval" },
+        { "$ref": "#/definitions/remediationExecution" }
       ]
     },
     "error": {
@@ -35,7 +38,9 @@
             "inventory_observation_failed",
             "compliance_rejected",
             "compliance_failed",
-            "compliance_observation_failed"
+            "compliance_observation_failed",
+            "remediation_rejected",
+            "remediation_failed"
           ]
         },
         "message": { "type": "string", "minLength": 1 }
@@ -130,6 +135,48 @@
         "resourceCount": { "type": "integer", "minimum": 0 },
         "compliantResourceCount": { "type": "integer", "minimum": 0 },
         "driftedResourceCount": { "type": "integer", "minimum": 0 },
+        "reason": { "type": "string" }
+      }
+    },
+    "remediationDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "revisionId", "observationId", "decision", "constraintId", "reason"],
+      "properties": {
+        "requestId": { "type": "string" },
+        "revisionId": { "type": "string" },
+        "observationId": { "type": "string" },
+        "decision": { "type": "string" },
+        "constraintId": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "remediationApproval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approvalId", "requestId", "authorizationId", "decision", "constraintId", "reason"],
+      "properties": {
+        "approvalId": { "type": "string" },
+        "requestId": { "type": "string" },
+        "authorizationId": { "type": ["string", "null"] },
+        "decision": { "type": "string" },
+        "constraintId": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "remediationExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executionId", "requestId", "revisionId", "decision", "constraintId", "resourceCount", "compliantResourceCount", "driftedResourceCount", "reason"],
+      "properties": {
+        "executionId": { "type": "string" },
+        "requestId": { "type": "string" },
+        "revisionId": { "type": "string" },
+        "decision": { "type": "string" },
+        "constraintId": { "type": "string" },
+        "resourceCount": { "type": ["integer", "null"], "minimum": 0 },
+        "compliantResourceCount": { "type": ["integer", "null"], "minimum": 0 },
+        "driftedResourceCount": { "type": ["integer", "null"], "minimum": 0 },
         "reason": { "type": "string" }
       }
     }

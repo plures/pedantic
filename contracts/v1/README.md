@@ -12,6 +12,12 @@ state/evidence, and returns the resulting projection. Request parameters are
 typed per method; response schemas constrain the transport shape and redacted
 projection without duplicating PX decision policy.
 
+Durable operations use the versioned operation, effect, capability, and agent
+schemas in this directory. They reject unknown fields and carry causal,
+profile, target, agent, and idempotency identities. Authorization contracts
+persist only opaque secret references; diagnostics are bounded and classified
+for redaction before they can become evidence.
+
 Contract changes require an ADR, compatibility classification, schema tests,
 and a pre-release client conformance run. The fixtures in `fixtures/` are
 validated by `pedantic-service` tests against the same schemas and live service

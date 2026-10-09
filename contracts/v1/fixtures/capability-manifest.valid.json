@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "pedantic.capability-manifest.v1",
+  "capability": "dsc.config.test",
+  "version": "v1",
+  "riskClass": "moderate",
+  "retryClass": "safe-after-observation",
+  "idempotency": "observation-required",
+  "redactionClass": "normalized-findings",
+  "requiresApproval": true,
+  "requiresCheckpoint": false,
+  "inputSchema": { "type": "object" },
+  "outputSchema": { "type": "object" }
+}

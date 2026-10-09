@@ -1,0 +1,12 @@
+{
+  "name": "pedantic-vsix-smoke-test",
+  "publisher": "pedantic",
+  "version": "0.11.0",
+  "engines": {
+    "vscode": ">=1.90.0"
+  },
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./extension.js"
+}

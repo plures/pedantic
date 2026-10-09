@@ -1,0 +1,24 @@
+# Reboot continuation resumes only after a durable checkpoint and new boot identity.
+
+entity RebootContinuation:
+  prefix: "pedantic:reboot-continuation:"
+  fields:
+    operation_id: String
+    step_id: String
+    checkpoint_id: String
+    prior_boot_id: String
+    observed_boot_id: String
+    authorization_id: String
+    decision: String
+
+constraint reboot_requires_new_boot_identity:
+  scope: reboot_continuation
+  phase: execution
+  require: reboot.checkpoint_id != "" AND reboot.prior_boot_id != "" AND reboot.observed_boot_id != "" AND reboot.prior_boot_id != reboot.observed_boot_id
+  severity: error
+  message: "Reboot continuation requires a checkpoint and a changed boot identity."
+
+procedure decide_reboot_continuation(reboot: RebootContinuation from "reboot_continuations") -> RebootContinuation into "reboot_continuations":
+  given: "Resume only the next incomplete checkpoint after PX reevaluation"
+  evaluate_reboot_continuation reboot -> $decision
+  return {operation_id: reboot.operation_id, step_id: reboot.step_id, checkpoint_id: reboot.checkpoint_id, prior_boot_id: reboot.prior_boot_id, observed_boot_id: reboot.observed_boot_id, authorization_id: reboot.authorization_id, decision: $decision.value}

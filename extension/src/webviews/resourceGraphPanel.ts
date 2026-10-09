@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
+import { GraphPayload, isGraphPayload, isReadyMessage, isRevealNodeMessage } from './webviewProtocol';
 
 interface GraphNode { id: string; label: string; type: string; sourceLocation?: any; }
 interface GraphEdge { from: string; to: string; kind: string; }
@@ -10,6 +12,10 @@ export class ResourceGraphPanel {
   private disposables: vscode.Disposable[] = [];
   private context: vscode.ExtensionContext;
   private currentDocument: any;
+  private latestPayload: GraphPayload | undefined;
+  private refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  private ready = false;
+  private disposed = false;
 
   static createOrShow(context: vscode.ExtensionContext): ResourceGraphPanel {
     if (ResourceGraphPanel.instance) {
@@ -22,9 +28,8 @@ export class ResourceGraphPanel {
       vscode.ViewColumn.Beside,
       {
         enableScripts: true,
-        retainContextWhenHidden: true,
         localResourceRoots: [
-          vscode.Uri.file(path.join(context.extensionPath, 'node_modules', 'echarts', 'dist'))
+          vscode.Uri.file(path.join(context.extensionPath, 'dist', 'vendor'))
         ]
       }
     );
@@ -40,18 +45,19 @@ export class ResourceGraphPanel {
     this.panel = panel;
     this.context = context;
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
-    this.panel.webview.html = this.getHtml();
-    
-    // Handle messages from webview
     this.panel.webview.onDidReceiveMessage(
-      async (msg: any) => {
-        if (msg.command === 'revealNode') {
+      async (msg: unknown) => {
+        if (isReadyMessage(msg)) {
+          this.ready = true;
+          await this.flushLatestPayload();
+        } else if (isRevealNodeMessage(msg)) {
           await this.revealNodeInEditor(msg.nodeId);
         }
       },
       null,
       this.disposables
     );
+    this.panel.webview.html = this.getHtml();
   }
 
   updateFromSimpleDocument(simpleDoc: any) {
@@ -60,6 +66,15 @@ export class ResourceGraphPanel {
     // Extract packages as nodes with source location info
     const nodes: GraphNode[] = [];
     const edges: GraphEdge[] = [];
+    const diagnostics: GraphPayload['diagnostics'] = Array.isArray(simpleDoc.diagnostics)
+      ? (simpleDoc.diagnostics as unknown[])
+        .filter((diagnostic: unknown): diagnostic is { code: string; message: string; severity: string } =>
+          diagnostic !== null && typeof diagnostic === 'object'
+          && typeof (diagnostic as { code?: unknown }).code === 'string'
+          && typeof (diagnostic as { message?: unknown }).message === 'string'
+          && typeof (diagnostic as { severity?: unknown }).severity === 'string')
+        .map(({ code, message, severity }) => ({ code, message, severity }))
+      : [];
     
     for (const block of simpleDoc.blocks || []) {
       if (block.kind === 'InstallBlock') {
@@ -67,19 +82,30 @@ export class ResourceGraphPanel {
           nodes.push({ 
             id: p.id, 
             label: p.display || p.id,
-            type: 'package',
-            sourceLocation: p.sourceLocation
+            type: 'package'
           });
         }
       }
     }
-    
-    this.postMessage({ 
+
+    this.postMessage({
       command: 'graphData', 
       nodes, 
       edges, 
-      diagnostics: simpleDoc.diagnostics || [] 
+      diagnostics
     });
+  }
+
+  scheduleRefresh(refresh: () => void, delay = 200): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+    }
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined;
+      if (!this.disposed) {
+        refresh();
+      }
+    }, delay);
   }
 
   private async revealNodeInEditor(nodeId: string) {
@@ -123,16 +149,34 @@ export class ResourceGraphPanel {
     return null;
   }
 
-  private postMessage(message: any) {
-    try { this.panel.webview.postMessage(message); } catch { /* ignore */ }
+  private postMessage(message: unknown): void {
+    if (!isGraphPayload(message) || this.disposed) {
+      return;
+    }
+    this.latestPayload = message;
+    if (this.ready) {
+      void this.flushLatestPayload();
+    }
+  }
+
+  private async flushLatestPayload(): Promise<void> {
+    if (!this.ready || this.disposed || !this.latestPayload) {
+      return;
+    }
+    try {
+      const delivered = await this.panel.webview.postMessage(this.latestPayload);
+      if (!delivered) this.ready = false;
+    } catch {
+      this.ready = false;
+      // Retain the newest payload for the next ready notification.
+    }
   }
 
   private getEChartsUri(): vscode.Uri {
     const echartsPath = path.join(
       this.context.extensionPath,
-      'node_modules',
-      'echarts',
       'dist',
+      'vendor',
       'echarts.min.js'
     );
     const fileUri = vscode.Uri.file(echartsPath);
@@ -147,17 +191,18 @@ export class ResourceGraphPanel {
   }
 
   private getHtml(): string {
-    const nonce = Math.random().toString(36).slice(2);
+    const nonce = randomBytes(16).toString('base64');
     const echartsUri = this.getEChartsUri();
+    const cspSource = this.panel.webview.cspSource;
     
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' ${echartsUri}; img-src data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}' ${cspSource};">
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Pedantic Resource Graph</title>
-<style>
+<style nonce="${nonce}">
 body { font-family: var(--vscode-font-family, Segoe UI, Arial, sans-serif); margin: 0; padding: 0.75rem; }
 #graph { border: 1px solid var(--vscode-editorWidget-border,#555); height: 500px; width: 100%; background: var(--vscode-editor-background,#1e1e1e); }
 #json { font-size: 11px; margin-top: .75rem; line-height: 1.3; }
@@ -209,12 +254,7 @@ body { font-family: var(--vscode-font-family, Segoe UI, Arial, sans-serif); marg
           backgroundColor: 'transparent',
           tooltip: {
             trigger: 'item',
-            formatter: function(params) {
-              if (params.dataType === 'node') {
-                return params.data.name;
-              }
-              return '';
-            }
+            renderMode: 'richText'
           },
           series: [{
             type: 'graph',
@@ -261,10 +301,23 @@ body { font-family: var(--vscode-font-family, Segoe UI, Arial, sans-serif); marg
       document.getElementById('json').textContent = JSON.stringify({nodes: msg.nodes, edges: msg.edges}, null, 2);
       
       const diagHost = document.getElementById('diagnostics');
-      diagHost.innerHTML = '<h4>Diagnostics</h4>' + 
-        (msg.diagnostics.length 
-          ? msg.diagnostics.map(d => '<div class="diag ' + d.severity + '">' + d.severity.toUpperCase() + ' ' + d.code + ': ' + d.message + '</div>').join('') 
-          : '<div>No diagnostics</div>');
+      const heading = document.createElement('h4');
+      heading.textContent = 'Diagnostics';
+      const content = document.createElement('div');
+      if (msg.diagnostics.length) {
+        for (const diagnostic of msg.diagnostics) {
+          const item = document.createElement('div');
+          item.className = 'diag';
+          if (diagnostic.severity === 'error' || diagnostic.severity === 'warning') {
+            item.classList.add(diagnostic.severity);
+          }
+          item.textContent = diagnostic.severity.toUpperCase() + ' ' + diagnostic.code + ': ' + diagnostic.message;
+          content.appendChild(item);
+        }
+      } else {
+        content.textContent = 'No diagnostics';
+      }
+      diagHost.replaceChildren(heading, content);
     }
   });
 
@@ -272,6 +325,7 @@ body { font-family: var(--vscode-font-family, Segoe UI, Arial, sans-serif); marg
   if (typeof echarts !== 'undefined') {
     initChart();
   }
+  vscode.postMessage({ command: 'ready' });
 })();
 </script>
 </body>
@@ -279,6 +333,12 @@ body { font-family: var(--vscode-font-family, Segoe UI, Arial, sans-serif); marg
   }
 
   private dispose() {
+    this.disposed = true;
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+    this.latestPayload = undefined;
     ResourceGraphPanel.instance = undefined;
     this.disposables.forEach(d => { try { d.dispose(); } catch { /* noop */ } });
     this.disposables = [];

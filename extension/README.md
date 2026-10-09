@@ -7,12 +7,9 @@ The Pedantic extension provides a modern development experience for Desired Stat
 ## ✨ Features
 
 ### 🌐 Dynamic Inventory View
-- **Host inventory tree**: View all hosts in a hierarchical tree structure in the Explorer sidebar
-- **Expandable details**: Each host shows vars, group_vars, and gathered facts
-- **Detail panel**: Click any item to view properties and values in an adjacent pane
-- **Configuration push**: Push DSC configurations to hosts with progress tracking
-- **Per-host logging**: Persistent, color-coded logs for all host operations
-- **Fact gathering**: Collect system information from hosts (similar to Ansible's `gather_facts`)
+- **Preview unavailable**: Inventory, host facts, and configuration remediation require a configured Pedantic service backend and are not available in this extension release.
+- **Truthful Explorer state**: The Explorer shows that the inventory service is not configured; it never displays demonstration hosts or reports a configuration push as successful.
+- **Planned service integration**: A future service-backed view will render typed inventory observations and durable operation projections, including approval, authorization, progress, cancellation, and final evidence.
 
 ### 🔍 Language Server Protocol (LSP) Integration
 - **Real-time diagnostics**: Instant validation with error/warning messages in Problems panel
@@ -79,9 +76,6 @@ dsc.install:
 - `Pedantic: Check DSC Prerequisites` - Verify DSC v3 + common resources; offers one-click fixes
 - `Pedantic: Show Resource Inventory` - Graph/list view of installed vs cached/available resources
 - `Pedantic: Add DSC Resource to Project` - Install a DSC resource from catalog/cache in one step
-- `Pedantic: Refresh Inventory` - Refresh the dynamic inventory view
-- `Pedantic: Gather Facts` - Gather system facts from a selected host
-- `Pedantic: Push Configuration` - Push a DSC configuration to a selected host
 
 ### Keyboard Shortcuts
 
@@ -132,19 +126,29 @@ Settings are available under `pedantic.*` in VS Code settings:
 }
 ```
 
+Bridge commands run only in trusted workspaces. The PowerShell executable setting
+is machine-scoped and restricted in untrusted workspaces; use either `pwsh` or
+an absolute path to an executable. Bridge execution does not override
+PowerShell's execution policy.
+
 ## 🧪 Development
 
 ### Building from Source
 
 ```bash
 cd extension
-npm install
+npm ci
 npm run compile
 ```
+
+The extension supports VS Code 1.90 and later and is type-checked against the
+matching 1.90 VS Code API declarations. Building and packaging require Node.js
+20.19.0 or later.
 
 ### Running Tests
 
 ```bash
+npm run lint
 npm test
 ```
 
@@ -154,6 +158,16 @@ All 31 tests should pass, covering:
 - Praxis engine integration
 - Reactive state management
 - Parser round-trip tests
+
+### Packaging a VSIX
+
+```bash
+npm run package
+```
+
+This runs linting and unit tests, bundles the extension host (leaving the
+`vscode` API external), and writes `pedantic-dsc.vsix`. To inspect the package
+file list without creating the VSIX, run `npx --no-install vsce ls`.
 
 ### Debugging
 

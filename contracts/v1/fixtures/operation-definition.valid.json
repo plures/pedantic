@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "pedantic.operation-definition.v1",
+  "operationId": "operation-1",
+  "profileId": "default",
+  "actorId": "user-1",
+  "targetId": "target-1",
+  "idempotencyKey": "key-1",
+  "causationId": "cause-1",
+  "correlationId": "correlation-1",
+  "configurationRevision": "revision-1",
+  "configurationDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

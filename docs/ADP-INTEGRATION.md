@@ -20,7 +20,7 @@ The ADP repository (https://github.com/plures/ADP.git) requires authentication t
 
 - Git access to https://github.com/plures/ADP.git
 - PowerShell 7+ (for PowerShell module integration)
-- Node.js 18+ (for VS Code extension integration)
+- Node.js 22+ (for VS Code extension integration)
 
 ### Step 1: Add ADP as a Git Submodule
 

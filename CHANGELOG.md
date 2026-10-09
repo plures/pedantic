@@ -1,3 +1,51 @@
+## [0.11.0] — 2026-10-09
+
+- feat(hyperv): add verified resource transfer adapter (#229) (c86697b)
+- feat(operation): add sequential approval-gated transfer batches (#225) (e0c4359)
+- fix(extension): harden PowerShell bridge execution (#214) (c7c37ef)
+- fix(extension): harden resource webview boundaries (#217) (59c054b)
+- fix(extension): disable unconfigured inventory operations (#215) (2342119)
+- feat(transfer): add federated registry projections (#210) (11842bc)
+- chore(release): v0.10.0 (#202) (b555557)
+- chore(deps): bump the cargo group across 1 directory with 2 updates (#212) (987fce8)
+- fix(extension): scope language server to Pedantic DSL files (#211) (d61dbec)
+- feat(transfer): validate typed DTMS transfer contracts (#208) (25ad52d)
+- feat(agent): durably checkpoint transfer launches (#209) (92d37f5)
+- feat: add deterministic Hyper-V transfer planning (#206) (85b14be)
+- feat: prepare Windows transfer hosts with gMSA recovery (#207) (d19b369)
+- [WIP] Fix PowerShell bridge invocation issues in VS Code extension (#205) (08fa356)
+
+## [0.10.0] — 2026-10-08
+
+- [WIP] Restore deterministic build, test, and VSIX release pipeline (#203) (77b44c7)
+- feat: add typed production provider packs (#187) (0a7f475)
+- feat: add authenticated remote agent synchronization foundation (#186) (c859d03)
+
+## [0.9.0] — 2026-10-08
+
+- feat(service): separate approval from effect authorization (#184) (1323b80)
+- feat(agent): add durable local execution primitives (#183) (227d479)
+
+## [0.8.0] — 2026-10-08
+
+- feat(operation): add durable operation contracts and PX model (#175) (81dc7a8)
+- chore(release): v0.7.0 (#172) (474a2d1)
+
+## [0.7.0] — 2026-10-08
+
+- deps(npm)(deps-dev): bump the dev-dependencies group across 1 directory with 3 updates (#156) (341d1fe)
+- feat: add PX-governed local remediation (#154) (bf17c45)
+- feat: DTMS Primitives (9f928bc)
+- deps(npm)(deps): bump brace-expansion from 5.0.9 to 5.0.12 in /extension (#166) (2d1885d)
+- deps(npm)(deps-dev): bump fast-uri from 3.1.7 to 3.1.8 in /extension (#164) (1821985)
+- deps(npm)(deps-dev): bump markdown-it in /extension (#163) (e6153d7)
+- deps(npm)(deps): bump the production-dependencies group across 1 directory with 4 updates (#160) (caf4317)
+- deps(npm)(deps-dev): bump undici from 7.29.0 to 7.30.0 in /extension (#159) (48ffbe2)
+- chore(deps): bump rmcp in /rust in the cargo group across 1 directory (#155) (bfdb3c2)
+- fix: recover release parity boundaries (#153) (958ef10)
+- chore(release): v0.6.0 (#149) (d22489d)
+- fix(ci): source releases from the Rust workspace (#152) (c900542)
+
 ## [0.6.0] — 2026-09-15
 
 - chore(release): v0.6.0 (#144) (c6cbd7c)

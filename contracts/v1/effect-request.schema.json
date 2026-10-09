@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/effect-request.schema.json",
+  "title": "Pedantic bounded effect request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "commandId", "authorizationId", "operationId", "stepId", "attemptId", "targetId", "agentId", "capability", "inputDigest", "idempotencyKey", "fencingToken", "causationId", "correlationId"],
+  "properties": {
+    "schemaVersion": { "const": "pedantic.effect-request.v1" },
+    "commandId": { "$ref": "#/definitions/id" }, "authorizationId": { "$ref": "#/definitions/id" }, "operationId": { "$ref": "#/definitions/id" }, "stepId": { "$ref": "#/definitions/id" }, "attemptId": { "$ref": "#/definitions/id" },
+    "targetId": { "$ref": "#/definitions/id" }, "agentId": { "$ref": "#/definitions/id" }, "capability": { "type": "string", "minLength": 1 }, "inputDigest": { "$ref": "#/definitions/digest" },
+    "idempotencyKey": { "$ref": "#/definitions/id" }, "fencingToken": { "type": "integer", "minimum": 1 }, "causationId": { "$ref": "#/definitions/id" }, "correlationId": { "$ref": "#/definitions/id" },
+    "secretReferences": { "type": "array", "items": { "$ref": "#/definitions/id" } }
+  },
+  "definitions": { "id": { "type": "string", "minLength": 1, "maxLength": 256 }, "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" } }
+}

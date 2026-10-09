@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/capability-readiness.schema.json",
+  "title": "Pedantic capability readiness observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "capability", "version", "targetId", "agentId", "observedAt", "ready", "redactionClass"],
+  "properties": {
+    "schemaVersion": { "const": "pedantic.capability-readiness.v1" }, "capability": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 },
+    "targetId": { "type": "string", "minLength": 1 }, "agentId": { "type": "string", "minLength": 1 }, "observedAt": { "type": "integer", "minimum": 0 }, "ready": { "type": "boolean" },
+    "redactionClass": { "enum": ["metadata-only", "normalized-findings", "protected-artifact-reference"] },
+    "state": { "enum": ["ready", "degraded", "unavailable"] },
+    "required": { "type": "boolean" },
+    "findings": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "message": { "type": "string", "maxLength": 256 }
+        }
+      }
+    },
+    "eligibleRemediations": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]*/v[1-9][0-9]*$" }
+    },
+    "diagnostics": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code"],
+            "properties": {
+              "code": { "enum": ["CAPABILITY_NOT_READY", "DEPENDENCY_MISSING", "EXECUTION_FAILED", "INPUT_INVALID", "OUTPUT_REDACTED", "PROVIDER_UNAVAILABLE", "VALIDATION_FAILED"] }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["protectedArtifactReference"],
+            "properties": {
+              "protectedArtifactReference": { "type": "string", "pattern": "^pedantic-artifact:[A-Za-z0-9_-]{1,128}$" }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

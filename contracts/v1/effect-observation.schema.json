@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/effect-observation.schema.json",
+  "title": "Pedantic immutable effect observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "eventId", "commandId", "operationId", "stepId", "attemptId", "targetId", "agentId", "sequence", "status", "causationId", "correlationId", "redactionClass"],
+  "properties": {
+    "schemaVersion": { "const": "pedantic.effect-observation.v1" }, "eventId": { "$ref": "#/definitions/id" }, "commandId": { "$ref": "#/definitions/id" },
+    "operationId": { "$ref": "#/definitions/id" }, "stepId": { "$ref": "#/definitions/id" }, "attemptId": { "$ref": "#/definitions/id" }, "targetId": { "$ref": "#/definitions/id" }, "agentId": { "$ref": "#/definitions/id" },
+    "sequence": { "type": "integer", "minimum": 1 }, "status": { "enum": ["accepted", "started", "progressed", "heartbeat", "checkpointed", "completed", "failed", "needs-review"] },
+    "causationId": { "$ref": "#/definitions/id" }, "correlationId": { "$ref": "#/definitions/id" }, "redactionClass": { "enum": ["metadata-only", "normalized-findings", "protected-artifact-reference"] },
+    "diagnostics": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code"],
+            "properties": {
+              "code": { "enum": ["CAPABILITY_NOT_READY", "DEPENDENCY_MISSING", "EXECUTION_FAILED", "INPUT_INVALID", "OUTPUT_REDACTED", "PROVIDER_UNAVAILABLE", "VALIDATION_FAILED"] }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["protectedArtifactReference"],
+            "properties": {
+              "protectedArtifactReference": { "type": "string", "pattern": "^pedantic-artifact:[A-Za-z0-9_-]{1,128}$" }
+            }
+          }
+        ]
+      }
+    },
+    "outputDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  },
+  "definitions": { "id": { "type": "string", "minLength": 1, "maxLength": 256 } }
+}

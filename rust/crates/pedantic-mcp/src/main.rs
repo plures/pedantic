@@ -11,7 +11,7 @@ use rmcp::schemars;
 use rmcp::{
     ErrorData as McpError, ServiceExt,
     handler::server::{tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
+    model::{CallToolResult, ContentBlock, ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router,
     transport::stdio,
 };
@@ -82,7 +82,7 @@ fn dsc_error_to_mcp(err: DscError) -> McpError {
 }
 
 fn text_result(value: impl std::fmt::Display) -> CallToolResult {
-    CallToolResult::success(vec![Content::text(value.to_string())])
+    CallToolResult::success(vec![ContentBlock::text(value.to_string())])
 }
 
 fn local_service_client(profile: &str) -> Result<LocalServiceClient, McpError> {
@@ -109,7 +109,7 @@ fn service_result(response: LocalServiceResponse) -> Result<CallToolResult, McpE
     })?;
     let projection = serde_json::to_string_pretty(&projection)
         .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-    Ok(CallToolResult::success(vec![Content::text(projection)]))
+    Ok(CallToolResult::success(vec![ContentBlock::text(projection)]))
 }
 
 #[tool_router]

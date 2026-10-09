@@ -15,7 +15,20 @@
         "configuration.validate",
         "inventory.observe",
         "compliance.request",
-        "compliance.observe"
+        "compliance.observe",
+        "remediation.request",
+        "remediation.approve",
+        "approval.record",
+        "effect.authorize",
+        "remediation.execute",
+        "transfer.record",
+        "transfer.reconcile",
+        "transfer.query",
+        "transfer.report",
+        "transfer.retain",
+        "transfer.batch.create",
+        "transfer.batch.get",
+        "transfer.batch.transition"
       ]
     },
     "profileId": {
@@ -35,6 +48,131 @@
     {
       "if": { "properties": { "method": { "const": "evidence.list" } } },
       "then": { "properties": { "params": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.record" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event"],
+            "properties": { "event": { "type": "object" } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.reconcile" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["registry"],
+            "properties": { "registry": { "type": "object" } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.query" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operationId": { "type": "string" },
+              "sourceVm": { "type": "string" },
+              "targetVm": { "type": "string" },
+              "targetHost": { "type": "string" },
+              "active": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.report" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operationId"],
+            "properties": { "operationId": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.retain" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["retainAfter"],
+            "properties": { "retainAfter": { "type": "integer", "minimum": 0 } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.batch.create" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["plan"],
+            "properties": { "plan": { "type": "object" } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.batch.get" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["batchId"],
+            "properties": { "batchId": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "transfer.batch.transition" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["batchId", "expectedRevision", "command"],
+            "properties": {
+              "batchId": { "type": "string", "minLength": 1 },
+              "expectedRevision": { "type": "integer", "minimum": 0 },
+              "command": {
+                "type": "object",
+                "required": ["type"],
+                "properties": { "type": { "enum": ["approve", "start", "finish", "deny", "skip", "exclude"] } }
+              }
+            }
+          }
+        }
+      }
     },
     {
       "if": { "properties": { "method": { "const": "configuration.admit" } } },
@@ -118,6 +256,64 @@
               "observationId": { "type": "string" },
               "requestId": { "type": "string" },
               "document": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "remediation.request" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requestId", "revisionId", "observationId", "actorId", "idempotencyKey"],
+            "properties": {
+              "requestId": { "type": "string", "minLength": 1 },
+              "revisionId": { "type": "string", "minLength": 1 },
+              "observationId": { "type": "string", "minLength": 1 },
+              "actorId": { "type": "string", "minLength": 1 },
+              "idempotencyKey": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "enum": ["remediation.approve", "approval.record", "effect.authorize"] } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["approvalId", "requestId", "actorId", "approved"],
+            "properties": {
+              "approvalId": { "type": "string", "minLength": 1 },
+              "requestId": { "type": "string", "minLength": 1 },
+              "actorId": { "type": "string", "minLength": 1 },
+              "approved": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "method": { "const": "remediation.execute" } } },
+      "then": {
+        "required": ["params"],
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["executionId", "authorizationId", "idempotencyKey", "document"],
+            "properties": {
+              "executionId": { "type": "string", "minLength": 1 },
+              "authorizationId": { "type": "string", "minLength": 1 },
+              "idempotencyKey": { "type": "string", "minLength": 1 },
+              "document": { "type": "string", "minLength": 1 }
             }
           }
         }

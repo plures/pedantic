@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "pedantic.operation-projection.v1",
+  "operationId": "operation-1",
+  "profileId": "default",
+  "state": "Requested",
+  "lastSequence": 0,
+  "eventIds": []
+}

@@ -2,24 +2,64 @@
   "name": "pedantic-dsc",
   "displayName": "Pedantic DSC",
   "description": "Pedantic: DSC authoring, visualization, and AI-assisted configuration (Simple DSL + SudoLang).",
-  "version": "0.6.0",
+  "version": "0.11.0",
   "engines": {
-    "vscode": ">=1.90.0"
+    "vscode": ">=1.90.0",
+    "node": ">=20.19.0"
   },
   "publisher": "pedantic",
-  "license": "MIT",
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plures/pedantic.git"
+  },
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:yaml",
+    "onLanguage:pedantic-simple-dsc",
+    "onLanguage:pedantic-sudolang",
     "onCommand:pedantic.checkPrereqs",
     "onCommand:pedantic.showResourceInventory",
     "onCommand:pedantic.addResourceToProject",
     "onView:pedanticInventory"
   ],
   "main": "dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "restrictedConfigurations": [
+        "pedantic.bridge.pwshPath"
+      ]
+    }
+  },
+  "files": [
+    "dist/**",
+    "bridge/**",
+    "README.md",
+    "LICENSE"
+  ],
   "contributes": {
+    "languages": [
+      {
+        "id": "pedantic-simple-dsc",
+        "aliases": [
+          "Pedantic Simple DSC"
+        ],
+        "filenamePatterns": [
+          "*.simple.dsc.yaml"
+        ]
+      },
+      {
+        "id": "pedantic-sudolang",
+        "aliases": [
+          "Pedantic SudoLang"
+        ],
+        "filenamePatterns": [
+          "*.ssudo"
+        ]
+      }
+    ],
     "views": {
       "explorer": [
         {
@@ -64,86 +104,51 @@
         "command": "pedantic.addResourceToProject",
         "title": "Pedantic: Add DSC Resource to Project",
         "category": "Pedantic"
-      },
-      {
-        "command": "pedantic.refreshInventory",
-        "title": "Refresh Inventory",
-        "category": "Pedantic",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "pedantic.showInventoryDetail",
-        "title": "Show Details",
-        "category": "Pedantic"
-      },
-      {
-        "command": "pedantic.gatherHostFacts",
-        "title": "Gather Facts",
-        "category": "Pedantic",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "pedantic.pushConfigToHost",
-        "title": "Push Configuration",
-        "category": "Pedantic",
-        "icon": "$(cloud-upload)"
       }
     ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "pedantic.refreshInventory",
-          "when": "view == pedanticInventory",
-          "group": "navigation"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "pedantic.gatherHostFacts",
-          "when": "view == pedanticInventory && viewItem == host",
-          "group": "inline"
-        },
-        {
-          "command": "pedantic.pushConfigToHost",
-          "when": "view == pedanticInventory && viewItem == host",
-          "group": "inline"
-        }
-      ]
-    },
     "configuration": {
       "title": "Pedantic",
       "properties": {
         "pedantic.telemetry.enabled": {
           "type": "boolean",
           "default": false,
+          "scope": "window",
           "description": "Enable anonymous telemetry (preview)."
         },
         "pedantic.bridge.pwshPath": {
           "type": "string",
           "default": "pwsh",
-          "description": "Path to PowerShell executable for DSC bridge."
+          "scope": "machine",
+          "description": "Path to the PowerShell executable for the DSC bridge. This setting is ignored in untrusted workspaces."
         }
       }
     }
   },
   "scripts": {
-    "compile": "tsc -p .",
+    "compile": "tsc -p . --noEmit",
+    "bundle": "npm run compile && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && esbuild src/extension.ts src/server/server.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --outdir=dist --outbase=src && node -e \"const fs = require('node:fs'); fs.mkdirSync('dist/vendor', { recursive: true }); fs.copyFileSync('node_modules/echarts/dist/echarts.min.js', 'dist/vendor/echarts.min.js');\"",
+    "vscode:prepublish": "npm run bundle",
     "watch": "tsc -w -p .",
-    "package": "npm run compile",
-    "lint": "echo '(lint placeholder)'",
-    "build": "npm run compile",
-    "test": "npm run test:build && node --test dist-test/test",
+    "package": "npm run lint && npm test && vsce package --out pedantic-dsc.vsix",
+    "lint": "eslint src test --max-warnings 0",
+    "build": "npm run bundle",
+    "test": "npm run test:build && node --test dist-test/test/bridgeAssets.test.js dist-test/test/pwshBridge.test.js dist-test/test/goldenTests.test.js dist-test/test/inventoryService.test.js dist-test/test/sudoParser.test.js dist-test/test/logic/dsl-logic.test.js dist-test/test/logic/praxis-core.test.js dist-test/test/logic/reactive-state.test.js dist-test/test/webviewProtocol.test.js dist-test/test/clientLifecycle.test.js",
+    "test:vsix": "node test/extension-host/run.cjs",
     "test:build": "tsc -p tsconfig.test.json"
   },
   "devDependencies": {
-    "@types/node": "26.5.1",
-    "@types/vscode": "1.137.0",
+    "@types/node": "26.6.4",
+    "@types/vscode": "1.90.0",
+    "@typescript-eslint/eslint-plugin": "8.71.1",
+    "@typescript-eslint/parser": "8.71.1",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "^3.9.2",
-    "typescript": "^7.0.2"
+    "esbuild": "0.28.2",
+    "eslint": "10.12.0",
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "6.0.3"
   },
   "dependencies": {
-    "chevrotain": "^13.2.0",
+    "chevrotain": "9.1.0",
     "echarts": "^6.1.0",
     "vscode-languageclient": "^10.1.2",
     "vscode-languageserver": "^10.1.2",

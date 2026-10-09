@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/operation-projection.schema.json",
+  "title": "Pedantic current operation projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "operationId", "profileId", "state", "lastSequence", "eventIds"],
+  "properties": {
+    "schemaVersion": { "const": "pedantic.operation-projection.v1" },
+    "operationId": { "type": "string", "minLength": 1 },
+    "profileId": { "type": "string", "minLength": 1 },
+    "state": { "enum": ["Requested", "Admitted", "Authorized", "Preparing", "Prepared", "Queued", "Running", "Waiting", "AwaitingReboot", "NeedsReview", "Succeeded", "Partial", "VerificationFailed", "Failed", "Cancelled"] },
+    "lastSequence": { "type": "integer", "minimum": 0 },
+    "eventIds": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+  }
+}

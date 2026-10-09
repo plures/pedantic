@@ -66,6 +66,52 @@ enum ServiceKind {
     Health,
     /// Read bounded, redacted Chronos evidence.
     Evidence,
+    /// Submit a PX-governed remediation request for a recorded drift observation.
+    RemediationRequest {
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        revision_id: String,
+        #[arg(long)]
+        observation_id: String,
+        #[arg(long)]
+        actor_id: String,
+        #[arg(long)]
+        idempotency_key: String,
+    },
+    /// Record an explicit approval for a remediation request.
+    RemediationApprove {
+        #[arg(long)]
+        approval_id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        actor_id: String,
+        #[arg(long)]
+        approved: bool,
+    },
+    /// Issue a narrow local DSC-set authorization for a recorded approval.
+    EffectAuthorize {
+        #[arg(long)]
+        approval_id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        actor_id: String,
+        #[arg(long)]
+        approved: bool,
+    },
+    /// Execute an approved local DSC remediation using a configuration document.
+    RemediationExecute {
+        #[arg(long)]
+        execution_id: String,
+        #[arg(long)]
+        authorization_id: String,
+        #[arg(long)]
+        idempotency_key: String,
+        #[arg(long)]
+        file: String,
+    },
 }
 
 #[tokio::main]
@@ -123,6 +169,84 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let response = match kind {
                 ServiceKind::Health => query_service_health(&profile).await?,
                 ServiceKind::Evidence => query_service_evidence(&profile).await?,
+                ServiceKind::RemediationRequest {
+                    request_id,
+                    revision_id,
+                    observation_id,
+                    actor_id,
+                    idempotency_key,
+                } => {
+                    query_service(
+                        &profile,
+                        "remediation.request",
+                        request_id.clone(),
+                        serde_json::json!({
+                            "requestId": request_id,
+                            "revisionId": revision_id,
+                            "observationId": observation_id,
+                            "actorId": actor_id,
+                            "idempotencyKey": idempotency_key,
+                        }),
+                    )
+                    .await?
+                }
+                ServiceKind::RemediationApprove {
+                    approval_id,
+                    request_id,
+                    actor_id,
+                    approved,
+                } => {
+                    query_service(
+                        &profile,
+                        "approval.record",
+                        approval_id.clone(),
+                        serde_json::json!({
+                            "approvalId": approval_id,
+                            "requestId": request_id,
+                            "actorId": actor_id,
+                            "approved": approved,
+                        }),
+                    )
+                    .await?
+                }
+                ServiceKind::EffectAuthorize {
+                    approval_id,
+                    request_id,
+                    actor_id,
+                    approved,
+                } => {
+                    query_service(
+                        &profile,
+                        "effect.authorize",
+                        approval_id.clone(),
+                        serde_json::json!({
+                            "approvalId": approval_id,
+                            "requestId": request_id,
+                            "actorId": actor_id,
+                            "approved": approved,
+                        }),
+                    )
+                    .await?
+                }
+                ServiceKind::RemediationExecute {
+                    execution_id,
+                    authorization_id,
+                    idempotency_key,
+                    file,
+                } => {
+                    query_service(
+                        &profile,
+                        "remediation.execute",
+                        execution_id.clone(),
+                        serde_json::json!({
+                            "executionId": execution_id,
+                            "authorizationId": authorization_id,
+                            "idempotencyKey": idempotency_key,
+                            "document": fs::read_to_string(file)?,
+                        }),
+                    )
+                    .await?
+                }
             };
             if !response.ok {
                 let error = response
@@ -154,6 +278,18 @@ async fn query_service_evidence(
 ) -> Result<pedantic_service::LocalServiceResponse, Box<dyn std::error::Error>> {
     service_client(profile)?
         .list_evidence()
+        .await
+        .map_err(Into::into)
+}
+
+async fn query_service(
+    profile: &str,
+    method: &str,
+    id: String,
+    params: serde_json::Value,
+) -> Result<pedantic_service::LocalServiceResponse, Box<dyn std::error::Error>> {
+    service_client(profile)?
+        .call(id, method, params)
         .await
         .map_err(Into::into)
 }
@@ -215,5 +351,68 @@ mod tests {
             } => assert_eq!(profile, "Default"),
             _ => panic!("expected service evidence command"),
         }
+    }
+
+    #[test]
+    fn parses_the_guarded_remediation_execution_command() {
+        let cli = Cli::try_parse_from([
+            "pedantic",
+            "service",
+            "remediation-execute",
+            "--execution-id",
+            "execution-1",
+            "--authorization-id",
+            "approval-1",
+            "--idempotency-key",
+            "operation-1",
+            "--file",
+            "configuration.yaml",
+        ])
+        .expect("parse guarded remediation command");
+
+        match cli.command {
+            Commands::Service {
+                profile,
+                kind:
+                    ServiceKind::RemediationExecute {
+                        execution_id,
+                        authorization_id,
+                        idempotency_key,
+                        file,
+                    },
+            } => {
+                assert_eq!(profile, "default");
+                assert_eq!(execution_id, "execution-1");
+                assert_eq!(authorization_id, "approval-1");
+                assert_eq!(idempotency_key, "operation-1");
+                assert_eq!(file, "configuration.yaml");
+            }
+            _ => panic!("expected guarded remediation execution command"),
+        }
+    }
+
+    #[test]
+    fn parses_the_effect_authorization_command() {
+        let cli = Cli::try_parse_from([
+            "pedantic",
+            "service",
+            "effect-authorize",
+            "--approval-id",
+            "approval-1",
+            "--request-id",
+            "request-1",
+            "--actor-id",
+            "reviewer@example.test",
+            "--approved",
+        ])
+        .expect("parse effect authorization command");
+
+        assert!(matches!(
+            cli.command,
+            Commands::Service {
+                kind: ServiceKind::EffectAuthorize { .. },
+                ..
+            }
+        ));
     }
 }

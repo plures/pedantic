@@ -1,0 +1,18 @@
+[package]
+name = "pedantic-operation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Typed, deterministic durable-operation contracts and projections"
+
+[dependencies]
+base64.workspace = true
+ed25519-dalek.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+jsonschema = "0.18"

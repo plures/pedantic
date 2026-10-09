@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v1/agent-enrollment.schema.json",
+  "title": "Pedantic agent enrollment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "enrollmentId", "agentId", "targetId", "profileId", "publicKey", "issuedAt", "expiresAt"],
+  "properties": {
+    "schemaVersion": { "const": "pedantic.agent-enrollment.v1" }, "enrollmentId": { "type": "string", "minLength": 1 },
+    "agentId": { "type": "string", "minLength": 1 }, "targetId": { "type": "string", "minLength": 1 }, "profileId": { "type": "string", "minLength": 1 },
+    "publicKey": { "type": "string", "minLength": 1 }, "issuedAt": { "type": "integer", "minimum": 0 }, "expiresAt": { "type": "integer", "minimum": 1 },
+    "secretReferences": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

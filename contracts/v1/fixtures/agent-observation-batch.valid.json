@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "pedantic.agent-observation-batch.v1",
+  "batchId": "batch-1",
+  "agentId": "agent-1",
+  "targetId": "target-1",
+  "profileId": "default",
+  "firstSequence": 1,
+  "lastSequence": 1,
+  "observations": [
+    {
+      "schemaVersion": "pedantic.effect-observation.v1",
+      "eventId": "event-1",
+      "commandId": "command-1",
+      "operationId": "operation-1",
+      "stepId": "step-1",
+      "attemptId": "attempt-1",
+      "targetId": "target-1",
+      "agentId": "agent-1",
+      "sequence": 1,
+      "status": "completed",
+      "causationId": "cause-1",
+      "correlationId": "correlation-1",
+      "redactionClass": "metadata-only",
+      "diagnostics": [{ "code": "OUTPUT_REDACTED" }]
+    }
+  ],
+  "signature": {
+    "algorithm": "Ed25519",
+    "keyId": "agent-key-1",
+    "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  }
+}

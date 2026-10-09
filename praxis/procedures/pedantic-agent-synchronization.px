@@ -1,0 +1,28 @@
+# PX decides replay/gap handling while agents report immutable observations.
+
+entity AgentSynchronization:
+  prefix: "pedantic:agent-sync:"
+  fields:
+    agent_id: String
+    profile_id: String
+    batch_id: String
+    first_sequence: int
+    last_sequence: int
+    acknowledged_sequence: int
+    signature_algorithm: String
+    signing_key_id: String
+    payload_digest: String
+    signature: String
+    decision: String
+
+constraint agent_sync_requires_monotonic_batch:
+  scope: agent_synchronization
+  phase: admission
+  require: sync.agent_id != "" AND sync.profile_id != "" AND sync.batch_id != "" AND sync.first_sequence > 0 AND sync.last_sequence >= sync.first_sequence AND sync.acknowledged_sequence >= 0 AND sync.signature_algorithm == "Ed25519" AND sync.signing_key_id != "" AND sync.payload_digest != "" AND sync.signature != ""
+  severity: error
+  message: "Synchronization requires a bounded monotonic agent batch with a verifiable signature."
+
+procedure decide_agent_synchronization(sync: AgentSynchronization from "agent_synchronizations") -> AgentSynchronization into "agent_synchronizations":
+  given: "Request replay from the last acknowledgement when a sequence gap is observed"
+  evaluate_agent_synchronization sync -> $decision
+  return {agent_id: sync.agent_id, profile_id: sync.profile_id, batch_id: sync.batch_id, first_sequence: sync.first_sequence, last_sequence: sync.last_sequence, acknowledged_sequence: sync.acknowledged_sequence, signature_algorithm: sync.signature_algorithm, signing_key_id: sync.signing_key_id, payload_digest: sync.payload_digest, signature: sync.signature, decision: $decision.value}
