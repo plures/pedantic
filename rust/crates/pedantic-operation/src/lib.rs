@@ -2,6 +2,8 @@
 //! projection primitives. Policy decisions are deliberately represented as
 //! inputs from PX rather than reimplemented here.
 
+pub mod hyperv_transfer_plan;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,6 +14,7 @@ pub const OPERATION_EVENT_SCHEMA_VERSION: &str = "pedantic.operation-event.v1";
 pub const OPERATION_PROJECTION_SCHEMA_VERSION: &str = "pedantic.operation-projection.v1";
 pub const TRANSFER_REGISTRY_SCHEMA_VERSION: &str = "pedantic.transfer-registry.v1";
 pub const TRANSFER_REGISTRY_STORAGE_SCHEMA_VERSION: &str = "pedantic.transfer-registry-storage.v1";
+pub const TRANSFER_LAUNCH_SCHEMA_VERSION: &str = "pedantic.transfer-launch.v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -171,6 +174,81 @@ pub struct OperationPlan {
     pub steps: Vec<OperationStep>,
 }
 
+/// Immutable evidence captured before a transfer provider is allowed to run.
+///
+/// Values in this checkpoint are identities and digests only; credentials and
+/// provider input remain outside the durable operation record.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferLaunchCheckpoint {
+    pub schema_version: String,
+    pub operation_id: String,
+    pub plan_id: String,
+    pub plan_digest: String,
+    pub provider: String,
+    pub authorization_id: String,
+    pub authorization_digest: String,
+    pub approval_reference: String,
+    pub source_id: String,
+    pub target_id: String,
+    pub preflight_evidence: Vec<String>,
+    pub boot_identity: String,
+    pub idempotency_key: String,
+}
+
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum TransferLaunchError {
+    #[error("unsupported transfer-launch schema version: {0}")]
+    UnsupportedSchemaVersion(String),
+    #[error("transfer launch contains a missing identity or evidence reference")]
+    MissingIdentifier,
+    #[error("transfer launch plan or authorization digest is invalid")]
+    InvalidDigest,
+}
+
+impl TransferLaunchCheckpoint {
+    pub fn validate(&self) -> Result<(), TransferLaunchError> {
+        if self.schema_version != TRANSFER_LAUNCH_SCHEMA_VERSION {
+            return Err(TransferLaunchError::UnsupportedSchemaVersion(
+                self.schema_version.clone(),
+            ));
+        }
+        if [
+            &self.operation_id,
+            &self.plan_id,
+            &self.provider,
+            &self.authorization_id,
+            &self.approval_reference,
+            &self.source_id,
+            &self.target_id,
+            &self.boot_identity,
+            &self.idempotency_key,
+        ]
+        .iter()
+        .any(|value| value.is_empty())
+            || self.preflight_evidence.is_empty()
+            || self
+                .preflight_evidence
+                .iter()
+                .any(|evidence| evidence.is_empty())
+        {
+            return Err(TransferLaunchError::MissingIdentifier);
+        }
+        if !is_sha256_digest(&self.plan_digest) || !is_sha256_digest(&self.authorization_digest) {
+            return Err(TransferLaunchError::InvalidDigest);
+        }
+        Ok(())
+    }
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum PlanError {
     #[error("unsupported operation-plan schema version: {0}")]
@@ -307,6 +385,8 @@ pub enum OperationState {
     AwaitingReboot,
     NeedsReview,
     Succeeded,
+    Partial,
+    VerificationFailed,
     Failed,
     Cancelled,
 }
@@ -804,7 +884,7 @@ mod tests {
     use jsonschema::{Draft, JSONSchema};
     use serde_json::Value;
 
-    const CONTRACT_SCHEMA_SOURCES: [&str; 11] = [
+    const CONTRACT_SCHEMA_SOURCES: [&str; 12] = [
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../../contracts/v1/operation-plan.schema.json"
@@ -848,6 +928,10 @@ mod tests {
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../../contracts/v1/agent-observation-batch.schema.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/transfer-launch.schema.json"
         )),
     ];
 
@@ -1022,6 +1106,28 @@ mod tests {
             .apply(&succeeded)
             .expect("coordinator confirmed all steps");
         assert_eq!(projection.state, OperationState::Succeeded);
+    }
+
+    #[test]
+    fn projection_preserves_truthful_partial_and_verification_terminal_states() {
+        let mut projection = OperationProjection::requested("operation".into(), "profile".into());
+        let partial = OperationEvent {
+            event_type: "operation.partial".into(),
+            resulting_state: OperationState::Partial,
+            ..event("event-1", 1)
+        };
+        projection.apply(&partial).expect("partial event");
+        assert_eq!(projection.state, OperationState::Partial);
+
+        let verification_failed = OperationEvent {
+            event_type: "operation.verification_failed".into(),
+            resulting_state: OperationState::VerificationFailed,
+            ..event("event-2", 2)
+        };
+        projection
+            .apply(&verification_failed)
+            .expect("verification failure event");
+        assert_eq!(projection.state, OperationState::VerificationFailed);
     }
 
     fn event(event_id: &str, sequence: u64) -> OperationEvent {
@@ -1354,6 +1460,14 @@ mod tests {
                     "/../../../contracts/v1/fixtures/agent-observation-batch.valid.json"
                 )),
             ),
+            (
+                "transfer-launch",
+                CONTRACT_SCHEMA_SOURCES[11],
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../../contracts/v1/fixtures/transfer-launch.valid.json"
+                )),
+            ),
         ];
 
         for (name, schema_source, fixture_source) in contracts {
@@ -1496,6 +1610,35 @@ mod tests {
                 .apply(&missing_identity)
                 .expect_err("missing event identity"),
             ProjectionError::MissingIdentifier
+        );
+    }
+
+    #[test]
+    fn transfer_launch_requires_immutable_evidence_and_digests() {
+        let checkpoint: TransferLaunchCheckpoint = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/fixtures/transfer-launch.valid.json"
+        )))
+        .expect("valid transfer launch fixture");
+        checkpoint.validate().expect("valid launch");
+        assert!(schema_accepts(
+            CONTRACT_SCHEMA_SOURCES[11],
+            &serde_json::to_string(&checkpoint).expect("serialize transfer launch")
+        ));
+
+        let mut invalid = checkpoint.clone();
+        invalid.preflight_evidence.clear();
+        assert_eq!(
+            invalid.validate(),
+            Err(TransferLaunchError::MissingIdentifier)
+        );
+
+        let mut uppercase_digest = checkpoint;
+        uppercase_digest.plan_digest =
+            "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into();
+        assert_eq!(
+            uppercase_digest.validate(),
+            Err(TransferLaunchError::InvalidDigest)
         );
     }
 }

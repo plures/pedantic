@@ -8,7 +8,7 @@
   "properties": {
     "schemaVersion": { "const": "pedantic.operation-event.v1" },
     "eventId": { "$ref": "#/definitions/id" },
-    "eventType": { "enum": ["operation.requested", "operation.admitted", "operation.rejected", "operation.authorized", "operation.cancelled", "preparation.started", "preparation.completed", "step.offered", "step.leased", "step.started", "step.progressed", "step.heartbeat", "step.suspended", "step.resumed", "step.reboot_requested", "step.reboot_observed", "step.completed", "step.failed", "step.needs_review", "operation.succeeded", "operation.failed", "evidence.finalized"] },
+    "eventType": { "enum": ["operation.requested", "operation.admitted", "operation.rejected", "operation.authorized", "operation.cancelled", "preparation.started", "preparation.completed", "step.offered", "step.leased", "step.started", "step.progressed", "step.heartbeat", "step.suspended", "step.resumed", "step.reboot_requested", "step.reboot_observed", "step.completed", "step.failed", "step.verification_failed", "step.needs_review", "operation.succeeded", "operation.partial", "operation.verification_failed", "operation.failed", "evidence.finalized"] },
     "resultingState": { "$ref": "#/definitions/state" },
     "operationId": { "$ref": "#/definitions/id" },
     "planId": { "$ref": "#/definitions/id" },
@@ -28,6 +28,6 @@
   },
   "definitions": {
     "id": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "state": { "enum": ["Requested", "Admitted", "Authorized", "Preparing", "Prepared", "Queued", "Running", "Waiting", "AwaitingReboot", "NeedsReview", "Succeeded", "Failed", "Cancelled"] }
+    "state": { "enum": ["Requested", "Admitted", "Authorized", "Preparing", "Prepared", "Queued", "Running", "Waiting", "AwaitingReboot", "NeedsReview", "Succeeded", "Partial", "VerificationFailed", "Failed", "Cancelled"] }
   }
 }

@@ -4445,10 +4445,6 @@ function Copy-VMResource {
                                 -ComputerName $SourceHostName `
                                 -Path $sourceLayer.Path
                         }
-                        $additionalArguments = @()
-                        if ($effectiveTransport -eq 'Scp' -and $ScpIdentityFile) {
-                            $additionalArguments += @('-i', $ScpIdentityFile)
-                        }
                         $transferRequest = New-DurableTransferRequest `
                             -Source $sourceTransferPath `
                             -Destination $targetLayerPath `
@@ -4456,7 +4452,9 @@ function Copy-VMResource {
                             -RequireResume:($effectiveTransport -in @('Robocopy', 'Bits')) `
                             -CompletedBytesBefore $completedTransferBytes `
                             -OperationBytesTotal $totalTransferBytes `
-                            -AdditionalArgument $additionalArguments
+                            -SshKeyPath $(if ($effectiveTransport -eq 'Scp') {
+                                $ScpIdentityFile
+                            })
                         $metricsPath = Join-Path $TransactionRoot 'TransferMetrics.jsonl'
                         Invoke-DurableTransfer `
                             -Request $transferRequest `

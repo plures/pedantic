@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "pedantic.transfer-launch.v1",
+  "operationId": "operation-1",
+  "planId": "plan-1",
+  "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "provider": "transfer.filesystem/v1",
+  "authorizationId": "authorization-1",
+  "authorizationDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "approvalReference": "approval-1",
+  "sourceId": "artifact-1",
+  "targetId": "target-1",
+  "preflightEvidence": ["readiness-1"],
+  "bootIdentity": "boot-1",
+  "idempotencyKey": "transfer-1"
+}

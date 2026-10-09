@@ -9,7 +9,7 @@
     "schemaVersion": { "const": "pedantic.operation-projection.v1" },
     "operationId": { "type": "string", "minLength": 1 },
     "profileId": { "type": "string", "minLength": 1 },
-    "state": { "enum": ["Requested", "Admitted", "Authorized", "Preparing", "Prepared", "Queued", "Running", "Waiting", "AwaitingReboot", "NeedsReview", "Succeeded", "Failed", "Cancelled"] },
+    "state": { "enum": ["Requested", "Admitted", "Authorized", "Preparing", "Prepared", "Queued", "Running", "Waiting", "AwaitingReboot", "NeedsReview", "Succeeded", "Partial", "VerificationFailed", "Failed", "Cancelled"] },
     "lastSequence": { "type": "integer", "minimum": 0 },
     "eventIds": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
   }

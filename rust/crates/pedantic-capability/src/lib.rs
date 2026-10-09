@@ -34,6 +34,12 @@ pub trait Capability: Send + Sync {
     fn manifest(&self) -> &CapabilityManifest;
     fn readiness(&self, target_id: &str, agent_id: &str, observed_at: u64) -> CapabilityReadiness;
 
+    fn reconcile(&self, input: &Value) -> Result<Reconciliation, CapabilityError> {
+        validate_capability_value(self.manifest().input_schema.as_ref(), input)
+            .map_err(CapabilityError::InvalidInput)?;
+        self.reconcile_unchecked(input)
+    }
+
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
         validate_capability_value(self.manifest().input_schema.as_ref(), input)
             .map_err(CapabilityError::InvalidInput)?;
@@ -58,6 +64,12 @@ pub trait Capability: Send + Sync {
 
     fn execute_unchecked(&self, input: &Value) -> Result<Value, CapabilityError>;
 
+    fn reconcile_unchecked(&self, _input: &Value) -> Result<Reconciliation, CapabilityError> {
+        Err(CapabilityError::Execution(
+            "capability does not support state reconciliation".into(),
+        ))
+    }
+
     fn execute_unchecked_with_activity(
         &self,
         input: &Value,
@@ -65,6 +77,12 @@ pub trait Capability: Send + Sync {
     ) -> Result<Value, CapabilityError> {
         self.execute_unchecked(input)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Reconciliation {
+    RetrySafe,
+    Unsafe,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

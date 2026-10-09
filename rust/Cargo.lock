@@ -2159,6 +2159,7 @@ dependencies = [
 name = "pedantic-provider-pack"
 version = "0.10.0"
 dependencies = [
+ "base64 0.22.1",
  "pedantic-capability",
  "pedantic-operation",
  "serde_json",

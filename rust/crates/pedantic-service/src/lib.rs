@@ -14,7 +14,7 @@ use pedantic_operation::{
 use pluresdb::{CrdtStore, SledStorage, StorageEngine};
 use pluresdb_chronos::{ChronosAction, ChronosEntry, ChronosTimeline};
 use px_ast::{ConstraintDecl, Statement};
-use px_eval::{ConstraintOutcome, PureFunctionRegistry};
+use px_eval::{ConstraintOutcome, FunctionRegistry, PureFunctionRegistry};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -2723,6 +2723,30 @@ struct PxConstraintDecision {
     reason: String,
 }
 
+struct PedanticPxFunctionRegistry;
+
+impl FunctionRegistry for PedanticPxFunctionRegistry {
+    fn call(&self, name: &str, args: &[serde_json::Value]) -> Result<serde_json::Value, String> {
+        if name != "sha256" {
+            return PureFunctionRegistry.call(name, args);
+        }
+        if args.len() != 1 {
+            return Err("sha256: requires exactly one argument".into());
+        }
+        let document = args[0]
+            .as_str()
+            .ok_or_else(|| "sha256: argument must be a string".to_owned())?;
+        Ok(serde_json::Value::String(format!(
+            "sha256:{:x}",
+            Sha256::digest(document.as_bytes())
+        )))
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        name == "sha256" || PureFunctionRegistry.contains(name)
+    }
+}
+
 fn evaluate_configuration_constraint(
     operation: &str,
     constraint_name: &str,
@@ -2746,7 +2770,7 @@ fn evaluate_px_constraint(
     constraint: &ConstraintDecl,
     variables: &HashMap<String, serde_json::Value>,
 ) -> Result<PxConstraintDecision, ServiceErrorKind> {
-    let registry = PureFunctionRegistry;
+    let registry = PedanticPxFunctionRegistry;
     let outcome = px_eval::eval_constraint(constraint, variables, &registry).map_err(|error| {
         ServiceErrorKind::Foundation(format!("PX {operation} evaluation failed: {error}"))
     })?;
@@ -4024,6 +4048,52 @@ mod tests {
     use pedantic_operation::{OperationEvent, OperationState, TransferObservation};
     use std::sync::Arc;
     use url::Url;
+
+    #[test]
+    fn hyperv_plan_admission_rejects_a_document_with_a_stale_plan_id() {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../praxis/procedures/pedantic-hyperv-transfer-planning.px"
+        ));
+        let procedure = px_compiler::parse(source).expect("parse Hyper-V planning procedure");
+        let constraint = procedure
+            .statements
+            .iter()
+            .find_map(|statement| match statement {
+                Statement::Constraint(constraint)
+                    if constraint.name.name == "hyperv_transfer_plan_requires_complete_identity" =>
+                {
+                    Some(constraint)
+                }
+                _ => None,
+            })
+            .expect("find plan admission constraint");
+        let document = r#"{"inventory":[{"vmId":"vm-1"}]}"#;
+        let plan_id = format!("sha256:{:x}", Sha256::digest(document.as_bytes()));
+        let plan = |plan_document: &str| {
+            serde_json::json!({
+                "plan_id": plan_id,
+                "request_id": "request-1",
+                "profile_id": "profile-1",
+                "plan_document": plan_document,
+            })
+        };
+        let variables = HashMap::from([("plan".into(), plan(document))]);
+        let registry = PedanticPxFunctionRegistry;
+
+        assert_eq!(
+            px_eval::eval_constraint(constraint, &variables, &registry).unwrap(),
+            ConstraintOutcome::Satisfied
+        );
+        let replaced_document = HashMap::from([(
+            "plan".into(),
+            plan(r#"{"inventory":[{"vmId":"vm-2"}]}"#),
+        )]);
+        assert!(matches!(
+            px_eval::eval_constraint(constraint, &replaced_document, &registry).unwrap(),
+            ConstraintOutcome::Violated { .. }
+        ));
+    }
 
     struct ContractResolver {
         evidence_schema: Arc<serde_json::Value>,

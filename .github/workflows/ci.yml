@@ -165,7 +165,11 @@ jobs:
         run: npm run bundle
 
       - name: Validate package file list
-        run: npx --no-install vsce ls | tee vsix-files.txt
+        run: |
+          npx --no-install vsce ls | tee vsix-files.txt
+          grep -Fx 'bridge/bridge.ps1' vsix-files.txt
+          grep -Fx 'bridge/module/Pedantic.psd1' vsix-files.txt
+          grep -Fx 'bridge/module/Pedantic.psm1' vsix-files.txt
 
       - name: Package VSIX
         run: npm run package
@@ -176,6 +180,9 @@ jobs:
       - name: Assert VSIX contents and size
         run: |
           unzip -Z1 pedantic-dsc.vsix | tee vsix-archive-files.txt
+          grep -Fx 'extension/bridge/bridge.ps1' vsix-archive-files.txt
+          grep -Fx 'extension/bridge/module/Pedantic.psd1' vsix-archive-files.txt
+          grep -Fx 'extension/bridge/module/Pedantic.psm1' vsix-archive-files.txt
           ! grep -E '(^|/)(src|test|test-fixtures|dist-test)/|\.ts$|\.map$' vsix-archive-files.txt
           test "$(stat --printf='%s' pedantic-dsc.vsix)" -le 5242880
           du -h pedantic-dsc.vsix
