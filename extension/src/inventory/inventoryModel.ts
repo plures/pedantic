@@ -36,21 +36,3 @@ export interface Inventory {
   groups: HostGroup[];
   timestamp?: Date;
 }
-
-export interface ConfigPushTask {
-  hostName: string;
-  configPath: string;
-  status: 'pending' | 'running' | 'success' | 'failed';
-  progress: number;
-  startTime?: Date;
-  endTime?: Date;
-  error?: string;
-}
-
-export interface HostLog {
-  hostName: string;
-  timestamp: Date;
-  level: 'info' | 'warning' | 'error' | 'success';
-  message: string;
-  details?: any;
-}
