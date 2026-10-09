@@ -13,6 +13,7 @@ export class ResourceGraphPanel {
   private context: vscode.ExtensionContext;
   private currentDocument: any;
   private latestPayload: GraphPayload | undefined;
+  private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private ready = false;
   private disposed = false;
 
@@ -86,13 +87,25 @@ export class ResourceGraphPanel {
         }
       }
     }
-    
+
     this.postMessage({
       command: 'graphData', 
       nodes, 
       edges, 
       diagnostics
     });
+  }
+
+  scheduleRefresh(refresh: () => void, delay = 200): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+    }
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined;
+      if (!this.disposed) {
+        refresh();
+      }
+    }, delay);
   }
 
   private async revealNodeInEditor(nodeId: string) {
@@ -321,6 +334,10 @@ body { font-family: var(--vscode-font-family, Segoe UI, Arial, sans-serif); marg
 
   private dispose() {
     this.disposed = true;
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
     this.latestPayload = undefined;
     ResourceGraphPanel.instance = undefined;
     this.disposables.forEach(d => { try { d.dispose(); } catch { /* noop */ } });

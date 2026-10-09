@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { ExtensionContext, workspace } from 'vscode';
+import { ExtensionContext, window, workspace } from 'vscode';
 import {
   LanguageClient,
   LanguageClientOptions,
@@ -8,8 +8,29 @@ import {
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient | undefined;
+let stopping: { client: LanguageClient; promise: Promise<void> } | undefined;
 
-export function activateLanguageServer(context: ExtensionContext): void {
+function stopLanguageClient(activeClient: LanguageClient): Promise<void> {
+  if (client === activeClient) {
+    client = undefined;
+  }
+  if (stopping?.client === activeClient) {
+    return stopping.promise;
+  }
+  const promise = Promise.resolve().then(() => activeClient.stop());
+  stopping = { client: activeClient, promise };
+  void promise.then(
+    () => {
+      if (stopping?.promise === promise) stopping = undefined;
+    },
+    () => {
+      if (stopping?.promise === promise) stopping = undefined;
+    },
+  );
+  return promise;
+}
+
+export async function activateLanguageServer(context: ExtensionContext): Promise<void> {
   // The server is implemented in Node
   const serverModule = context.asAbsolutePath(
     path.join('dist', 'server', 'server.js')
@@ -30,6 +51,8 @@ export function activateLanguageServer(context: ExtensionContext): void {
   };
 
   // Options to control the language client
+  const fileEvents = workspace.createFileSystemWatcher('**/*.{simple.dsc.yaml,ssudo}');
+  context.subscriptions.push(fileEvents);
   const clientOptions: LanguageClientOptions = {
     // Register the server for Simple DSL and SudoLang files
     documentSelector: [
@@ -40,25 +63,52 @@ export function activateLanguageServer(context: ExtensionContext): void {
       // Synchronize the setting section 'pedantic' to the server
       configurationSection: 'pedantic',
       // Notify the server about file changes to DSC files
-      fileEvents: workspace.createFileSystemWatcher('**/*.{simple.dsc.yaml,ssudo}')
+      fileEvents
     }
   };
 
   // Create the language client and start the client
-  client = new LanguageClient(
+  const languageClient = new LanguageClient(
     'pedanticLanguageServer',
     'Pedantic Language Server',
     serverOptions,
     clientOptions
   );
 
-  // Start the client. This will also launch the server
-  client.start();
+  client = languageClient;
+  try {
+    await languageClient.start();
+  } catch (error) {
+    fileEvents.dispose();
+    try {
+      await stopLanguageClient(languageClient);
+    } catch {
+      // Startup errors are reported below.
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    window.showErrorMessage(`Pedantic: Language server failed to start: ${message}`);
+    throw error;
+  }
+
+  context.subscriptions.push({
+    dispose: () => {
+      if (client === languageClient) {
+        void deactivateLanguageServer().catch(error => {
+          const message = error instanceof Error ? error.message : String(error);
+          window.showErrorMessage(`Pedantic: Language server failed to stop: ${message}`);
+        });
+      }
+    }
+  });
 }
 
-export function deactivateLanguageServer(): Thenable<void> | undefined {
+export async function deactivateLanguageServer(): Promise<void> {
   if (!client) {
-    return undefined;
+    if (stopping) {
+      await stopping.promise;
+    }
+    return;
   }
-  return client.stop();
+  const activeClient = client;
+  await stopLanguageClient(activeClient);
 }
