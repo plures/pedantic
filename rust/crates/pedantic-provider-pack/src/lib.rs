@@ -515,22 +515,85 @@ Invoke-Command -ComputerName $env:PEDANTIC_HYPERV_HOST -ScriptBlock {
                 INVENTORY_SCRIPT,
             ])
             .output()
-            .map_err(|error| host_failure(host_name, error.to_string(), true))?;
+            .map_err(|error| {
+                classified_host_failure(
+                    host_name,
+                    error.to_string(),
+                    HostFailureCategory::HyperVUnavailable,
+                    false,
+                )
+            })?;
         if !output.status.success() {
-            return Err(host_failure(
+            return Err(classify_hyperv_failure(
                 host_name,
-                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-                true,
+                &String::from_utf8_lossy(&output.stderr),
             ));
         }
         parse_hyperv_inventory(host_name, &output.stdout)
     }
 }
 
-fn host_failure(host_name: &str, error: String, retryable: bool) -> HostQueryFailure {
+fn classify_hyperv_failure(host_name: &str, error: &str) -> HostQueryFailure {
+    let error = error.trim();
+    let error_lower = error.to_ascii_lowercase();
+    let (category, retryable) = if [
+        "access is denied",
+        "unauthorized",
+        "authentication",
+        "logon failure",
+        "credential",
+        "securityerror",
+    ]
+    .iter()
+    .any(|marker| error_lower.contains(marker))
+    {
+        (HostFailureCategory::Authentication, false)
+    } else if ["get-vm", "get-vhd", "hyper-v"]
+        .iter()
+        .any(|marker| error_lower.contains(marker))
+        && [
+            "not recognized",
+            "not installed",
+            "not available",
+            "cannot find",
+            "commandnotfound",
+        ]
+        .iter()
+        .any(|marker| error_lower.contains(marker))
+    {
+        (HostFailureCategory::HyperVUnavailable, false)
+    } else if [
+        "cannot connect",
+        "connection",
+        "timed out",
+        "timeout",
+        "winrm",
+        "wsman",
+        "rpc server is unavailable",
+        "network path",
+        "name resolution",
+        "unreachable",
+        "host not found",
+    ]
+    .iter()
+    .any(|marker| error_lower.contains(marker))
+    {
+        (HostFailureCategory::HostUnavailable, true)
+    } else {
+        (HostFailureCategory::HostUnavailable, false)
+    };
+    classified_host_failure(host_name, error.to_owned(), category, retryable)
+}
+
+fn classified_host_failure(
+    host_name: &str,
+    error: String,
+    category: HostFailureCategory,
+    retryable: bool,
+) -> HostQueryFailure {
     HostQueryFailure {
         host_name: host_name.into(),
-        category: HostFailureCategory::HostUnavailable,
+        category,
         error: if error.is_empty() {
             "Hyper-V inventory query failed".into()
         } else {
@@ -961,6 +1024,38 @@ mod tests {
             inventory.virtual_machines[0].hard_drives[0].differencing_chain,
             ["D:\\VMs\\vm-a\\base.vhdx"]
         );
+    }
+
+    #[test]
+    fn hyperv_query_failures_have_specific_categories_and_retryability() {
+        let authentication = classify_hyperv_failure("host", "Access is denied.");
+        assert_eq!(authentication.category, HostFailureCategory::Authentication);
+        assert!(!authentication.retryable);
+
+        let missing_hyperv = classify_hyperv_failure(
+            "host",
+            "Get-VM : The term 'Get-VM' is not recognized as a cmdlet.",
+        );
+        assert_eq!(
+            missing_hyperv.category,
+            HostFailureCategory::HyperVUnavailable
+        );
+        assert!(!missing_hyperv.retryable);
+
+        let unavailable_host =
+            classify_hyperv_failure("host", "The WinRM client cannot process the request.");
+        assert_eq!(
+            unavailable_host.category,
+            HostFailureCategory::HostUnavailable
+        );
+        assert!(unavailable_host.retryable);
+
+        let unknown_failure = classify_hyperv_failure("host", "Unexpected local failure.");
+        assert_eq!(
+            unknown_failure.category,
+            HostFailureCategory::HostUnavailable
+        );
+        assert!(!unknown_failure.retryable);
     }
 
     #[test]

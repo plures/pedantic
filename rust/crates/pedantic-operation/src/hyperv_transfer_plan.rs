@@ -425,11 +425,39 @@ mod tests {
             "/../../../contracts/v1/fixtures/hyperv-transfer-plan.five-pair.valid.json"
         )))
         .expect("fixture parses");
+        let generated = serde_json::to_value(create_hyperv_transfer_plan(&provider(), &request()))
+            .expect("planner result serializes");
         let compiled = JSONSchema::options()
             .with_draft(Draft::Draft7)
             .compile(&schema)
             .expect("schema compiles");
         assert!(compiled.is_valid(&fixture));
+        assert_eq!(fixture, generated);
+        assert!(compiled.is_valid(&generated));
+    }
+
+    #[test]
+    fn missing_request_identity_is_a_schema_valid_failure_result() {
+        let mut request = request();
+        request.request_id.clear();
+        let result = create_hyperv_transfer_plan(&provider(), &request);
+        let result = serde_json::to_value(result).expect("failure result serializes");
+        let schema = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/hyperv-transfer-plan-result.schema.json"
+        )))
+        .expect("schema parses");
+        let compiled = JSONSchema::options()
+            .with_draft(Draft::Draft7)
+            .compile(&schema)
+            .expect("schema compiles");
+
+        assert!(compiled.is_valid(&result));
+        assert_eq!(result["plan"], serde_json::Value::Null);
+        assert_eq!(
+            result["validationErrors"],
+            serde_json::json!(["missingRequestIdentity"])
+        );
     }
 
     #[test]

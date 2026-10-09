@@ -18,10 +18,65 @@
     },
     "validationErrors": {
       "type": "array",
-      "items": { "type": "object" }
+      "items": { "$ref": "#/definitions/validationError" }
     }
   },
   "definitions": {
+    "validationError": {
+      "oneOf": [
+        { "const": "missingRequestIdentity" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["duplicatePair"],
+          "properties": {
+            "duplicatePair": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["sourceHost", "sourceVmName", "targetHost", "targetVmName"],
+              "properties": {
+                "sourceHost": { "type": "string" },
+                "sourceVmName": { "type": "string" },
+                "targetHost": { "type": "string" },
+                "targetVmName": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["duplicateVmName"],
+          "properties": {
+            "duplicateVmName": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["hostName", "vmName"],
+              "properties": {
+                "hostName": { "type": "string" },
+                "vmName": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["missingPairVm"],
+          "properties": {
+            "missingPairVm": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["hostName", "vmName"],
+              "properties": {
+                "hostName": { "type": "string" },
+                "vmName": { "type": "string" }
+              }
+            }
+          }
+        }
+      ]
+    },
     "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
     "hostFailure": {
       "type": "object",
