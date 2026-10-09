@@ -33,15 +33,14 @@ export function activateLanguageServer(context: ExtensionContext): void {
   const clientOptions: LanguageClientOptions = {
     // Register the server for Simple DSL and SudoLang files
     documentSelector: [
-      { scheme: 'file', pattern: '**/*.simple.dsc.yaml' },
-      { scheme: 'file', pattern: '**/*.ssudo' },
-      { scheme: 'file', language: 'yaml' }
+      { scheme: 'file', language: 'pedantic-simple-dsc' },
+      { scheme: 'file', language: 'pedantic-sudolang' }
     ],
     synchronize: {
       // Synchronize the setting section 'pedantic' to the server
       configurationSection: 'pedantic',
       // Notify the server about file changes to DSC files
-      fileEvents: workspace.createFileSystemWatcher('**/*.{yaml,ssudo}')
+      fileEvents: workspace.createFileSystemWatcher('**/*.{simple.dsc.yaml,ssudo}')
     }
   };
 

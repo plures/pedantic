@@ -13,7 +13,8 @@ import {
   DocumentFormattingParams,
   TextEdit,
   CodeActionParams,
-  CodeAction
+  CodeAction,
+  CancellationToken
 } from 'vscode-languageserver/node';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -31,6 +32,11 @@ let hasWorkspaceFolderCapability = false;
 
 // Store diagnostics for code actions
 const documentDiagnostics = new Map<string, Diagnostic[]>();
+const validationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const validationGenerations = new Map<string, number>();
+const validationDebounceMs = 150;
+
+type Dialect = 'simple' | 'sudo';
 
 connection.onInitialize((params: InitializeParams) => {
   const capabilities = params.capabilities;
@@ -45,7 +51,7 @@ connection.onInitialize((params: InitializeParams) => {
 
   return {
     capabilities: {
-      textDocumentSync: TextDocumentSyncKind.Full,
+      textDocumentSync: TextDocumentSyncKind.Incremental,
       completionProvider: {
         triggerCharacters: ['.', ':']
       },
@@ -72,22 +78,64 @@ connection.onInitialized(() => {
   connection.console.log('Pedantic Language Server initialized');
 });
 
-// Validate document and publish diagnostics
-async function validateDocument(textDocument: TextDocument): Promise<void> {
-  const text = textDocument.getText();
-  const uri = textDocument.uri;
+function dialectForUri(uri: string): Dialect | undefined {
+  const path = decodeURIComponent(uri.replace(/^file:\/\//, ''));
+  if (path.endsWith('.simple.dsc.yaml')) {
+    return 'simple';
+  }
+  if (path.endsWith('.ssudo')) {
+    return 'sudo';
+  }
+  return undefined;
+}
 
-  // Detect dialect by file extension or content
-  const dialect = uri.endsWith('.ssudo') ? 'sudo' : 'simple';
+function isCurrentValidation(uri: string, version: number, generation: number): boolean {
+  return validationGenerations.get(uri) === generation && documents.get(uri)?.version === version;
+}
+
+function scheduleValidation(textDocument: TextDocument): void {
+  const uri = textDocument.uri;
+  if (!dialectForUri(uri)) {
+    return;
+  }
+
+  const generation = (validationGenerations.get(uri) ?? 0) + 1;
+  validationGenerations.set(uri, generation);
+  const timer = validationTimers.get(uri);
+  if (timer) {
+    clearTimeout(timer);
+  }
+  validationTimers.set(uri, setTimeout(() => {
+    validationTimers.delete(uri);
+    void validateDocument(uri, textDocument.version, generation);
+  }, validationDebounceMs));
+}
+
+async function validateDocument(uri: string, version: number, generation: number): Promise<void> {
+  const textDocument = documents.get(uri);
+  const dialect = dialectForUri(uri);
+  if (!textDocument || !dialect || !isCurrentValidation(uri, version, generation)) {
+    return;
+  }
+  const text = textDocument.getText();
 
   try {
     let parsed: any;
     if (dialect === 'sudo') {
       const { parseSudo } = await import('../dsl/sudoParser.js');
+      if (!isCurrentValidation(uri, version, generation)) {
+        return;
+      }
       parsed = parseSudo(text);
     } else {
       const { parseSimple } = await import('../dsl/simpleParser.js');
+      if (!isCurrentValidation(uri, version, generation)) {
+        return;
+      }
       parsed = parseSimple(text);
+    }
+    if (!isCurrentValidation(uri, version, generation)) {
+      return;
     }
 
     const diagnostics: Diagnostic[] = (parsed.doc?.diagnostics || []).map((d: any) => ({
@@ -104,8 +152,12 @@ async function validateDocument(textDocument: TextDocument): Promise<void> {
     // Store diagnostics for code actions
     documentDiagnostics.set(uri, diagnostics);
     connection.sendDiagnostics({ uri, diagnostics });
-  } catch (err: any) {
-    connection.console.error(`Error validating document: ${err.message}`);
+  } catch (err: unknown) {
+    if (!isCurrentValidation(uri, version, generation)) {
+      return;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    connection.console.error(`Error validating document: ${message}`);
     
     // Send a diagnostic for the parse error
     const diagnostics: Diagnostic[] = [{
@@ -114,7 +166,7 @@ async function validateDocument(textDocument: TextDocument): Promise<void> {
         start: { line: 0, character: 0 },
         end: { line: 0, character: 0 }
       },
-      message: `Parse error: ${err.message}`,
+      message: `Parse error: ${message}`,
       source: 'pedantic'
     }];
     
@@ -125,17 +177,29 @@ async function validateDocument(textDocument: TextDocument): Promise<void> {
 
 // Document change events
 documents.onDidChangeContent(change => {
-  validateDocument(change.document);
+  scheduleValidation(change.document);
 });
 
 documents.onDidOpen(change => {
-  validateDocument(change.document);
+  scheduleValidation(change.document);
+});
+
+documents.onDidClose(change => {
+  const uri = change.document.uri;
+  const timer = validationTimers.get(uri);
+  if (timer) {
+    clearTimeout(timer);
+    validationTimers.delete(uri);
+  }
+  validationGenerations.delete(uri);
+  documentDiagnostics.delete(uri);
+  connection.sendDiagnostics({ uri, diagnostics: [] });
 });
 
 // Completions provider
-connection.onCompletion((params: CompletionParams): CompletionItem[] => {
+connection.onCompletion((params: CompletionParams, token: CancellationToken): CompletionItem[] => {
   const document = documents.get(params.textDocument.uri);
-  if (!document) {
+  if (!document || !dialectForUri(document.uri) || token.isCancellationRequested) {
     return [];
   }
 
@@ -179,9 +243,9 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
 });
 
 // Document formatting provider
-connection.onDocumentFormatting(async (params: DocumentFormattingParams): Promise<TextEdit[]> => {
+connection.onDocumentFormatting(async (params: DocumentFormattingParams, token: CancellationToken): Promise<TextEdit[]> => {
   const document = documents.get(params.textDocument.uri);
-  if (!document) {
+  if (!document || !dialectForUri(document.uri)) {
     return [];
   }
 
@@ -195,7 +259,13 @@ connection.onDocumentFormatting(async (params: DocumentFormattingParams): Promis
 
   try {
     const { parseSimple } = await import('../dsl/simpleParser.js');
+    if (token.isCancellationRequested) {
+      return [];
+    }
     const parsed = parseSimple(text);
+    if (token.isCancellationRequested) {
+      return [];
+    }
     const formatted = formatSimpleDsl(parsed);
 
     // Return a single edit that replaces the entire document
@@ -208,21 +278,24 @@ connection.onDocumentFormatting(async (params: DocumentFormattingParams): Promis
         formatted
       )
     ];
-  } catch (err: any) {
-    connection.console.error(`Formatting error: ${err.message}`);
+  } catch (err: unknown) {
+    connection.console.error(`Formatting error: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 });
 
 // Code actions provider
-connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
+connection.onCodeAction((params: CodeActionParams, token: CancellationToken): CodeAction[] => {
   const document = documents.get(params.textDocument.uri);
-  if (!document) {
+  if (!document || !dialectForUri(document.uri) || token.isCancellationRequested) {
     return [];
   }
 
   const diagnostics = documentDiagnostics.get(params.textDocument.uri) || [];
   const documentText = document.getText();
+  if (token.isCancellationRequested) {
+    return [];
+  }
   
   // Get code actions based on diagnostics
   const actions = getCodeActions(diagnostics, documentText);
