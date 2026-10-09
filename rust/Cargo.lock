@@ -2061,7 +2061,7 @@ dependencies = [
 
 [[package]]
 name = "pedantic-agent"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -2077,7 +2077,7 @@ dependencies = [
 
 [[package]]
 name = "pedantic-capability"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "jsonschema",
  "pedantic-operation",
@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "pedantic-operation"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "jsonschema",
  "serde",
@@ -2157,8 +2157,9 @@ dependencies = [
 
 [[package]]
 name = "pedantic-provider-pack"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
+ "base64 0.22.1",
  "pedantic-capability",
  "pedantic-operation",
  "serde_json",
@@ -2196,7 +2197,7 @@ dependencies = [
 
 [[package]]
 name = "pedantic-transport"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2210,7 +2211,7 @@ dependencies = [
 
 [[package]]
 name = "pedantic-windows-agent"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "thiserror 2.0.18",
  "windows-sys 0.61.2",
