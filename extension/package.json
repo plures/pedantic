@@ -122,7 +122,7 @@
     "package": "npm run lint && npm test && vsce package --out pedantic-dsc.vsix",
     "lint": "eslint src test --max-warnings 0",
     "build": "npm run bundle",
-    "test": "npm run test:build && node --test dist-test/test/bridgeAssets.test.js dist-test/test/goldenTests.test.js dist-test/test/inventoryService.test.js dist-test/test/sudoParser.test.js dist-test/test/logic/dsl-logic.test.js dist-test/test/logic/praxis-core.test.js dist-test/test/logic/reactive-state.test.js",
+    "test": "npm run test:build && node --test dist-test/test/bridgeAssets.test.js dist-test/test/goldenTests.test.js dist-test/test/inventoryService.test.js dist-test/test/sudoParser.test.js dist-test/test/logic/dsl-logic.test.js dist-test/test/logic/praxis-core.test.js dist-test/test/logic/reactive-state.test.js dist-test/test/webviewProtocol.test.js",
     "test:vsix": "node test/extension-host/run.cjs",
     "test:build": "tsc -p tsconfig.test.json"
   },
