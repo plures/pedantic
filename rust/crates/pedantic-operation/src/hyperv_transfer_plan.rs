@@ -132,7 +132,6 @@ pub enum TransferPlanValidationError {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HyperVTransferPlanResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<HyperVTransferPlan>,
     #[serde(default)]
     pub host_failures: Vec<HostQueryFailure>,
