@@ -2,6 +2,8 @@
 //! projection primitives. Policy decisions are deliberately represented as
 //! inputs from PX rather than reimplemented here.
 
+pub mod hyperv_transfer_plan;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
