@@ -35,7 +35,7 @@ export class ResourceInventoryPanel {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [
-          vscode.Uri.file(path.join(context.extensionPath, 'node_modules', 'echarts', 'dist'))
+          vscode.Uri.file(path.join(context.extensionPath, 'dist', 'vendor'))
         ]
       }
     );
@@ -76,9 +76,8 @@ export class ResourceInventoryPanel {
   private getEChartsUri(): vscode.Uri {
     const echartsPath = path.join(
       this.context.extensionPath,
-      'node_modules',
-      'echarts',
       'dist',
+      'vendor',
       'echarts.min.js'
     );
     return (this.panel.webview as any).asWebviewUri(vscode.Uri.file(echartsPath));

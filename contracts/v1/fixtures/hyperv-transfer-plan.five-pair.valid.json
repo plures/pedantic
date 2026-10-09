@@ -1,0 +1,153 @@
+{
+  "hostFailures": [],
+  "plan": {
+    "pairs": [
+      {
+        "pairId": "sha256:245bfbd55f7c8ab2c14d662fcd8855183b7789956f758100560f0db2834e56e0",
+        "selectedTransport": "filesystem",
+        "source": {
+          "effectiveMacAddresses": ["00-15-5D-00-00-1"],
+          "hardDrives": [
+            {
+              "differencingChain": ["D:\\VMs\\source-1\\base.vhdx"],
+              "path": "D:\\VMs\\source-1\\disk.vhdx"
+            }
+          ],
+          "hostName": "source-host",
+          "name": "source-1",
+          "vmId": "1"
+        },
+        "target": {
+          "effectiveMacAddresses": ["00-15-5D-00-00-1"],
+          "hardDrives": [
+            {
+              "differencingChain": ["D:\\VMs\\target-1\\base.vhdx"],
+              "path": "D:\\VMs\\target-1\\disk.vhdx"
+            }
+          ],
+          "hostName": "target-host",
+          "name": "target-1",
+          "vmId": "1"
+        }
+      },
+      {
+        "pairId": "sha256:278fbde3ccf0ee08dec4be92ca6c6fd3ff28e3eddb042a6eeaf8cfbc77199437",
+        "selectedTransport": "filesystem",
+        "source": {
+          "effectiveMacAddresses": ["00-15-5D-00-00-5"],
+          "hardDrives": [
+            {
+              "differencingChain": ["D:\\VMs\\source-5\\base.vhdx"],
+              "path": "D:\\VMs\\source-5\\disk.vhdx"
+            }
+          ],
+          "hostName": "source-host",
+          "name": "source-5",
+          "vmId": "5"
+        },
+        "target": {
+          "effectiveMacAddresses": ["00-15-5D-00-00-5"],
+          "hardDrives": [
+            {
+              "differencingChain": ["D:\\VMs\\target-5\\base.vhdx"],
+              "path": "D:\\VMs\\target-5\\disk.vhdx"
+            }
+          ],
+          "hostName": "target-host",
+          "name": "target-5",
+          "vmId": "5"
+        }
+      },
+      {
+        "pairId": "sha256:342d9645d3910ac7460c52d58665b920445001530eeb752dd1828eec4ab14b78",
+        "selectedTransport": "filesystem",
+        "source": {
+          "effectiveMacAddresses": ["00-15-5D-00-00-3"],
+          "hardDrives": [
+            {
+              "differencingChain": ["D:\\VMs\\source-3\\base.vhdx"],
+              "path": "D:\\VMs\\source-3\\disk.vhdx"
+            }
+          ],
+          "hostName": "source-host",
+          "name": "source-3",
+          "vmId": "3"
+        },
+        "target": {
+          "effectiveMacAddresses": ["00-15-5D-00-00-3"],
+          "hardDrives": [
+            {
+              "differencingChain": ["D:\\VMs\\target-3\\base.vhdx"],
+              "path": "D:\\VMs\\target-3\\disk.vhdx"
+            }
+          ],
+          "hostName": "target-host",
+          "name": "target-3",
+          "vmId": "3"
+        }
+      },
+      {
+        "pairId": "sha256:9b9a91674be4017909e2171eb6a75e0f96554d972b8a10077d54d923b8b5254c",
+        "selectedTransport": "filesystem",
+        "source": {
+          "effectiveMacAddresses": ["00-15-5D-00-00-4"],
+          "hardDrives": [
+            {
+              "differencingChain": ["D:\\VMs\\source-4\\base.vhdx"],
+              "path": "D:\\VMs\\source-4\\disk.vhdx"
+            }
+          ],
+          "hostName": "source-host",
+          "name": "source-4",
+          "vmId": "4"
+        },
+        "target": {
+          "effectiveMacAddresses": ["00-15-5D-00-00-4"],
+          "hardDrives": [
+            {
+              "differencingChain": ["D:\\VMs\\target-4\\base.vhdx"],
+              "path": "D:\\VMs\\target-4\\disk.vhdx"
+            }
+          ],
+          "hostName": "target-host",
+          "name": "target-4",
+          "vmId": "4"
+        }
+      },
+      {
+        "pairId": "sha256:d8ce259043e62bf9a82ae2fe37edb403b35afe246e69ee641fbfca1d7e0024eb",
+        "selectedTransport": "filesystem",
+        "source": {
+          "effectiveMacAddresses": ["00-15-5D-00-00-2"],
+          "hardDrives": [
+            {
+              "differencingChain": ["D:\\VMs\\source-2\\base.vhdx"],
+              "path": "D:\\VMs\\source-2\\disk.vhdx"
+            }
+          ],
+          "hostName": "source-host",
+          "name": "source-2",
+          "vmId": "2"
+        },
+        "target": {
+          "effectiveMacAddresses": ["00-15-5D-00-00-2"],
+          "hardDrives": [
+            {
+              "differencingChain": ["D:\\VMs\\target-2\\base.vhdx"],
+              "path": "D:\\VMs\\target-2\\disk.vhdx"
+            }
+          ],
+          "hostName": "target-host",
+          "name": "target-2",
+          "vmId": "2"
+        }
+      }
+    ],
+    "planId": "sha256:c0554458f81439df656f8416da3eeb283fa800bec3568b2c9265549c7ccd9686",
+    "profileId": "default",
+    "requestId": "five-pair-request",
+    "schemaVersion": "pedantic.hyperv-transfer-plan.v1",
+    "selectedTransport": "filesystem"
+  },
+  "validationErrors": []
+}

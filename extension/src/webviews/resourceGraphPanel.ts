@@ -24,7 +24,7 @@ export class ResourceGraphPanel {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [
-          vscode.Uri.file(path.join(context.extensionPath, 'node_modules', 'echarts', 'dist'))
+          vscode.Uri.file(path.join(context.extensionPath, 'dist', 'vendor'))
         ]
       }
     );
@@ -130,9 +130,8 @@ export class ResourceGraphPanel {
   private getEChartsUri(): vscode.Uri {
     const echartsPath = path.join(
       this.context.extensionPath,
-      'node_modules',
-      'echarts',
       'dist',
+      'vendor',
       'echarts.min.js'
     );
     const fileUri = vscode.Uri.file(echartsPath);

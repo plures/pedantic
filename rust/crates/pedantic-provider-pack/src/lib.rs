@@ -1,21 +1,35 @@
 //! Production capability packs. PX authorizes these bounded effects; this
 //! crate only reports readiness and sanitized observations.
 
+#[cfg(windows)]
+use base64::Engine as _;
+#[cfg(windows)]
+use std::collections::BTreeSet;
 use pedantic_capability::{
-    Capability, CapabilityActivity, CapabilityError, CapabilityRegistry, validate_manifest,
-    validate_readiness,
+    validate_manifest, validate_readiness, Capability, CapabilityActivity, CapabilityError,
+    CapabilityRegistry,
+};
+use pedantic_operation::hyperv_transfer_plan::{
+    HostFailureCategory, HostQueryFailure, HyperVHardDrive, HyperVHostInventory,
+    HyperVInventoryProvider, HyperVVmInventory,
 };
 use pedantic_operation::{
     CapabilityManifest, CapabilityReadiness, Idempotency, RedactionClass, RetryClass, RiskClass,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 use std::process::Command;
+#[cfg(windows)]
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Instant;
+#[cfg(windows)]
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MANIFEST_VERSION: &str = "pedantic.capability-manifest.v1";
 const READINESS_VERSION: &str = "pedantic.capability-readiness.v1";
@@ -50,6 +64,494 @@ pub trait ProviderBackend: Send + Sync {
         self.execute(input)
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransferHostPreparationRequest {
+    pub target_host: String,
+    pub account: Option<String>,
+    pub require_openssh: bool,
+    pub require_bits: bool,
+    pub require_transfer_keys: bool,
+    pub transfer_key_paths: Vec<String>,
+    pub required_directories: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransferHostPreparationResult {
+    pub target_host: String,
+    pub account: Option<String>,
+    pub domain_controller: Option<String>,
+    pub ready: bool,
+    pub failure_category: Option<&'static str>,
+    pub remediation: Option<String>,
+    pub diagnostics: Vec<&'static str>,
+}
+
+impl TransferHostPreparationResult {
+    fn into_value(self) -> Value {
+        json!({
+            "targetHost": self.target_host,
+            "account": self.account,
+            "domainController": self.domain_controller,
+            "ready": self.ready,
+            "failureCategory": self.failure_category,
+            "remediation": self.remediation,
+            "diagnostics": self.diagnostics,
+        })
+    }
+}
+
+/// Bounded target-local effects for transfer-host preparation. The caller
+/// supplies every required feature and any PX-selected remediation identifier;
+/// the backend reports observations without making readiness policy decisions.
+pub trait TransferHostPreparationBackend: Send + Sync {
+    fn available(&self) -> Result<(), CapabilityError>;
+
+    fn prepare(
+        &self,
+        request: &TransferHostPreparationRequest,
+        remediation: Option<&str>,
+    ) -> Result<TransferHostPreparationResult, CapabilityError>;
+}
+
+pub struct TransferHostPreparation<B> {
+    backend: B,
+}
+
+impl<B: TransferHostPreparationBackend> TransferHostPreparation<B> {
+    pub fn new(backend: B) -> Self {
+        Self { backend }
+    }
+}
+
+impl<B: TransferHostPreparationBackend> ProviderBackend for TransferHostPreparation<B> {
+    fn ready(&self) -> Result<(), CapabilityError> {
+        self.backend.available()
+    }
+
+    fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
+        let request = TransferHostPreparationRequest {
+            target_host: required_string(input, "targetHost")?.into(),
+            account: input
+                .get("account")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(Into::into),
+            require_openssh: input
+                .get("requireOpenSsh")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            require_bits: input
+                .get("requireBits")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            require_transfer_keys: input
+                .get("requireTransferKeys")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            transfer_key_paths: input
+                .get("transferKeyPaths")
+                .and_then(Value::as_array)
+                .map(|values| string_array(values))
+                .transpose()?
+                .unwrap_or_default(),
+            required_directories: input
+                .get("requiredDirectories")
+                .and_then(Value::as_array)
+                .map(|values| string_array(values))
+                .transpose()?
+                .unwrap_or_default(),
+        };
+        let remediation = input.get("remediation").and_then(Value::as_str);
+        Ok(self.backend.prepare(&request, remediation)?.into_value())
+    }
+}
+
+pub struct WindowsTransferHostPreparation;
+
+impl TransferHostPreparationBackend for WindowsTransferHostPreparation {
+    fn available(&self) -> Result<(), CapabilityError> {
+        #[cfg(windows)]
+        {
+            return command_ready("powershell.exe", POWERSHELL_PROBE);
+        }
+        #[cfg(not(windows))]
+        {
+            Err(CapabilityError::Execution(
+                "Windows transfer-host preparation is unavailable on this platform".into(),
+            ))
+        }
+    }
+
+    fn prepare(
+        &self,
+        request: &TransferHostPreparationRequest,
+        remediation: Option<&str>,
+    ) -> Result<TransferHostPreparationResult, CapabilityError> {
+        #[cfg(windows)]
+        {
+            return run_windows_transfer_preparation(request, remediation);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (request, remediation);
+            Err(CapabilityError::Execution(
+                "Windows transfer-host preparation is unavailable on this platform".into(),
+            ))
+        }
+    }
+}
+
+#[cfg(windows)]
+struct TemporaryPreparationFiles {
+    directory: PathBuf,
+    task_name: String,
+}
+
+#[cfg(windows)]
+impl TemporaryPreparationFiles {
+    fn stop_task(&self) {
+        let _ = Command::new("schtasks.exe")
+            .args(["/End", "/TN", &self.task_name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        loop {
+            match preparation_task_state(&self.task_name) {
+                Some(PreparationTaskState::Missing) => {
+                    return;
+                }
+                Some(PreparationTaskState::Stopped) => {
+                    let _ = Command::new("schtasks.exe")
+                        .args(["/Delete", "/TN", &self.task_name, "/F"])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                    if matches!(
+                        preparation_task_state(&self.task_name),
+                        Some(PreparationTaskState::Missing)
+                    ) {
+                        return;
+                    }
+                }
+                Some(PreparationTaskState::Running) | None => {
+                    let _ = Command::new("schtasks.exe")
+                        .args(["/End", "/TN", &self.task_name])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+
+    fn cleanup(&self) {
+        self.stop_task();
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+#[cfg(windows)]
+impl Drop for TemporaryPreparationFiles {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+enum PreparationTaskState {
+    Missing,
+    Running,
+    Stopped,
+}
+
+#[cfg(windows)]
+fn powershell_output(script: &str) -> Option<String> {
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+#[cfg(windows)]
+fn preparation_task_state(task_name: &str) -> Option<PreparationTaskState> {
+    if !is_preparation_task_name(task_name) {
+        return None;
+    }
+    let script = format!(
+        "$task = Get-ScheduledTask -TaskName '{task_name}' -TaskPath '\\' -ErrorAction SilentlyContinue; \
+         if ($null -eq $task) {{ 'Missing' }} else {{ [string]$task.State }}"
+    );
+    match powershell_output(&script)?.as_str() {
+        "Missing" => Some(PreparationTaskState::Missing),
+        "Running" | "Queued" | "Unknown" => Some(PreparationTaskState::Running),
+        "Ready" | "Disabled" => Some(PreparationTaskState::Stopped),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn is_preparation_task_name(task_name: &str) -> bool {
+    task_name
+        .strip_prefix("PedanticTransferPreparation-")
+        .is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+        })
+}
+
+#[cfg(windows)]
+fn scavenge_stale_preparation_tasks() -> Result<(), CapabilityError> {
+    let task_names = loop {
+        if let Some(output) = powershell_output(
+            "Get-ScheduledTask -TaskPath '\\' | \
+             Where-Object { $_.TaskName -like 'PedanticTransferPreparation-*' } | \
+             ForEach-Object { $_.TaskName }",
+        ) {
+            break output;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    };
+    let mut stale_names: BTreeSet<String> = task_names
+        .lines()
+        .map(str::trim)
+        .filter(|name| is_preparation_task_name(name))
+        .map(str::to_owned)
+        .collect();
+    let temp_directory = std::env::temp_dir();
+    let entries = fs::read_dir(&temp_directory).map_err(|_| {
+        CapabilityError::Execution("preparation workspaces could not be inspected".into())
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|_| {
+            CapabilityError::Execution("preparation workspaces could not be inspected".into())
+        })?;
+        let file_name = entry.file_name();
+        if let Some(name) = file_name.to_str()
+            && is_preparation_task_name(name)
+        {
+            stale_names.insert(name.to_owned());
+        }
+    }
+    for task_name in stale_names {
+        TemporaryPreparationFiles {
+            directory: temp_directory.join(&task_name),
+            task_name,
+        }
+        .cleanup();
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn run_windows_transfer_preparation(
+    request: &TransferHostPreparationRequest,
+    remediation: Option<&str>,
+) -> Result<TransferHostPreparationResult, CapabilityError> {
+    scavenge_stale_preparation_tasks()?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| CapabilityError::Execution("system clock is unavailable".into()))?
+        .as_nanos();
+    let task_name = format!("PedanticTransferPreparation-{nonce}");
+    let directory = std::env::temp_dir().join(&task_name);
+    fs::create_dir(&directory).map_err(|_| {
+        CapabilityError::Execution("preparation workspace could not be created".into())
+    })?;
+    let temporary = TemporaryPreparationFiles {
+        directory: directory.clone(),
+        task_name: task_name.clone(),
+    };
+    let plan = json!({
+        "targetHost": request.target_host,
+        "account": request.account,
+        "requireOpenSsh": request.require_openssh,
+        "requireBits": request.require_bits,
+        "requireTransferKeys": request.require_transfer_keys,
+        "transferKeyPaths": request.transfer_key_paths,
+        "requiredDirectories": request.required_directories,
+        "remediation": remediation,
+    });
+    let encoded_plan = base64::engine::general_purpose::STANDARD
+        .encode(serde_json::to_vec(&plan).expect("transfer preparation plan is serializable"));
+    let script_path = temporary.directory.join("prepare.ps1");
+    let result_path = temporary.directory.join("result.json");
+    fs::write(&script_path, WINDOWS_TRANSFER_PREPARATION_SCRIPT).map_err(|_| {
+        CapabilityError::Execution("preparation script could not be written".into())
+    })?;
+    let task_command = format!(
+        "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{}\" -Plan \"{}\" -Result \"{}\"",
+        script_path.display(),
+        encoded_plan,
+        result_path.display()
+    );
+    let created = Command::new("schtasks.exe")
+        .args([
+            "/Create",
+            "/TN",
+            &temporary.task_name,
+            "/SC",
+            "ONCE",
+            "/ST",
+            "00:00",
+            "/RU",
+            "SYSTEM",
+            "/RL",
+            "HIGHEST",
+            "/Z",
+            "/TR",
+            &task_command,
+            "/F",
+        ])
+        .status()
+        .map_err(|_| {
+            CapabilityError::Execution("target-local SYSTEM task could not be created".into())
+        })?;
+    if !created.success() {
+        return Err(CapabilityError::Execution(
+            "target-local SYSTEM task could not be created".into(),
+        ));
+    }
+    let started = Command::new("schtasks.exe")
+        .args(["/Run", "/TN", &temporary.task_name])
+        .status()
+        .map_err(|_| {
+            CapabilityError::Execution("target-local SYSTEM task could not start".into())
+        })?;
+    if !started.success() {
+        return Err(CapabilityError::Execution(
+            "target-local SYSTEM task could not start".into(),
+        ));
+    }
+    for _ in 0..120 {
+        if result_path.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    if !result_path.exists() {
+        temporary.cleanup();
+        return Err(CapabilityError::Execution(
+            "target-local SYSTEM task did not report a result".into(),
+        ));
+    }
+    temporary.stop_task();
+    let result_bytes = fs::read(&result_path).map_err(|_| {
+        CapabilityError::Execution("target-local SYSTEM task did not report a result".into())
+    })?;
+    temporary.cleanup();
+    let result: Value = serde_json::from_slice(&result_bytes)
+        .map_err(|_| CapabilityError::Execution("target-local SYSTEM result was invalid".into()))?;
+    let failure_category = result
+        .get("failureCategory")
+        .and_then(Value::as_str)
+        .and_then(transfer_failure_category);
+    Ok(TransferHostPreparationResult {
+        target_host: result
+            .get("targetHost")
+            .and_then(Value::as_str)
+            .unwrap_or(&request.target_host)
+            .into(),
+        account: result
+            .get("account")
+            .and_then(Value::as_str)
+            .map(Into::into),
+        domain_controller: result
+            .get("domainController")
+            .and_then(Value::as_str)
+            .map(Into::into),
+        ready: result
+            .get("ready")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        failure_category,
+        remediation: result
+            .get("remediation")
+            .and_then(Value::as_str)
+            .map(Into::into),
+        diagnostics: result
+            .get("diagnostics")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter_map(transfer_diagnostic)
+            .collect(),
+    })
+}
+
+#[cfg(windows)]
+fn transfer_failure_category(value: &str) -> Option<&'static str> {
+    match value {
+        "ad_tooling_missing" => Some("ad_tooling_missing"),
+        "domain_connectivity_failed" => Some("domain_connectivity_failed"),
+        "gmsa_authorization_denied" => Some("gmsa_authorization_denied"),
+        "prerequisite_failed" => Some("prerequisite_failed"),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn transfer_diagnostic(value: &str) -> Option<&'static str> {
+    match value {
+        "openssh_ready"
+        | "bits_ready"
+        | "transfer_keys_ready"
+        | "directories_ready"
+        | "gmsa_ready"
+        | "system_kerberos_refreshed" => Some(match value {
+            "openssh_ready" => "openssh_ready",
+            "bits_ready" => "bits_ready",
+            "transfer_keys_ready" => "transfer_keys_ready",
+            "directories_ready" => "directories_ready",
+            "gmsa_ready" => "gmsa_ready",
+            _ => "system_kerberos_refreshed",
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+const WINDOWS_TRANSFER_PREPARATION_SCRIPT: &str = r#"
+param([string]$Plan, [string]$Result)
+$plan = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Plan)) | ConvertFrom-Json
+$outcome = @{ targetHost = $plan.targetHost; account = $plan.account; domainController = $null; ready = $false; failureCategory = "prerequisite_failed"; remediation = $plan.remediation; diagnostics = @() }
+try {
+  foreach ($directory in @($plan.requiredDirectories)) { New-Item -ItemType Directory -Force -Path $directory -ErrorAction Stop | Out-Null }
+  if (@($plan.requiredDirectories).Count -gt 0) { $outcome.diagnostics += "directories_ready" }
+  if ($plan.requireOpenSsh) {
+    foreach ($capability in "OpenSSH.Client~~~~0.0.1.0", "OpenSSH.Server~~~~0.0.1.0") {
+      if ((Get-WindowsCapability -Online -Name $capability -ErrorAction Stop).State -ne "Installed") { Add-WindowsCapability -Online -Name $capability -ErrorAction Stop | Out-Null }
+    }
+    Set-Service -Name sshd -StartupType Automatic -ErrorAction Stop
+    Start-Service -Name sshd -ErrorAction Stop
+    Get-Command ssh, scp -ErrorAction Stop | Out-Null
+    $outcome.diagnostics += "openssh_ready"
+  }
+  if ($plan.requireBits) { Set-Service -Name BITS -StartupType Automatic -ErrorAction Stop; Start-Service -Name BITS -ErrorAction Stop; $outcome.diagnostics += "bits_ready" }
+  if ($plan.requireTransferKeys) {
+    if (@($plan.transferKeyPaths).Count -eq 0) { throw "transfer key paths are required" }
+    foreach ($path in @($plan.transferKeyPaths)) { if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "transfer key is unavailable" } }
+    $outcome.diagnostics += "transfer_keys_ready"
+  }
+  if ($plan.account) {
+    if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) { $outcome.failureCategory = "ad_tooling_missing"; throw "AD tooling unavailable" }
+    Import-Module ActiveDirectory -ErrorAction Stop
+    try { $outcome.domainController = (Get-ADDomainController -Discover -ErrorAction Stop).HostName } catch { $outcome.failureCategory = "domain_connectivity_failed"; throw }
+    try { Install-ADServiceAccount -Identity $plan.account -ErrorAction Stop; if (-not (Test-ADServiceAccount -Identity $plan.account -ErrorAction Stop)) { throw "gMSA test failed" } } catch { $outcome.failureCategory = "gmsa_authorization_denied"; throw }
+    & klist purge -li 0x3e7 | Out-Null
+    $outcome.diagnostics += "gmsa_ready", "system_kerberos_refreshed"
+  }
+  $outcome.ready = $true
+} catch {}
+[IO.File]::WriteAllText($Result, ($outcome | ConvertTo-Json -Compress), [Text.Encoding]::UTF8)
+"#;
 
 pub struct Provider<B> {
     manifest: CapabilityManifest,
@@ -139,6 +641,11 @@ pub fn production_providers() -> Vec<Arc<dyn Capability>> {
         Arc::new(Provider::new(
             transfer_manifest(),
             FilesystemTransfer,
+            vec![],
+        )),
+        Arc::new(Provider::new(
+            transfer_host_preparation_manifest(),
+            TransferHostPreparation::new(WindowsTransferHostPreparation),
             vec![],
         )),
         Arc::new(Provider::new(package_manifest(), WindowsPackage, vec![])),
@@ -467,6 +974,232 @@ impl ProviderBackend for HyperV {
     }
 }
 
+/// Read-only Hyper-V inventory adapter used by transfer planning. It reports
+/// raw host observations and leaves all planning and policy decisions to PX.
+pub struct HyperVInventory;
+
+impl HyperVInventoryProvider for HyperVInventory {
+    fn query_host(&self, host_name: &str) -> Result<HyperVHostInventory, HostQueryFailure> {
+        const INVENTORY_SCRIPT: &str = r#"
+Invoke-Command -ComputerName $env:PEDANTIC_HYPERV_HOST -ScriptBlock {
+    function Get-DifferencingChain([string]$Path) {
+        $chain = @()
+        $vhd = Get-VHD -Path $Path -ErrorAction Stop
+        while ($vhd.VhdType -eq 'Differencing' -and $vhd.ParentPath) {
+            $chain += $vhd.ParentPath
+            $vhd = Get-VHD -Path $vhd.ParentPath -ErrorAction Stop
+        }
+        return $chain
+    }
+    ConvertTo-Json -InputObject @(
+        Get-VM -ErrorAction Stop | ForEach-Object {
+            $vm = $_
+            [pscustomobject]@{
+                name = $vm.Name
+                vmId = $vm.Id.Guid
+                effectiveMacAddresses = @(Get-VMNetworkAdapter -VM $vm -ErrorAction Stop | ForEach-Object { $_.MacAddress })
+                hardDrives = @(Get-VMHardDiskDrive -VM $vm -ErrorAction Stop | ForEach-Object {
+                    [pscustomobject]@{
+                        path = $_.Path
+                        differencingChain = @(Get-DifferencingChain $_.Path)
+                    }
+                })
+            }
+        }
+    ) -Compress -Depth 8
+}
+"#;
+        let output = Command::new("powershell.exe")
+            .env("PEDANTIC_HYPERV_HOST", host_name)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                INVENTORY_SCRIPT,
+            ])
+            .output()
+            .map_err(|error| {
+                classified_host_failure(
+                    host_name,
+                    error.to_string(),
+                    HostFailureCategory::HyperVUnavailable,
+                    false,
+                )
+            })?;
+        if !output.status.success() {
+            return Err(classify_hyperv_failure(
+                host_name,
+                &String::from_utf8_lossy(&output.stderr),
+            ));
+        }
+        parse_hyperv_inventory(host_name, &output.stdout)
+    }
+}
+
+fn classify_hyperv_failure(host_name: &str, error: &str) -> HostQueryFailure {
+    let error = error.trim();
+    let error_lower = error.to_ascii_lowercase();
+    let (category, retryable) = if [
+        "access is denied",
+        "unauthorized",
+        "authentication",
+        "logon failure",
+        "credential",
+        "securityerror",
+    ]
+    .iter()
+    .any(|marker| error_lower.contains(marker))
+    {
+        (HostFailureCategory::Authentication, false)
+    } else if ["get-vm", "get-vhd", "hyper-v"]
+        .iter()
+        .any(|marker| error_lower.contains(marker))
+        && [
+            "not recognized",
+            "not installed",
+            "not available",
+            "cannot find",
+            "commandnotfound",
+        ]
+        .iter()
+        .any(|marker| error_lower.contains(marker))
+    {
+        (HostFailureCategory::HyperVUnavailable, false)
+    } else if [
+        "cannot connect",
+        "connection",
+        "timed out",
+        "timeout",
+        "winrm",
+        "wsman",
+        "rpc server is unavailable",
+        "network path",
+        "name resolution",
+        "unreachable",
+        "host not found",
+    ]
+    .iter()
+    .any(|marker| error_lower.contains(marker))
+    {
+        (HostFailureCategory::HostUnavailable, true)
+    } else {
+        (HostFailureCategory::HostUnavailable, false)
+    };
+    classified_host_failure(host_name, error.to_owned(), category, retryable)
+}
+
+fn classified_host_failure(
+    host_name: &str,
+    error: String,
+    category: HostFailureCategory,
+    retryable: bool,
+) -> HostQueryFailure {
+    HostQueryFailure {
+        host_name: host_name.into(),
+        category,
+        error: if error.is_empty() {
+            "Hyper-V inventory query failed".into()
+        } else {
+            error
+        },
+        retryable,
+    }
+}
+
+fn parse_hyperv_inventory(
+    host_name: &str,
+    output: &[u8],
+) -> Result<HyperVHostInventory, HostQueryFailure> {
+    let value: Value = serde_json::from_slice(output).map_err(|error| HostQueryFailure {
+        host_name: host_name.into(),
+        category: HostFailureCategory::InvalidResponse,
+        error: format!("Hyper-V inventory response was not valid JSON: {error}"),
+        retryable: false,
+    })?;
+    let vms = match value {
+        Value::Null => Vec::new(),
+        Value::Array(vms) => vms,
+        vm => vec![vm],
+    };
+    let virtual_machines = vms
+        .into_iter()
+        .map(|vm| parse_hyperv_vm(host_name, vm))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(HyperVHostInventory {
+        host_name: host_name.into(),
+        virtual_machines,
+    })
+}
+
+fn parse_hyperv_vm(host_name: &str, vm: Value) -> Result<HyperVVmInventory, HostQueryFailure> {
+    let object = vm
+        .as_object()
+        .ok_or_else(|| invalid_inventory(host_name, "VM is not an object"))?;
+    let name = json_string(object, "name", host_name)?;
+    let vm_id = json_string(object, "vmId", host_name)?;
+    let effective_mac_addresses = json_string_array(object, "effectiveMacAddresses", host_name)?;
+    let hard_drives = object
+        .get("hardDrives")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_inventory(host_name, "VM hardDrives is not an array"))?
+        .iter()
+        .map(|drive| {
+            let drive = drive
+                .as_object()
+                .ok_or_else(|| invalid_inventory(host_name, "hard drive is not an object"))?;
+            Ok(HyperVHardDrive {
+                path: json_string(drive, "path", host_name)?,
+                differencing_chain: json_string_array(drive, "differencingChain", host_name)?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(HyperVVmInventory {
+        name,
+        vm_id,
+        effective_mac_addresses,
+        hard_drives,
+    })
+}
+
+fn json_string(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    host_name: &str,
+) -> Result<String, HostQueryFailure> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| invalid_inventory(host_name, &format!("{field} is not a string")))
+}
+
+fn json_string_array(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    host_name: &str,
+) -> Result<Vec<String>, HostQueryFailure> {
+    object
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_inventory(host_name, &format!("{field} is not an array")))?
+        .iter()
+        .map(|value| {
+            value.as_str().map(ToString::to_string).ok_or_else(|| {
+                invalid_inventory(host_name, &format!("{field} contains a non-string"))
+            })
+        })
+        .collect()
+}
+
+fn invalid_inventory(host_name: &str, error: &str) -> HostQueryFailure {
+    HostQueryFailure {
+        host_name: host_name.into(),
+        category: HostFailureCategory::InvalidResponse,
+        error: format!("Hyper-V inventory response is invalid: {error}"),
+        retryable: false,
+    }
+}
+
 fn command_ready(program: &str, arguments: &[&str]) -> Result<(), CapabilityError> {
     Command::new(program)
         .args(arguments)
@@ -509,6 +1242,15 @@ fn required_string<'a>(input: &'a Value, property: &str) -> Result<&'a str, Capa
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| CapabilityError::InvalidInput(format!("{property} is required")))
+}
+
+fn string_array(values: &[Value]) -> Result<Vec<String>, CapabilityError> {
+    values
+        .iter()
+        .map(Value::as_str)
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| CapabilityError::InvalidInput("array values must be strings".into()))
+        .map(|values| values.into_iter().map(Into::into).collect())
 }
 
 fn enum_value<'a>(
@@ -705,6 +1447,30 @@ fn transfer_manifest() -> CapabilityManifest {
     )
 }
 
+fn transfer_host_preparation_manifest() -> CapabilityManifest {
+    manifest(
+        "transfer.host-prepare",
+        RiskClass::High,
+        RetryClass::SafeAfterObservation,
+        Idempotency::ObservationRequired,
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["targetHost"],
+            "properties": {
+                "targetHost": {"type": "string", "minLength": 1},
+                "account": {"type": "string", "minLength": 1},
+                "requireOpenSsh": {"type": "boolean"},
+                "requireBits": {"type": "boolean"},
+                "requireTransferKeys": {"type": "boolean"},
+                "transferKeyPaths": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                "requiredDirectories": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                "remediation": {"type": "string", "minLength": 1}
+            }
+        }),
+    )
+}
+
 fn package_manifest() -> CapabilityManifest {
     manifest(
         "package.manage",
@@ -774,6 +1540,61 @@ mod tests {
     }
 
     #[test]
+    fn hyperv_inventory_parses_vm_evidence_without_policy() {
+        let inventory = parse_hyperv_inventory(
+            "hyperv-a",
+            br#"[{
+                "name":"vm-a",
+                "vmId":"vm-id-a",
+                "effectiveMacAddresses":["00155D000001"],
+                "hardDrives":[{
+                    "path":"D:\\VMs\\vm-a\\disk.avhdx",
+                    "differencingChain":["D:\\VMs\\vm-a\\base.vhdx"]
+                }]
+            }]"#,
+        )
+        .expect("valid inventory");
+        assert_eq!(inventory.host_name, "hyperv-a");
+        assert_eq!(inventory.virtual_machines[0].vm_id, "vm-id-a");
+        assert_eq!(
+            inventory.virtual_machines[0].hard_drives[0].differencing_chain,
+            ["D:\\VMs\\vm-a\\base.vhdx"]
+        );
+    }
+
+    #[test]
+    fn hyperv_query_failures_have_specific_categories_and_retryability() {
+        let authentication = classify_hyperv_failure("host", "Access is denied.");
+        assert_eq!(authentication.category, HostFailureCategory::Authentication);
+        assert!(!authentication.retryable);
+
+        let missing_hyperv = classify_hyperv_failure(
+            "host",
+            "Get-VM : The term 'Get-VM' is not recognized as a cmdlet.",
+        );
+        assert_eq!(
+            missing_hyperv.category,
+            HostFailureCategory::HyperVUnavailable
+        );
+        assert!(!missing_hyperv.retryable);
+
+        let unavailable_host =
+            classify_hyperv_failure("host", "The WinRM client cannot process the request.");
+        assert_eq!(
+            unavailable_host.category,
+            HostFailureCategory::HostUnavailable
+        );
+        assert!(unavailable_host.retryable);
+
+        let unknown_failure = classify_hyperv_failure("host", "Unexpected local failure.");
+        assert_eq!(
+            unknown_failure.category,
+            HostFailureCategory::HostUnavailable
+        );
+        assert!(!unknown_failure.retryable);
+    }
+
+    #[test]
     fn transfer_is_idempotent_and_reports_monotonic_observations() {
         let directory = tempdir().unwrap();
         let source = directory.path().join("source");
@@ -797,11 +1618,9 @@ mod tests {
         assert!(first["currentThroughputBps"].as_u64().unwrap() > 0);
         assert!(first["averageThroughputBps"].as_u64().unwrap() > 0);
         assert_eq!(second["retryCount"], 0);
-        assert!(
-            activity
-                .iter()
-                .any(|event| event.event == "step.progressed")
-        );
+        assert!(activity
+            .iter()
+            .any(|event| event.event == "step.progressed"));
     }
 
     #[test]
@@ -923,16 +1742,12 @@ mod tests {
         assert_eq!(WINGET_PROBE, &["--version"]);
         assert_eq!(DISM_PROBE, &["/English", "/?"]);
         assert!(POWERSHELL_PROBE.contains(&&"$PSVersionTable.PSVersion.Major"));
-        assert!(
-            HYPERV_PROBE
-                .iter()
-                .any(|argument| argument.contains("Get-Command Start-VM"))
-        );
-        assert!(
-            HYPERV_PROBE
-                .iter()
-                .any(|argument| argument.contains("Checkpoint-VM"))
-        );
+        assert!(HYPERV_PROBE
+            .iter()
+            .any(|argument| argument.contains("Get-Command Start-VM")));
+        assert!(HYPERV_PROBE
+            .iter()
+            .any(|argument| argument.contains("Checkpoint-VM")));
     }
 
     #[test]
@@ -942,5 +1757,131 @@ mod tests {
         let different_output = observed_output_digest(Some(0), b"no change\n", b"");
         assert_eq!(first, same_normalized_output);
         assert_ne!(first, different_output);
+    }
+
+    struct PreparationBackend {
+        result: TransferHostPreparationResult,
+        requests: std::sync::Mutex<Vec<TransferHostPreparationRequest>>,
+    }
+
+    impl TransferHostPreparationBackend for PreparationBackend {
+        fn available(&self) -> Result<(), CapabilityError> {
+            Ok(())
+        }
+
+        fn prepare(
+            &self,
+            request: &TransferHostPreparationRequest,
+            remediation: Option<&str>,
+        ) -> Result<TransferHostPreparationResult, CapabilityError> {
+            self.requests.lock().unwrap().push(request.clone());
+            let mut result = self.result.clone();
+            result.remediation = remediation.map(Into::into);
+            Ok(result)
+        }
+    }
+
+    fn preparation_result(
+        ready: bool,
+        failure_category: Option<&'static str>,
+    ) -> TransferHostPreparationResult {
+        TransferHostPreparationResult {
+            target_host: "target".into(),
+            account: Some("TRANSFER$".into()),
+            domain_controller: Some("dc.example.test".into()),
+            ready,
+            failure_category,
+            remediation: None,
+            diagnostics: vec!["gmsa_ready", "system_kerberos_refreshed"],
+        }
+    }
+
+    #[test]
+    fn preparation_reports_missing_ad_tooling_without_marking_the_target_ready() {
+        let backend = PreparationBackend {
+            result: preparation_result(false, Some("ad_tooling_missing")),
+            requests: std::sync::Mutex::new(vec![]),
+        };
+        let provider = TransferHostPreparation::new(backend);
+
+        let observation = provider
+            .execute(&json!({"targetHost": "target", "account": "TRANSFER$"}))
+            .unwrap();
+
+        assert_eq!(observation["ready"], false);
+        assert_eq!(observation["failureCategory"], "ad_tooling_missing");
+        assert!(observation.get("rawOutput").is_none());
+    }
+
+    #[test]
+    fn preparation_preserves_distinct_domain_and_authorization_failures() {
+        for category in ["domain_connectivity_failed", "gmsa_authorization_denied"] {
+            let backend = PreparationBackend {
+                result: preparation_result(false, Some(category)),
+                requests: std::sync::Mutex::new(vec![]),
+            };
+            let provider = TransferHostPreparation::new(backend);
+            let observation = provider.execute(&json!({"targetHost": "target"})).unwrap();
+            assert_eq!(observation["ready"], false);
+            assert_eq!(observation["failureCategory"], category);
+        }
+    }
+
+    #[test]
+    fn preparation_runs_only_the_authorized_prerequisites_and_can_retry() {
+        let backend = PreparationBackend {
+            result: preparation_result(true, None),
+            requests: std::sync::Mutex::new(vec![]),
+        };
+        let provider = TransferHostPreparation::new(backend);
+        let input = json!({
+            "targetHost": "target",
+            "account": "TRANSFER$",
+            "requireBits": true,
+            "transferKeyPaths": ["C:\\ProgramData\\Pedantic\\transfer.key"],
+            "requiredDirectories": ["C:\\ProgramData\\Pedantic"],
+            "remediation": "transfer.host.retry/v1"
+        });
+
+        let first = provider.execute(&input).unwrap();
+        let second = provider.execute(&input).unwrap();
+        assert_eq!(first["ready"], true);
+        assert_eq!(second["ready"], true);
+        assert_eq!(first["remediation"], "transfer.host.retry/v1");
+        let requests = provider.backend.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(!requests[0].require_openssh);
+        assert!(requests[0].require_bits);
+        assert!(!requests[0].require_transfer_keys);
+        assert_eq!(
+            requests[0].transfer_key_paths,
+            vec!["C:\\ProgramData\\Pedantic\\transfer.key"]
+        );
+        assert_eq!(
+            requests[0].required_directories,
+            vec!["C:\\ProgramData\\Pedantic"]
+        );
+    }
+
+    #[test]
+    fn preparation_contract_requires_a_target_and_preserves_redacted_diagnostics() {
+        let backend = PreparationBackend {
+            result: preparation_result(true, None),
+            requests: std::sync::Mutex::new(vec![]),
+        };
+        let provider = TransferHostPreparation::new(backend);
+        assert!(matches!(
+            provider.execute(&json!({"requireBits": true})),
+            Err(CapabilityError::InvalidInput(_))
+        ));
+
+        let observation = provider
+            .execute(&json!({"targetHost": "target", "requireTransferKeys": true}))
+            .unwrap();
+        assert_eq!(observation["diagnostics"][0], "gmsa_ready");
+        assert!(observation.as_object().unwrap().keys().all(|key| {
+            !key.to_ascii_lowercase().contains("credential")
+                && !key.to_ascii_lowercase().contains("output")
+        }));
     }
 }

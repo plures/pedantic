@@ -13,7 +13,7 @@ export function getCodeActions(diagnostics: Diagnostic[], documentText: string):
 
   for (const diagnostic of diagnostics) {
     // Action 1: "Add missing packages key" - when dsc.install exists but no packages
-    if (diagnostic.code === 'DSL002' && diagnostic.message.includes('packages')) {
+    if (diagnostic.code === 'DSL002' && typeof diagnostic.message === 'string' && diagnostic.message.includes('packages')) {
       actions.push({
         title: 'Add missing packages key',
         kind: CodeActionKind.QuickFix,
