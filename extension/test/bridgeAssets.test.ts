@@ -1,8 +1,11 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { bridgeAssetRelativePath, resolveBridgeAsset, validateBridgeAsset } from '../src/bridge/assets';
+import { bridgeAssetRelativePath, resolveBridgeAsset, validateBridgeAsset, validatePwshExecutable } from '../src/bridge/assets';
+import { BoundedOutput, redactDiagnostic } from '../src/bridge/output';
 import { bridgeProtocolVersion, parseBridgeResponse } from '../src/bridge/schema';
+import { invokeInTrustedWorkspace } from '../src/bridge/trust';
 
 describe('PowerShell bridge assets', () => {
   it('resolves the bridge from the extension directory', () => {
@@ -26,6 +29,54 @@ describe('PowerShell bridge assets', () => {
     await assert.rejects(
       validateBridgeAsset(path.join(path.sep, 'missing', 'bridge.ps1')),
       /Reinstall the Pedantic extension/
+    );
+  });
+
+  it('rejects a non-absolute configured PowerShell executable', async () => {
+    await assert.rejects(
+      validatePwshExecutable('malicious-pwsh'),
+      /must be "pwsh" or an absolute path/
+    );
+  });
+
+  it('restricts the PowerShell executable setting to the local machine', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8'));
+    const setting = manifest.contributes.configuration.properties['pedantic.bridge.pwshPath'];
+
+    assert.equal(setting.scope, 'machine');
+    assert.deepEqual(
+      manifest.capabilities.untrustedWorkspaces.restrictedConfigurations,
+      ['pedantic.bridge.pwshPath']
+    );
+  });
+
+  it('bounds captured output and redacts sensitive diagnostics', () => {
+    const output = new BoundedOutput(32);
+    output.append('this output is much larger than thirty-two bytes');
+
+    assert.equal(output.wasTruncated, true);
+    assert.ok(Buffer.byteLength(output.text) <= 32);
+    assert.match(output.text, /output truncated/);
+    assert.equal(redactDiagnostic('token=abc123 password: secret'), 'token=[REDACTED] password: [REDACTED]');
+    assert.equal(redactDiagnostic('{"token":"abc123"}'), '{"token":"[REDACTED]"}');
+    assert.equal(redactDiagnostic('password: "correct horse battery staple"'), 'password: "[REDACTED]"');
+    assert.equal(redactDiagnostic('secret="contains \\"quotes\\""'), 'secret="[REDACTED]"');
+  });
+
+  it('blocks bridge commands in untrusted workspaces', async () => {
+    let warningShown = false;
+    let operationCalled = false;
+
+    const denied = await invokeInTrustedWorkspace(false, () => { warningShown = true; }, async () => {
+      operationCalled = true;
+      return 'invoked';
+    });
+    assert.equal(denied, undefined);
+    assert.equal(warningShown, true);
+    assert.equal(operationCalled, false);
+    assert.equal(
+      await invokeInTrustedWorkspace(true, () => assert.fail('trusted workspaces should not warn'), async () => 'invoked'),
+      'invoked'
     );
   });
 
