@@ -1,6 +1,9 @@
 //! Production capability packs. PX authorizes these bounded effects; this
 //! crate only reports readiness and sanitized observations.
 
+pub mod hyperv_resource_transfer;
+pub mod hyperv_windows;
+
 #[cfg(windows)]
 use base64::Engine as _;
 #[cfg(windows)]
@@ -662,6 +665,13 @@ pub fn production_providers() -> Vec<Arc<dyn Capability>> {
         Arc::new(Provider::new(feature_manifest(), WindowsFeature, vec![])),
         Arc::new(Provider::new(os_setup_manifest(), WindowsOsSetup, vec![])),
         Arc::new(Provider::new(hyperv_manifest(), HyperV, vec![])),
+        Arc::new(Provider::new(
+            hyperv_resource_transfer_manifest(),
+            hyperv_resource_transfer::HyperVResourceTransfer::new(
+                hyperv_windows::WindowsHyperVResourceTransferBackend,
+            ),
+            vec![],
+        )),
     ]
 }
 
@@ -1580,6 +1590,57 @@ fn hyperv_manifest() -> CapabilityManifest {
     manifest
 }
 
+fn hyperv_resource_transfer_manifest() -> CapabilityManifest {
+    let mut manifest = manifest(
+        "hyperv.resource-transfer",
+        RiskClass::Dangerous,
+        RetryClass::RequiresOperatorReview,
+        Idempotency::NonIdempotent,
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["destinationVmName", "resources"],
+            "properties": {
+                "destinationVmName": {"type": "string", "minLength": 1},
+                "resources": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["sourcePath", "destinationPath", "expectedSize", "expectedSha256"],
+                        "properties": {
+                            "sourcePath": {"type": "string", "minLength": 1},
+                            "destinationPath": {"type": "string", "minLength": 1},
+                            "expectedSize": {"type": "integer", "minimum": 0},
+                            "expectedSha256": {"type": "string", "minLength": 1},
+                            "destinationDifferencingChain": {
+                                "type": "array",
+                                "items": {"type": "string", "minLength": 1}
+                            }
+                        }
+                    }
+                },
+                "macConfigurations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["adapterName", "effectiveMacAddress", "freezeDynamic"],
+                        "properties": {
+                            "adapterName": {"type": "string", "minLength": 1},
+                            "effectiveMacAddress": {"type": "string", "minLength": 1},
+                            "freezeDynamic": {"type": "boolean"}
+                        }
+                    }
+                }
+            }
+        }),
+    );
+    manifest.requires_checkpoint = Some(true);
+    manifest
+}
+
 fn action_input(name: &str, actions: &[&str]) -> Value {
     json!({
         "type": "object", "additionalProperties": false, "required": ["action", name],
@@ -1601,6 +1662,13 @@ mod tests {
         for provider in production_providers() {
             assert_conforms(provider.as_ref()).unwrap();
         }
+    }
+
+    #[test]
+    fn production_registry_includes_the_hyperv_resource_transfer_capability() {
+        let registry = production_registry().unwrap();
+
+        assert!(registry.resolve("hyperv.resource-transfer/v1").is_ok());
     }
 
     #[test]
