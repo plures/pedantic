@@ -230,7 +230,13 @@ impl TemporaryPreparationFiles {
                         return;
                     }
                 }
-                Some(PreparationTaskState::Running) | None => {}
+                Some(PreparationTaskState::Running) | None => {
+                    let _ = Command::new("schtasks.exe")
+                        .args(["/End", "/TN", &self.task_name])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
             }
             std::thread::sleep(Duration::from_secs(1));
         }
@@ -281,7 +287,7 @@ fn preparation_task_state(task_name: &str) -> Option<PreparationTaskState> {
     );
     match powershell_output(&script)?.as_str() {
         "Missing" => Some(PreparationTaskState::Missing),
-        "Running" | "Queued" => Some(PreparationTaskState::Running),
+        "Running" | "Queued" | "Unknown" => Some(PreparationTaskState::Running),
         "Ready" | "Disabled" => Some(PreparationTaskState::Stopped),
         _ => None,
     }
@@ -323,10 +329,10 @@ fn scavenge_stale_preparation_tasks() -> Result<(), CapabilityError> {
             CapabilityError::Execution("preparation workspaces could not be inspected".into())
         })?;
         let file_name = entry.file_name();
-        if let Some(name) = file_name.to_str() {
-            if is_preparation_task_name(name) {
-                stale_names.insert(name.to_owned());
-            }
+        if let Some(name) = file_name.to_str()
+            && is_preparation_task_name(name)
+        {
+            stale_names.insert(name.to_owned());
         }
     }
     for task_name in stale_names {
