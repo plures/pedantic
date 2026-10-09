@@ -7,13 +7,12 @@ entity HyperVTransferPlan:
     request_id: String
     profile_id: String
     plan_document: String
-    plan_document_digest: String
     decision: String
 
 constraint hyperv_transfer_plan_requires_complete_identity:
   scope: hyperv_transfer_plan
   phase: admission
-  require: plan.plan_id != "" AND plan.request_id != "" AND plan.profile_id != "" AND plan.plan_document != "" AND plan.plan_document_digest != "" AND plan.plan_id == plan.plan_document_digest
+  require: plan.plan_id != "" AND plan.request_id != "" AND plan.profile_id != "" AND plan.plan_document != "" AND plan.plan_id == sha256(plan.plan_document)
   severity: error
   message: "A Hyper-V transfer plan requires immutable request, profile, and inventory evidence."
 
@@ -27,4 +26,4 @@ constraint hyperv_transfer_plan_requires_px_admission:
 procedure admit_hyperv_transfer_plan(plan: HyperVTransferPlan from "hyperv_transfer_plans") -> HyperVTransferPlan into "hyperv_transfer_plans":
   given: "Admit a deterministic inventory projection without starting a transfer or applying provider policy"
   evaluate_plan_admission plan -> $decision
-  return {plan_id: plan.plan_id, request_id: plan.request_id, profile_id: plan.profile_id, plan_document: plan.plan_document, plan_document_digest: plan.plan_document_digest, decision: $decision.value}
+  return {plan_id: plan.plan_id, request_id: plan.request_id, profile_id: plan.profile_id, plan_document: plan.plan_document, decision: $decision.value}
