@@ -3876,6 +3876,7 @@ async fn serve_connection(
         }
         let line = String::from_utf8_lossy(&frame).trim().to_owned();
         if !line.is_empty() {
+            let transfer_foundation = Arc::clone(&foundation);
             let response = handle_request(
                 &line,
                 profile_id,
@@ -3898,8 +3899,8 @@ async fn serve_connection(
                         }
                     },
                     execution: |request| foundation.execute_remediation(request),
-                    transfer: |method, params| async {
-                        dispatch_transfer_request(&foundation, &method, params).await
+                    transfer: |method: String, params| async move {
+                        dispatch_transfer_request(&transfer_foundation, &method, params).await
                     },
                 },
             )
