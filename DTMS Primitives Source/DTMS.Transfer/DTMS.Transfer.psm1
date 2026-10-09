@@ -33,6 +33,8 @@ function Get-DurableTransferProvider {
                 Encrypted = $false
                 Smb = $true
                 Ssh = $false
+                TargetInitiated = $false
+                ChecksumVerification = $true
             }
         }
         [pscustomobject]@{
@@ -49,6 +51,8 @@ function Get-DurableTransferProvider {
                 Encrypted = $true
                 Smb = $false
                 Ssh = $true
+                TargetInitiated = $true
+                ChecksumVerification = $true
             }
         }
         [pscustomobject]@{
@@ -65,6 +69,8 @@ function Get-DurableTransferProvider {
                 Encrypted = $false
                 Smb = $true
                 Ssh = $false
+                TargetInitiated = $false
+                ChecksumVerification = $true
             }
         }
     )
@@ -130,8 +136,17 @@ function New-DurableTransferRequest {
         [long]$CompletedBytesBefore = 0,
         [ValidateRange(0, [long]::MaxValue)]
         [long]$OperationBytesTotal = 0,
-        [string[]]$AdditionalArgument = @()
+        [ValidateSet('Never', 'Safe', 'SafeAfterObservation')]
+        [string]$FallbackSafety = 'Never',
+        [string]$SshKeyPath,
+        [string]$ExpectedSha256,
+        [AllowNull()]
+        [Nullable[long]]$ExpectedBytes
     )
+
+    if ($null -ne $ExpectedBytes -and $ExpectedBytes -lt 0) {
+        throw 'ExpectedBytes must be zero or greater.'
+    }
 
     [pscustomobject]@{
         PSTypeName = 'DTMS.Transfer.Request'
@@ -145,8 +160,45 @@ function New-DurableTransferRequest {
         Recurse = $Recurse.IsPresent
         CompletedBytesBefore = $CompletedBytesBefore
         OperationBytesTotal = $OperationBytesTotal
-        AdditionalArgument = @($AdditionalArgument)
+        FallbackSafety = $FallbackSafety
+        SshKeyPath = $SshKeyPath
+        ExpectedSha256 = $ExpectedSha256
+        ExpectedBytes = if ($PSBoundParameters.ContainsKey('ExpectedBytes') -and
+            $null -ne $ExpectedBytes) {
+            [long]$ExpectedBytes
+        } else {
+            $null
+        }
     }
+}
+
+function Test-DurableTransferLocalKeyPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+    try {
+        $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+    } catch {
+        return $false
+    }
+    if ($item.PSProvider.Name -ne 'FileSystem' -or $item.PSIsContainer) {
+        return $false
+    }
+    $resolvedPath = [string]$item.FullName
+    if (-not [IO.Path]::IsPathRooted($resolvedPath) -or
+        $resolvedPath.StartsWith('\\')) {
+        return $false
+    }
+    $driveRoot = [IO.Path]::GetPathRoot($resolvedPath)
+    $drive = [IO.DriveInfo]::GetDrives() |
+        Where-Object Name -eq $driveRoot |
+        Select-Object -First 1
+    if ($drive -and $drive.DriveType -eq [IO.DriveType]::Network) {
+        return $false
+    }
+    $true
 }
 
 function Select-DurableTransferProvider {
@@ -160,12 +212,13 @@ function Select-DurableTransferProvider {
     )
 
     process {
-        $providers = @(Get-DurableTransferProvider |
-            Where-Object Available)
+        $evaluations = @()
+        $sourceIsSsh = $Request.Source -match '^[^\\/:]+@[^:]+:'
+        $destinationIsSsh = $Request.Destination -match '^[^\\/:]+@[^:]+:'
+        $providers = @(Get-DurableTransferProvider)
         if ($Request.Transport -ne 'Auto') {
             $providers = @($providers | Where-Object Name -eq $Request.Transport)
-        } elseif ($Request.Source -match '^[^\\/:]+@[^:]+:' -or
-            $Request.Destination -match '^[^\\/:]+@[^:]+:') {
+        } elseif ($sourceIsSsh -or $destinationIsSsh) {
             $providers = @($providers | Sort-Object @{
                 Expression = { if ($_.Name -eq 'Scp') { 0 } else { 1 } }
             })
@@ -174,15 +227,60 @@ function Select-DurableTransferProvider {
                 Expression = { if ($_.Name -eq 'Robocopy') { 0 } else { 1 } }
             })
         }
+        foreach ($candidate in $providers) {
+            $reasons = @()
+            if (-not $candidate.Available) {
+                $reasons += 'provider is unavailable'
+            }
+            if ($Request.RequireResume -and -not $candidate.Capabilities.Restartable) {
+                $reasons += 'does not support restartable transfers'
+            }
+            if ($Request.PreserveAcl -and -not $candidate.Capabilities.PreservesAcl) {
+                $reasons += 'does not preserve ACLs'
+            }
+            if ($Request.RequireEncryption -and -not $candidate.Capabilities.Encrypted) {
+                $reasons += 'does not provide encrypted transport'
+            }
+            if (($sourceIsSsh -or $destinationIsSsh) -and
+                -not $candidate.Capabilities.Ssh) {
+                $reasons += 'does not support SSH endpoints'
+            }
+            if ($candidate.Name -eq 'Scp') {
+                if (-not $candidate.Capabilities.TargetInitiated) {
+                    $reasons += 'does not support target-initiated transfers'
+                }
+                if (-not $sourceIsSsh -or $destinationIsSsh) {
+                    $reasons += 'requires a remote SSH source and a local destination'
+                }
+                if (-not (Test-DurableTransferLocalKeyPath $Request.SshKeyPath)) {
+                    $reasons += 'requires a validated target-local SSH key path'
+                }
+            }
+            $evaluations += [pscustomobject]@{
+                Provider = $candidate.Name
+                Eligible = $reasons.Count -eq 0
+                Reason = if ($reasons.Count -eq 0) {
+                    'satisfies declared transfer requirements'
+                } else {
+                    $reasons -join '; '
+                }
+            }
+        }
         $providers = @($providers | Where-Object {
-            (-not $Request.RequireResume -or $_.Capabilities.Restartable) -and
-            (-not $Request.PreserveAcl -or $_.Capabilities.PreservesAcl) -and
-            (-not $Request.RequireEncryption -or $_.Capabilities.Encrypted)
+            $candidate = $_
+            @($evaluations | Where-Object {
+                $_.Provider -eq $candidate.Name -and $_.Eligible
+            }).Count -gt 0
         })
         if ($providers.Count -eq 0) {
             throw "No available transfer provider satisfies request '$($Request.Source)' -> '$($Request.Destination)'."
         }
         $selected = $providers[0]
+        $fallback = if ($Request.FallbackSafety -in @('Safe', 'SafeAfterObservation')) {
+            @($providers | Where-Object Name -ne $selected.Name)[0]
+        } else {
+            $null
+        }
         [pscustomobject]@{
             PSTypeName = 'DTMS.Transfer.Selection'
             Provider = $selected
@@ -190,6 +288,15 @@ function Select-DurableTransferProvider {
                 "Provider '$($selected.Name)' was explicitly requested."
             } else {
                 "Provider '$($selected.Name)' is the highest-ranked available provider satisfying the required capabilities."
+            }
+            Evaluation = $evaluations
+            Fallback = if ($fallback) {
+                [pscustomobject]@{
+                    Provider = $fallback
+                    Reason = "Provider '$($fallback.Name)' is eligible only after the declared fallback safety contract permits it."
+                }
+            } else {
+                $null
             }
         }
     }
@@ -242,12 +349,18 @@ function Invoke-DurableTransfer {
             LastBytes = [long]0
             LastSampleUtc = $startedUtc
         }
+        $retryCount = [long]0
+        $resumeCount = [long]0
+        $verificationState = 'not-requested'
+        $robocopyTelemetryPath = $null
+        $removeRobocopyTelemetryPath = $false
         $writeMetric = {
             param(
                 [long]$BytesTransferred,
                 [long]$BytesTotal,
                 [string]$Status,
-                [string]$Message
+                [string]$Message,
+                [string]$VerificationState = 'not-requested'
             )
             if (-not $MetricsPath) {
                 return
@@ -315,6 +428,9 @@ function Invoke-DurableTransfer {
                 elapsedSeconds = [math]::Round($elapsedSeconds, 3)
                 instantaneousMbps = [math]::Round($instantaneousMbps, 3)
                 averageMbps = [math]::Round($averageMbps, 3)
+                retryCount = $retryCount
+                resumeCount = $resumeCount
+                verificationState = $VerificationState
                 estimatedRemainingSeconds = if ($null -eq $remainingSeconds) {
                     $null
                 } else {
@@ -356,10 +472,21 @@ function Invoke-DurableTransfer {
                 '/R:5'
                 '/W:15'
                 '/ETA'
-            ) + @($Request.AdditionalArgument)
+            )
             if ($LogPath) {
-                $arguments += "/LOG+:$LogPath"
+                $robocopyTelemetryPath = $LogPath
+            } else {
+                $robocopyTelemetryPath = Join-Path `
+                    ([IO.Path]::GetTempPath()) `
+                    "DTMS-Robocopy-$([guid]::NewGuid().ToString('N')).log"
+                $removeRobocopyTelemetryPath = $true
             }
+            $existingLogLines = if (Test-Path -LiteralPath $robocopyTelemetryPath) {
+                @(Get-Content -LiteralPath $robocopyTelemetryPath).Count
+            } else {
+                0
+            }
+            $arguments += "/LOG+:$robocopyTelemetryPath"
             $process = Start-Process `
                 -FilePath $provider.Executable `
                 -ArgumentList $arguments `
@@ -383,16 +510,37 @@ function Invoke-DurableTransfer {
                         -1
                     })
             }
+            if (Test-Path -LiteralPath $robocopyTelemetryPath -PathType Leaf) {
+                $robocopyLogLines = @(Get-Content -LiteralPath $robocopyTelemetryPath)
+                $newRobocopyLogLines = @(
+                    $robocopyLogLines | Select-Object -Skip $existingLogLines
+                )
+                $retryCount += @(
+                    $newRobocopyLogLines | Where-Object { $_ -match '\bRetrying\.\.\.' }
+                ).Count
+                $resumeCount += @(
+                    $newRobocopyLogLines | Where-Object { $_ -match '\bRestarting\.\.\.' }
+                ).Count
+            }
             $exitCode = [int]$process.ExitCode
             if ($exitCode -gt 7) {
                 throw "Robocopy failed with exit code $exitCode."
             }
             } elseif ($provider.Name -eq 'Scp') {
+            if ($Request.Destination -match '^[^\\/:]+@[^:]+:') {
+                throw 'SCP transfers must be initiated by the target and receive from a remote source.'
+            }
+            if ($Request.Source -notmatch '^[^\\/:]+@[^:]+:') {
+                throw 'SCP source must be a remote SSH endpoint for target-initiated transfer.'
+            }
+            if (-not (Test-DurableTransferLocalKeyPath $Request.SshKeyPath)) {
+                throw 'SCP requires a validated target-local SSH key path.'
+            }
             $arguments = @('-B')
             if ($Request.Recurse) {
                 $arguments += '-r'
             }
-            $arguments += @($Request.AdditionalArgument)
+            $arguments += @('-i', $Request.SshKeyPath)
             $arguments += @($Request.Source, $Request.Destination)
             $processParameters = @{
                 FilePath = $provider.Executable
@@ -438,11 +586,21 @@ function Invoke-DurableTransfer {
                 -Asynchronous `
                 -ErrorAction Stop
             try {
+                $lastBitsTransientErrorKey = $null
                 while ($bitsJob.JobState -in @(
                     'Queued', 'Connecting', 'Transferring', 'TransientError'
                 )) {
                     if ($bitsJob.JobState -eq 'TransientError') {
-                        Resume-BitsTransfer -BitsJob $bitsJob -Asynchronous
+                        $transientErrorKey = '{0}|{1}' -f `
+                            $bitsJob.ErrorCode, $bitsJob.ErrorDescription
+                        if ($transientErrorKey -ne $lastBitsTransientErrorKey) {
+                            $retryCount++
+                            Resume-BitsTransfer -BitsJob $bitsJob -Asynchronous
+                            $resumeCount++
+                            $lastBitsTransientErrorKey = $transientErrorKey
+                        }
+                    } else {
+                        $lastBitsTransientErrorKey = $null
                     }
                     Start-Sleep -Seconds $SampleIntervalSeconds
                     $bitsJob = Get-BitsTransfer -JobId $bitsJob.JobId -ErrorAction Stop
@@ -483,11 +641,30 @@ function Invoke-DurableTransfer {
             } else {
                 $totalBytes
             }
+            if ($null -ne $Request.ExpectedBytes -and
+                $finalBytes -ne [long]$Request.ExpectedBytes) {
+                $verificationState = 'failed'
+                throw "Transfer verification failed: expected $($Request.ExpectedBytes) bytes, received $finalBytes."
+            }
+            if ($Request.ExpectedSha256) {
+                $verificationState = 'failed'
+                $actualSha256 = (Get-FileHash `
+                    -LiteralPath $Request.Destination `
+                    -Algorithm SHA256 `
+                    -ErrorAction Stop).Hash
+                if ($actualSha256 -ne $Request.ExpectedSha256) {
+                    $verificationState = 'failed'
+                    throw 'Transfer verification failed: SHA-256 digest does not match.'
+                }
+                $verificationState = 'verified'
+            } elseif ($null -ne $Request.ExpectedBytes) {
+                $verificationState = 'verified'
+            }
             & $writeMetric $finalBytes $(if ($totalBytes -gt 0) {
                 $totalBytes
             } else {
                 $finalBytes
-            }) 'Succeeded' 'Transfer completed successfully.'
+            }) 'Succeeded' 'Transfer completed successfully.' $verificationState
             $completedUtc = [DateTime]::UtcNow
             $elapsedSeconds = [math]::Max(0.001, ($completedUtc - $startedUtc).TotalSeconds)
             [pscustomobject]@{
@@ -505,9 +682,16 @@ function Invoke-DurableTransfer {
                     ($finalBytes * 8 / 1000000) / $elapsedSeconds,
                     3
                 )
+                RetryCount = $retryCount
+                ResumeCount = $resumeCount
+                VerificationState = $verificationState
                 SelectionReason = $selection.Reason
                 LogPath = $LogPath
                 MetricsPath = $MetricsPath
+            }
+            if ($removeRobocopyTelemetryPath -and
+                (Test-Path -LiteralPath $robocopyTelemetryPath)) {
+                Remove-Item -LiteralPath $robocopyTelemetryPath -Force -ErrorAction SilentlyContinue
             }
             Complete-DTMSActivity `
                 -Activity $activity `
@@ -522,7 +706,12 @@ function Invoke-DurableTransfer {
                 $failedBytes `
                 $totalBytes `
                 'Failed' `
-                $_.Exception.Message
+                $_.Exception.Message `
+                $verificationState
+            if ($removeRobocopyTelemetryPath -and
+                (Test-Path -LiteralPath $robocopyTelemetryPath)) {
+                Remove-Item -LiteralPath $robocopyTelemetryPath -Force -ErrorAction SilentlyContinue
+            }
             Complete-DTMSActivity `
                 -Activity $activity `
                 -Status $_.Exception.Message `

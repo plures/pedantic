@@ -2,6 +2,8 @@
 //! projection primitives. Policy decisions are deliberately represented as
 //! inputs from PX rather than reimplemented here.
 
+pub mod hyperv_transfer_plan;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,6 +12,9 @@ use thiserror::Error;
 pub const OPERATION_PLAN_SCHEMA_VERSION: &str = "pedantic.operation-plan.v1";
 pub const OPERATION_EVENT_SCHEMA_VERSION: &str = "pedantic.operation-event.v1";
 pub const OPERATION_PROJECTION_SCHEMA_VERSION: &str = "pedantic.operation-projection.v1";
+pub const TRANSFER_REGISTRY_SCHEMA_VERSION: &str = "pedantic.transfer-registry.v1";
+pub const TRANSFER_REGISTRY_STORAGE_SCHEMA_VERSION: &str = "pedantic.transfer-registry-storage.v1";
+pub const TRANSFER_LAUNCH_SCHEMA_VERSION: &str = "pedantic.transfer-launch.v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -169,6 +174,81 @@ pub struct OperationPlan {
     pub steps: Vec<OperationStep>,
 }
 
+/// Immutable evidence captured before a transfer provider is allowed to run.
+///
+/// Values in this checkpoint are identities and digests only; credentials and
+/// provider input remain outside the durable operation record.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferLaunchCheckpoint {
+    pub schema_version: String,
+    pub operation_id: String,
+    pub plan_id: String,
+    pub plan_digest: String,
+    pub provider: String,
+    pub authorization_id: String,
+    pub authorization_digest: String,
+    pub approval_reference: String,
+    pub source_id: String,
+    pub target_id: String,
+    pub preflight_evidence: Vec<String>,
+    pub boot_identity: String,
+    pub idempotency_key: String,
+}
+
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum TransferLaunchError {
+    #[error("unsupported transfer-launch schema version: {0}")]
+    UnsupportedSchemaVersion(String),
+    #[error("transfer launch contains a missing identity or evidence reference")]
+    MissingIdentifier,
+    #[error("transfer launch plan or authorization digest is invalid")]
+    InvalidDigest,
+}
+
+impl TransferLaunchCheckpoint {
+    pub fn validate(&self) -> Result<(), TransferLaunchError> {
+        if self.schema_version != TRANSFER_LAUNCH_SCHEMA_VERSION {
+            return Err(TransferLaunchError::UnsupportedSchemaVersion(
+                self.schema_version.clone(),
+            ));
+        }
+        if [
+            &self.operation_id,
+            &self.plan_id,
+            &self.provider,
+            &self.authorization_id,
+            &self.approval_reference,
+            &self.source_id,
+            &self.target_id,
+            &self.boot_identity,
+            &self.idempotency_key,
+        ]
+        .iter()
+        .any(|value| value.is_empty())
+            || self.preflight_evidence.is_empty()
+            || self
+                .preflight_evidence
+                .iter()
+                .any(|evidence| evidence.is_empty())
+        {
+            return Err(TransferLaunchError::MissingIdentifier);
+        }
+        if !is_sha256_digest(&self.plan_digest) || !is_sha256_digest(&self.authorization_digest) {
+            return Err(TransferLaunchError::InvalidDigest);
+        }
+        Ok(())
+    }
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum PlanError {
     #[error("unsupported operation-plan schema version: {0}")]
@@ -305,6 +385,8 @@ pub enum OperationState {
     AwaitingReboot,
     NeedsReview,
     Succeeded,
+    Partial,
+    VerificationFailed,
     Failed,
     Cancelled,
 }
@@ -369,7 +451,388 @@ impl OperationProjection {
             event_ids: BTreeSet::new(),
         }
     }
+}
 
+/// Safe, provider-neutral measurements retained as durable transfer evidence.
+/// Paths, credentials, tool output, and infrastructure addresses are excluded
+/// deliberately; callers must not project them into this type.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferObservation {
+    pub provider: String,
+    pub bytes_transferred: u64,
+    pub elapsed_millis: u64,
+    pub throughput_bps: u64,
+    pub retry_count: u64,
+    pub resume_count: u64,
+    pub verification_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_category: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferEvent {
+    pub schema_version: String,
+    pub operation: OperationEvent,
+    pub source_vm: String,
+    pub target_vm: String,
+    pub target_host: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation: Option<TransferObservation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_vm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_vm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconciliationFinding {
+    pub operation_id: String,
+    pub code: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferOperation {
+    pub operation_id: String,
+    pub source_vm: String,
+    pub target_vm: String,
+    pub target_host: String,
+    pub state: OperationState,
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_result: Option<TransferObservation>,
+    pub findings: Vec<ReconciliationFinding>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TransferReportState {
+    Incomplete,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Conflicted,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferReport {
+    pub operation_id: String,
+    pub state: TransferReportState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes_transferred: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput_bps: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_category: Option<String>,
+    pub findings: Vec<ReconciliationFinding>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FederatedTransferRegistry {
+    events: BTreeMap<String, Vec<TransferEvent>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransferIngestResult {
+    Inserted,
+    Duplicate,
+    Conflict,
+    Invalid,
+}
+
+impl FederatedTransferRegistry {
+    /// Merges immutable events from a local or federated replica. Event IDs are
+    /// idempotency keys, so conflicting contents are retained for reconciliation.
+    pub fn ingest(&mut self, mut event: TransferEvent) -> TransferIngestResult {
+        if event.schema_version != TRANSFER_REGISTRY_SCHEMA_VERSION
+            || event.operation.event_id.is_empty()
+            || event.operation.operation_id.is_empty()
+            || event.source_vm.is_empty()
+            || event.target_vm.is_empty()
+            || event.target_host.is_empty()
+        {
+            return TransferIngestResult::Invalid;
+        }
+        event.source_vm = redact_transfer_identifier(&event.source_vm);
+        event.target_vm = redact_transfer_identifier(&event.target_vm);
+        event.target_host = redact_transfer_identifier(&event.target_host);
+        match self.events.entry(event.operation.event_id.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(vec![event]);
+                TransferIngestResult::Inserted
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let variants = entry.get_mut();
+                if variants.contains(&event) {
+                    TransferIngestResult::Duplicate
+                } else {
+                    variants.push(event);
+                    TransferIngestResult::Conflict
+                }
+            }
+        }
+    }
+
+    pub fn merge(&mut self, replica: &Self) {
+        for event in replica.events.values().flatten().cloned() {
+            self.ingest(event);
+        }
+    }
+
+    pub fn event(&self, event_id: &str) -> Option<&TransferEvent> {
+        self.events
+            .get(event_id)
+            .and_then(|variants| variants.first())
+    }
+
+    pub fn query(&self, query: &TransferQuery) -> Vec<TransferOperation> {
+        let source_vm = query.source_vm.as_deref().map(redact_transfer_identifier);
+        let target_vm = query.target_vm.as_deref().map(redact_transfer_identifier);
+        let target_host = query.target_host.as_deref().map(redact_transfer_identifier);
+        let mut operations = self.operations();
+        operations.retain(|operation| {
+            query
+                .operation_id
+                .as_ref()
+                .is_none_or(|value| value == &operation.operation_id)
+                && source_vm
+                    .as_ref()
+                    .is_none_or(|value| value == &operation.source_vm)
+                && target_vm
+                    .as_ref()
+                    .is_none_or(|value| value == &operation.target_vm)
+                && target_host
+                    .as_ref()
+                    .is_none_or(|value| value == &operation.target_host)
+                && query.active.is_none_or(|value| value == operation.active)
+        });
+        operations
+    }
+
+    pub fn report(&self, operation_id: &str) -> Option<TransferReport> {
+        let operation = self
+            .operations()
+            .into_iter()
+            .find(|operation| operation.operation_id == operation_id)?;
+        let observation = operation.latest_result;
+        let state = if !operation.findings.is_empty() {
+            TransferReportState::Conflicted
+        } else {
+            match operation.state {
+                OperationState::Succeeded if observation.is_some() => {
+                    TransferReportState::Succeeded
+                }
+                OperationState::Failed => TransferReportState::Failed,
+                OperationState::Cancelled => TransferReportState::Cancelled,
+                _ => TransferReportState::Incomplete,
+            }
+        };
+        Some(TransferReport {
+            operation_id: operation.operation_id,
+            state,
+            provider: observation.as_ref().map(|value| value.provider.clone()),
+            bytes_transferred: observation.as_ref().map(|value| value.bytes_transferred),
+            elapsed_millis: observation.as_ref().map(|value| value.elapsed_millis),
+            throughput_bps: observation.as_ref().map(|value| value.throughput_bps),
+            retry_count: observation.as_ref().map(|value| value.retry_count),
+            resume_count: observation.as_ref().map(|value| value.resume_count),
+            verification_state: observation
+                .as_ref()
+                .map(|value| value.verification_state.clone()),
+            failure_category: observation.and_then(|value| value.failure_category),
+            findings: operation.findings,
+        })
+    }
+
+    /// Terminal history may be pruned after `retain_after`, while active event
+    /// history remains immutable and discoverable. A terminal operation is
+    /// pruned as a whole, never as a collection of independently aged events.
+    pub fn retain_terminal_after(&mut self, retain_after: u64) {
+        let groups = self.grouped_events();
+        let conflicting_event_ids = self.conflicting_event_ids();
+        let expired_operations = groups
+            .iter()
+            .filter_map(|(operation_id, events)| {
+                let operation = operation_from_events(events.clone(), &conflicting_event_ids)?;
+                (!operation.active
+                    && events.iter().all(|event| {
+                        event
+                            .operation
+                            .occurred_at
+                            .is_some_and(|occurred_at| occurred_at < retain_after)
+                    }))
+                .then(|| operation_id.clone())
+            })
+            .collect::<BTreeSet<_>>();
+        self.events.retain(|_, variants| {
+            variants.retain(|event| !expired_operations.contains(&event.operation.operation_id));
+            !variants.is_empty()
+        });
+    }
+
+    fn operations(&self) -> Vec<TransferOperation> {
+        let conflicting_event_ids = self.conflicting_event_ids();
+        self.grouped_events()
+            .into_values()
+            .filter_map(|events| operation_from_events(events, &conflicting_event_ids))
+            .collect()
+    }
+
+    fn grouped_events(&self) -> BTreeMap<String, Vec<&TransferEvent>> {
+        let mut grouped = BTreeMap::<String, Vec<&TransferEvent>>::new();
+        for event in self.events.values().flatten() {
+            grouped
+                .entry(event.operation.operation_id.clone())
+                .or_default()
+                .push(event);
+        }
+        grouped
+    }
+
+    fn conflicting_event_ids(&self) -> BTreeSet<String> {
+        self.events
+            .iter()
+            .filter(|(_, variants)| variants.len() > 1)
+            .map(|(event_id, _)| event_id.clone())
+            .collect()
+    }
+}
+
+fn redact_transfer_identifier(value: &str) -> String {
+    if value.strip_prefix("opaque:").is_some_and(|digest| {
+        digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        return value.to_owned();
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"pedantic.transfer-identity.v1\0");
+    hasher.update(value.as_bytes());
+    format!("opaque:{:x}", hasher.finalize())
+}
+
+fn operation_from_events(
+    mut events: Vec<&TransferEvent>,
+    conflicting_event_ids: &BTreeSet<String>,
+) -> Option<TransferOperation> {
+    events.sort_by_key(|event| (event.operation.sequence, event.operation.event_id.clone()));
+    let first = events.first()?;
+    let mut findings = Vec::new();
+    if events
+        .iter()
+        .any(|event| conflicting_event_ids.contains(&event.operation.event_id))
+    {
+        findings.push(finding(
+            first,
+            "event-id-conflict",
+            "replicas disagree on immutable event contents",
+        ));
+    }
+    if events.iter().any(|event| {
+        event.source_vm != first.source_vm
+            || event.target_vm != first.target_vm
+            || event.target_host != first.target_host
+    }) {
+        findings.push(finding(
+            first,
+            "replica-identity-conflict",
+            "replicas disagree on transfer identity",
+        ));
+    }
+    let mut projection = OperationProjection::requested(
+        first.operation.operation_id.clone(),
+        first.operation.profile_id.clone(),
+    );
+    for event in &events {
+        if let Err(error) = projection.apply(&event.operation) {
+            findings.push(finding(
+                first,
+                "event-history-incomplete",
+                &error.to_string(),
+            ));
+            break;
+        }
+    }
+    let terminal_states = events
+        .iter()
+        .filter(|event| is_terminal(&event.operation.resulting_state))
+        .map(|event| event.operation.resulting_state.clone())
+        .collect::<BTreeSet<_>>();
+    if terminal_states.len() > 1 {
+        findings.push(finding(
+            first,
+            "terminal-state-conflict",
+            "replicas contain conflicting terminal states",
+        ));
+    }
+    let latest_result = events
+        .iter()
+        .rev()
+        .find_map(|event| event.observation.clone());
+    let state = if findings
+        .iter()
+        .any(|finding| finding.code == "event-history-incomplete")
+    {
+        events
+            .iter()
+            .find(|event| event.operation.sequence == 1)
+            .map(|event| event.operation.resulting_state.clone())
+            .unwrap_or(OperationState::Requested)
+    } else {
+        projection.state
+    };
+    Some(TransferOperation {
+        operation_id: first.operation.operation_id.clone(),
+        source_vm: first.source_vm.clone(),
+        target_vm: first.target_vm.clone(),
+        target_host: first.target_host.clone(),
+        active: !is_terminal(&state),
+        state,
+        latest_result,
+        findings,
+    })
+}
+
+fn finding(event: &TransferEvent, code: &str, detail: &str) -> ReconciliationFinding {
+    ReconciliationFinding {
+        operation_id: event.operation.operation_id.clone(),
+        code: code.into(),
+        detail: detail.into(),
+    }
+}
+
+fn is_terminal(state: &OperationState) -> bool {
+    matches!(
+        state,
+        OperationState::Succeeded | OperationState::Failed | OperationState::Cancelled
+    )
+}
+impl OperationProjection {
     /// Reduces immutable events in sequence order. An already-seen event ID is
     /// an idempotent delivery and therefore changes nothing.
     pub fn apply(&mut self, event: &OperationEvent) -> Result<(), ProjectionError> {
@@ -421,7 +884,7 @@ mod tests {
     use jsonschema::{Draft, JSONSchema};
     use serde_json::Value;
 
-    const CONTRACT_SCHEMA_SOURCES: [&str; 11] = [
+    const CONTRACT_SCHEMA_SOURCES: [&str; 12] = [
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../../contracts/v1/operation-plan.schema.json"
@@ -465,6 +928,10 @@ mod tests {
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../../contracts/v1/agent-observation-batch.schema.json"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/transfer-launch.schema.json"
         )),
     ];
 
@@ -641,6 +1108,28 @@ mod tests {
         assert_eq!(projection.state, OperationState::Succeeded);
     }
 
+    #[test]
+    fn projection_preserves_truthful_partial_and_verification_terminal_states() {
+        let mut projection = OperationProjection::requested("operation".into(), "profile".into());
+        let partial = OperationEvent {
+            event_type: "operation.partial".into(),
+            resulting_state: OperationState::Partial,
+            ..event("event-1", 1)
+        };
+        projection.apply(&partial).expect("partial event");
+        assert_eq!(projection.state, OperationState::Partial);
+
+        let verification_failed = OperationEvent {
+            event_type: "operation.verification_failed".into(),
+            resulting_state: OperationState::VerificationFailed,
+            ..event("event-2", 2)
+        };
+        projection
+            .apply(&verification_failed)
+            .expect("verification failure event");
+        assert_eq!(projection.state, OperationState::VerificationFailed);
+    }
+
     fn event(event_id: &str, sequence: u64) -> OperationEvent {
         OperationEvent {
             schema_version: OPERATION_EVENT_SCHEMA_VERSION.into(),
@@ -660,6 +1149,224 @@ mod tests {
             sequence,
             occurred_at: None,
         }
+    }
+
+    fn transfer_event(
+        event_id: &str,
+        sequence: u64,
+        state: OperationState,
+        occurred_at: u64,
+        observation: Option<TransferObservation>,
+    ) -> TransferEvent {
+        TransferEvent {
+            schema_version: TRANSFER_REGISTRY_SCHEMA_VERSION.into(),
+            operation: OperationEvent {
+                resulting_state: state,
+                occurred_at: Some(occurred_at),
+                ..event(event_id, sequence)
+            },
+            source_vm: "source-vm".into(),
+            target_vm: "target-vm".into(),
+            target_host: "target-host".into(),
+            observation,
+        }
+    }
+
+    fn observation() -> TransferObservation {
+        TransferObservation {
+            provider: "filesystem".into(),
+            bytes_transferred: 1024,
+            elapsed_millis: 50,
+            throughput_bps: 20_480,
+            retry_count: 1,
+            resume_count: 1,
+            verification_state: "verified".into(),
+            failure_category: None,
+        }
+    }
+
+    #[test]
+    fn federated_registry_reconciles_delayed_replication_and_duplicate_events() {
+        let mut source = FederatedTransferRegistry::default();
+        let mut target = FederatedTransferRegistry::default();
+        let started = transfer_event("started", 1, OperationState::Running, 10, None);
+        let completed = transfer_event(
+            "completed",
+            2,
+            OperationState::Succeeded,
+            20,
+            Some(observation()),
+        );
+
+        assert_eq!(
+            source.ingest(started.clone()),
+            TransferIngestResult::Inserted
+        );
+        assert_eq!(target.ingest(completed), TransferIngestResult::Inserted);
+        assert_eq!(source.ingest(started), TransferIngestResult::Duplicate);
+        source.merge(&target);
+        target.merge(&source);
+
+        let operations = target.query(&TransferQuery {
+            operation_id: Some("operation".into()),
+            source_vm: Some("source-vm".into()),
+            target_vm: Some("target-vm".into()),
+            target_host: Some("target-host".into()),
+            active: Some(false),
+        });
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0].state, OperationState::Succeeded);
+        assert!(operations[0].findings.is_empty());
+        assert_eq!(
+            target.report("operation").expect("report").state,
+            TransferReportState::Succeeded
+        );
+    }
+
+    #[test]
+    fn terminal_before_history_is_incomplete_not_a_success_report() {
+        let mut registry = FederatedTransferRegistry::default();
+        registry.ingest(transfer_event(
+            "completed",
+            2,
+            OperationState::Succeeded,
+            20,
+            Some(observation()),
+        ));
+
+        let report = registry.report("operation").expect("report");
+        assert_eq!(report.state, TransferReportState::Conflicted);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "event-history-incomplete")
+        );
+    }
+
+    #[test]
+    fn conflicting_event_ids_are_retained_and_reported() {
+        let mut registry = FederatedTransferRegistry::default();
+        let original = transfer_event("event-1", 1, OperationState::Running, 10, None);
+        let conflicting = transfer_event("event-1", 1, OperationState::Admitted, 10, None);
+
+        assert_eq!(
+            registry.ingest(original.clone()),
+            TransferIngestResult::Inserted
+        );
+        assert_eq!(registry.ingest(conflicting), TransferIngestResult::Conflict);
+        let stored = registry.event("event-1").expect("canonical event");
+        assert_eq!(stored.operation, original.operation);
+        assert!(stored.source_vm.starts_with("opaque:"));
+        assert!(stored.target_vm.starts_with("opaque:"));
+        assert!(stored.target_host.starts_with("opaque:"));
+        assert!(
+            registry
+                .report("operation")
+                .expect("conflict report")
+                .findings
+                .iter()
+                .any(|finding| finding.code == "event-id-conflict")
+        );
+    }
+
+    #[test]
+    fn stale_terminal_replicas_remain_visible_and_active_history_survives_retention() {
+        let mut first = FederatedTransferRegistry::default();
+        let mut stale = FederatedTransferRegistry::default();
+        first.ingest(transfer_event(
+            "started",
+            1,
+            OperationState::Running,
+            100,
+            None,
+        ));
+        first.ingest(transfer_event(
+            "succeeded",
+            2,
+            OperationState::Succeeded,
+            110,
+            Some(observation()),
+        ));
+        stale.ingest(transfer_event(
+            "started",
+            1,
+            OperationState::Running,
+            100,
+            None,
+        ));
+        stale.ingest(transfer_event(
+            "failed",
+            2,
+            OperationState::Failed,
+            111,
+            Some(TransferObservation {
+                failure_category: Some("provider-unavailable".into()),
+                ..observation()
+            }),
+        ));
+
+        first.merge(&stale);
+        assert_eq!(
+            first.report("operation").expect("report").state,
+            TransferReportState::Conflicted
+        );
+        first.retain_terminal_after(105);
+        assert_eq!(
+            first
+                .query(&TransferQuery {
+                    operation_id: Some("operation".into()),
+                    source_vm: None,
+                    target_vm: None,
+                    target_host: None,
+                    active: None,
+                })
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn retention_keeps_or_removes_terminal_operations_atomically() {
+        let mut registry = FederatedTransferRegistry::default();
+        registry.ingest(transfer_event(
+            "partly-expired-start",
+            1,
+            OperationState::Running,
+            100,
+            None,
+        ));
+        registry.ingest(transfer_event(
+            "partly-expired-finish",
+            2,
+            OperationState::Succeeded,
+            110,
+            Some(observation()),
+        ));
+        let mut expired_start =
+            transfer_event("expired-start", 1, OperationState::Running, 90, None);
+        expired_start.operation.operation_id = "expired-operation".into();
+        registry.ingest(expired_start);
+        let mut expired_finish = transfer_event(
+            "expired-finish",
+            2,
+            OperationState::Succeeded,
+            99,
+            Some(observation()),
+        );
+        expired_finish.operation.operation_id = "expired-operation".into();
+        registry.ingest(expired_finish);
+
+        registry.retain_terminal_after(105);
+
+        assert!(registry.event("partly-expired-start").is_some());
+        assert!(registry.event("partly-expired-finish").is_some());
+        assert!(registry.event("expired-start").is_none());
+        assert!(registry.event("expired-finish").is_none());
+        assert_eq!(
+            registry.report("operation").expect("retained report").state,
+            TransferReportState::Succeeded
+        );
     }
 
     #[test]
@@ -751,6 +1458,14 @@ mod tests {
                 include_str!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
                     "/../../../contracts/v1/fixtures/agent-observation-batch.valid.json"
+                )),
+            ),
+            (
+                "transfer-launch",
+                CONTRACT_SCHEMA_SOURCES[11],
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../../contracts/v1/fixtures/transfer-launch.valid.json"
                 )),
             ),
         ];
@@ -895,6 +1610,35 @@ mod tests {
                 .apply(&missing_identity)
                 .expect_err("missing event identity"),
             ProjectionError::MissingIdentifier
+        );
+    }
+
+    #[test]
+    fn transfer_launch_requires_immutable_evidence_and_digests() {
+        let checkpoint: TransferLaunchCheckpoint = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/fixtures/transfer-launch.valid.json"
+        )))
+        .expect("valid transfer launch fixture");
+        checkpoint.validate().expect("valid launch");
+        assert!(schema_accepts(
+            CONTRACT_SCHEMA_SOURCES[11],
+            &serde_json::to_string(&checkpoint).expect("serialize transfer launch")
+        ));
+
+        let mut invalid = checkpoint.clone();
+        invalid.preflight_evidence.clear();
+        assert_eq!(
+            invalid.validate(),
+            Err(TransferLaunchError::MissingIdentifier)
+        );
+
+        let mut uppercase_digest = checkpoint;
+        uppercase_digest.plan_digest =
+            "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into();
+        assert_eq!(
+            uppercase_digest.validate(),
+            Err(TransferLaunchError::InvalidDigest)
         );
     }
 }

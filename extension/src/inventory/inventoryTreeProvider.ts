@@ -88,7 +88,12 @@ export class InventoryTreeProvider implements vscode.TreeDataProvider<InventoryT
 
   getChildren(element?: InventoryTreeItem): Thenable<InventoryTreeItem[]> {
     if (!this.inventory) {
-      return Promise.resolve([]);
+      return Promise.resolve(element ? [] : [new InventoryTreeItem(
+        'Inventory service is not configured',
+        InventoryItemType.Group,
+        {},
+        vscode.TreeItemCollapsibleState.None
+      )]);
     }
 
     if (!element) {

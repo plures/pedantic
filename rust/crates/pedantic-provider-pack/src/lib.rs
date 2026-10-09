@@ -6,8 +6,12 @@ use base64::Engine as _;
 #[cfg(windows)]
 use std::collections::BTreeSet;
 use pedantic_capability::{
-    validate_manifest, validate_readiness, Capability, CapabilityActivity, CapabilityError,
-    CapabilityRegistry,
+    Capability, CapabilityActivity, CapabilityError, CapabilityRegistry, Reconciliation,
+    validate_manifest, validate_readiness,
+};
+use pedantic_operation::hyperv_transfer_plan::{
+    HostFailureCategory, HostQueryFailure, HyperVHardDrive, HyperVHostInventory,
+    HyperVInventoryProvider, HyperVVmInventory,
 };
 use pedantic_operation::{
     CapabilityManifest, CapabilityReadiness, Idempotency, RedactionClass, RetryClass, RiskClass,
@@ -47,6 +51,12 @@ const HYPERV_PROBE: &[&str] = &[
 pub trait ProviderBackend: Send + Sync {
     fn ready(&self) -> Result<(), CapabilityError>;
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError>;
+
+    fn reconcile(&self, _input: &Value) -> Result<Reconciliation, CapabilityError> {
+        Err(CapabilityError::Execution(
+            "provider does not support state reconciliation".into(),
+        ))
+    }
 
     fn execute_with_activity(
         &self,
@@ -608,6 +618,10 @@ impl<B: ProviderBackend> Capability for Provider<B> {
         self.backend.execute(input)
     }
 
+    fn reconcile_unchecked(&self, input: &Value) -> Result<Reconciliation, CapabilityError> {
+        self.backend.reconcile(input)
+    }
+
     fn execute_unchecked_with_activity(
         &self,
         input: &Value,
@@ -668,6 +682,60 @@ impl ProviderBackend for FilesystemTransfer {
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
         let mut activity_sink = |_| Ok(());
         self.execute_with_activity(input, &mut activity_sink)
+    }
+
+    fn reconcile(&self, input: &Value) -> Result<Reconciliation, CapabilityError> {
+        let source = Path::new(required_string(input, "sourcePath")?);
+        let destination = Path::new(required_string(input, "destinationPath")?);
+        let source_metadata = fs::metadata(source)
+            .map_err(|_| CapabilityError::Execution("transfer source is unavailable".into()))?;
+        if !source_metadata.is_file() {
+            return Err(CapabilityError::Execution(
+                "transfer source is unavailable".into(),
+            ));
+        }
+        let destination_metadata = match fs::metadata(destination) {
+            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(_) => return Ok(Reconciliation::Unsafe),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Reconciliation::RetrySafe);
+            }
+            Err(_) => {
+                return Err(CapabilityError::Execution(
+                    "transfer destination is unavailable".into(),
+                ));
+            }
+        };
+        if destination_metadata.len() > source_metadata.len() {
+            return Ok(Reconciliation::Unsafe);
+        }
+
+        let mut source_file = File::open(source)
+            .map_err(|_| CapabilityError::Execution("transfer source is unavailable".into()))?;
+        let mut destination_file = File::open(destination).map_err(|_| {
+            CapabilityError::Execution("transfer destination is unavailable".into())
+        })?;
+        let mut source_buffer = [0; 64 * 1024];
+        let mut destination_buffer = [0; 64 * 1024];
+        let mut remaining = destination_metadata.len();
+        while remaining > 0 {
+            let count = remaining.min(source_buffer.len() as u64) as usize;
+            source_file
+                .read_exact(&mut source_buffer[..count])
+                .map_err(|_| {
+                    CapabilityError::Execution("transfer source could not be read".into())
+                })?;
+            destination_file
+                .read_exact(&mut destination_buffer[..count])
+                .map_err(|_| {
+                    CapabilityError::Execution("transfer destination could not be read".into())
+                })?;
+            if source_buffer[..count] != destination_buffer[..count] {
+                return Ok(Reconciliation::Unsafe);
+            }
+            remaining -= count as u64;
+        }
+        Ok(Reconciliation::RetrySafe)
     }
 
     fn execute_with_activity(
@@ -967,6 +1035,232 @@ impl ProviderBackend for HyperV {
             ],
         )?;
         Ok(effect_observation(&observation))
+    }
+}
+
+/// Read-only Hyper-V inventory adapter used by transfer planning. It reports
+/// raw host observations and leaves all planning and policy decisions to PX.
+pub struct HyperVInventory;
+
+impl HyperVInventoryProvider for HyperVInventory {
+    fn query_host(&self, host_name: &str) -> Result<HyperVHostInventory, HostQueryFailure> {
+        const INVENTORY_SCRIPT: &str = r#"
+Invoke-Command -ComputerName $env:PEDANTIC_HYPERV_HOST -ScriptBlock {
+    function Get-DifferencingChain([string]$Path) {
+        $chain = @()
+        $vhd = Get-VHD -Path $Path -ErrorAction Stop
+        while ($vhd.VhdType -eq 'Differencing' -and $vhd.ParentPath) {
+            $chain += $vhd.ParentPath
+            $vhd = Get-VHD -Path $vhd.ParentPath -ErrorAction Stop
+        }
+        return $chain
+    }
+    ConvertTo-Json -InputObject @(
+        Get-VM -ErrorAction Stop | ForEach-Object {
+            $vm = $_
+            [pscustomobject]@{
+                name = $vm.Name
+                vmId = $vm.Id.Guid
+                effectiveMacAddresses = @(Get-VMNetworkAdapter -VM $vm -ErrorAction Stop | ForEach-Object { $_.MacAddress })
+                hardDrives = @(Get-VMHardDiskDrive -VM $vm -ErrorAction Stop | ForEach-Object {
+                    [pscustomobject]@{
+                        path = $_.Path
+                        differencingChain = @(Get-DifferencingChain $_.Path)
+                    }
+                })
+            }
+        }
+    ) -Compress -Depth 8
+}
+"#;
+        let output = Command::new("powershell.exe")
+            .env("PEDANTIC_HYPERV_HOST", host_name)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                INVENTORY_SCRIPT,
+            ])
+            .output()
+            .map_err(|error| {
+                classified_host_failure(
+                    host_name,
+                    error.to_string(),
+                    HostFailureCategory::HyperVUnavailable,
+                    false,
+                )
+            })?;
+        if !output.status.success() {
+            return Err(classify_hyperv_failure(
+                host_name,
+                &String::from_utf8_lossy(&output.stderr),
+            ));
+        }
+        parse_hyperv_inventory(host_name, &output.stdout)
+    }
+}
+
+fn classify_hyperv_failure(host_name: &str, error: &str) -> HostQueryFailure {
+    let error = error.trim();
+    let error_lower = error.to_ascii_lowercase();
+    let (category, retryable) = if [
+        "access is denied",
+        "unauthorized",
+        "authentication",
+        "logon failure",
+        "credential",
+        "securityerror",
+    ]
+    .iter()
+    .any(|marker| error_lower.contains(marker))
+    {
+        (HostFailureCategory::Authentication, false)
+    } else if ["get-vm", "get-vhd", "hyper-v"]
+        .iter()
+        .any(|marker| error_lower.contains(marker))
+        && [
+            "not recognized",
+            "not installed",
+            "not available",
+            "cannot find",
+            "commandnotfound",
+        ]
+        .iter()
+        .any(|marker| error_lower.contains(marker))
+    {
+        (HostFailureCategory::HyperVUnavailable, false)
+    } else if [
+        "cannot connect",
+        "connection",
+        "timed out",
+        "timeout",
+        "winrm",
+        "wsman",
+        "rpc server is unavailable",
+        "network path",
+        "name resolution",
+        "unreachable",
+        "host not found",
+    ]
+    .iter()
+    .any(|marker| error_lower.contains(marker))
+    {
+        (HostFailureCategory::HostUnavailable, true)
+    } else {
+        (HostFailureCategory::HostUnavailable, false)
+    };
+    classified_host_failure(host_name, error.to_owned(), category, retryable)
+}
+
+fn classified_host_failure(
+    host_name: &str,
+    error: String,
+    category: HostFailureCategory,
+    retryable: bool,
+) -> HostQueryFailure {
+    HostQueryFailure {
+        host_name: host_name.into(),
+        category,
+        error: if error.is_empty() {
+            "Hyper-V inventory query failed".into()
+        } else {
+            error
+        },
+        retryable,
+    }
+}
+
+fn parse_hyperv_inventory(
+    host_name: &str,
+    output: &[u8],
+) -> Result<HyperVHostInventory, HostQueryFailure> {
+    let value: Value = serde_json::from_slice(output).map_err(|error| HostQueryFailure {
+        host_name: host_name.into(),
+        category: HostFailureCategory::InvalidResponse,
+        error: format!("Hyper-V inventory response was not valid JSON: {error}"),
+        retryable: false,
+    })?;
+    let vms = match value {
+        Value::Null => Vec::new(),
+        Value::Array(vms) => vms,
+        vm => vec![vm],
+    };
+    let virtual_machines = vms
+        .into_iter()
+        .map(|vm| parse_hyperv_vm(host_name, vm))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(HyperVHostInventory {
+        host_name: host_name.into(),
+        virtual_machines,
+    })
+}
+
+fn parse_hyperv_vm(host_name: &str, vm: Value) -> Result<HyperVVmInventory, HostQueryFailure> {
+    let object = vm
+        .as_object()
+        .ok_or_else(|| invalid_inventory(host_name, "VM is not an object"))?;
+    let name = json_string(object, "name", host_name)?;
+    let vm_id = json_string(object, "vmId", host_name)?;
+    let effective_mac_addresses = json_string_array(object, "effectiveMacAddresses", host_name)?;
+    let hard_drives = object
+        .get("hardDrives")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_inventory(host_name, "VM hardDrives is not an array"))?
+        .iter()
+        .map(|drive| {
+            let drive = drive
+                .as_object()
+                .ok_or_else(|| invalid_inventory(host_name, "hard drive is not an object"))?;
+            Ok(HyperVHardDrive {
+                path: json_string(drive, "path", host_name)?,
+                differencing_chain: json_string_array(drive, "differencingChain", host_name)?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(HyperVVmInventory {
+        name,
+        vm_id,
+        effective_mac_addresses,
+        hard_drives,
+    })
+}
+
+fn json_string(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    host_name: &str,
+) -> Result<String, HostQueryFailure> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| invalid_inventory(host_name, &format!("{field} is not a string")))
+}
+
+fn json_string_array(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    host_name: &str,
+) -> Result<Vec<String>, HostQueryFailure> {
+    object
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_inventory(host_name, &format!("{field} is not an array")))?
+        .iter()
+        .map(|value| {
+            value.as_str().map(ToString::to_string).ok_or_else(|| {
+                invalid_inventory(host_name, &format!("{field} contains a non-string"))
+            })
+        })
+        .collect()
+}
+
+fn invalid_inventory(host_name: &str, error: &str) -> HostQueryFailure {
+    HostQueryFailure {
+        host_name: host_name.into(),
+        category: HostFailureCategory::InvalidResponse,
+        error: format!("Hyper-V inventory response is invalid: {error}"),
+        retryable: false,
     }
 }
 
@@ -1310,6 +1604,61 @@ mod tests {
     }
 
     #[test]
+    fn hyperv_inventory_parses_vm_evidence_without_policy() {
+        let inventory = parse_hyperv_inventory(
+            "hyperv-a",
+            br#"[{
+                "name":"vm-a",
+                "vmId":"vm-id-a",
+                "effectiveMacAddresses":["00155D000001"],
+                "hardDrives":[{
+                    "path":"D:\\VMs\\vm-a\\disk.avhdx",
+                    "differencingChain":["D:\\VMs\\vm-a\\base.vhdx"]
+                }]
+            }]"#,
+        )
+        .expect("valid inventory");
+        assert_eq!(inventory.host_name, "hyperv-a");
+        assert_eq!(inventory.virtual_machines[0].vm_id, "vm-id-a");
+        assert_eq!(
+            inventory.virtual_machines[0].hard_drives[0].differencing_chain,
+            ["D:\\VMs\\vm-a\\base.vhdx"]
+        );
+    }
+
+    #[test]
+    fn hyperv_query_failures_have_specific_categories_and_retryability() {
+        let authentication = classify_hyperv_failure("host", "Access is denied.");
+        assert_eq!(authentication.category, HostFailureCategory::Authentication);
+        assert!(!authentication.retryable);
+
+        let missing_hyperv = classify_hyperv_failure(
+            "host",
+            "Get-VM : The term 'Get-VM' is not recognized as a cmdlet.",
+        );
+        assert_eq!(
+            missing_hyperv.category,
+            HostFailureCategory::HyperVUnavailable
+        );
+        assert!(!missing_hyperv.retryable);
+
+        let unavailable_host =
+            classify_hyperv_failure("host", "The WinRM client cannot process the request.");
+        assert_eq!(
+            unavailable_host.category,
+            HostFailureCategory::HostUnavailable
+        );
+        assert!(unavailable_host.retryable);
+
+        let unknown_failure = classify_hyperv_failure("host", "Unexpected local failure.");
+        assert_eq!(
+            unknown_failure.category,
+            HostFailureCategory::HostUnavailable
+        );
+        assert!(!unknown_failure.retryable);
+    }
+
+    #[test]
     fn transfer_is_idempotent_and_reports_monotonic_observations() {
         let directory = tempdir().unwrap();
         let source = directory.path().join("source");
@@ -1374,6 +1723,34 @@ mod tests {
             .unwrap();
         assert_eq!(observation["resumeCount"], 0);
         assert_eq!(fs::read(invalid_destination).unwrap(), contents);
+    }
+
+    #[test]
+    fn transfer_reconciliation_only_allows_missing_or_matching_prefix_destinations() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("source");
+        let destination = directory.path().join("destination");
+        let contents = b"verified transfer contents";
+        fs::write(&source, contents).unwrap();
+        let provider = Provider::new(transfer_manifest(), FilesystemTransfer, vec![]);
+        let input = json!({"sourcePath": source, "destinationPath": destination});
+
+        assert_eq!(
+            provider.reconcile(&input).unwrap(),
+            Reconciliation::RetrySafe
+        );
+        fs::write(&destination, &contents[..8]).unwrap();
+        assert_eq!(
+            provider.reconcile(&input).unwrap(),
+            Reconciliation::RetrySafe
+        );
+        fs::write(&destination, contents).unwrap();
+        assert_eq!(
+            provider.reconcile(&input).unwrap(),
+            Reconciliation::RetrySafe
+        );
+        fs::write(&destination, b"modified prefix").unwrap();
+        assert_eq!(provider.reconcile(&input).unwrap(), Reconciliation::Unsafe);
     }
 
     #[test]

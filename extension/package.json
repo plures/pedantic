@@ -17,7 +17,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:yaml",
+    "onLanguage:pedantic-simple-dsc",
+    "onLanguage:pedantic-sudolang",
     "onCommand:pedantic.checkPrereqs",
     "onCommand:pedantic.showResourceInventory",
     "onCommand:pedantic.addResourceToProject",
@@ -39,6 +40,26 @@
     "LICENSE"
   ],
   "contributes": {
+    "languages": [
+      {
+        "id": "pedantic-simple-dsc",
+        "aliases": [
+          "Pedantic Simple DSC"
+        ],
+        "filenamePatterns": [
+          "*.simple.dsc.yaml"
+        ]
+      },
+      {
+        "id": "pedantic-sudolang",
+        "aliases": [
+          "Pedantic SudoLang"
+        ],
+        "filenamePatterns": [
+          "*.ssudo"
+        ]
+      }
+    ],
     "views": {
       "explorer": [
         {
@@ -83,52 +104,8 @@
         "command": "pedantic.addResourceToProject",
         "title": "Pedantic: Add DSC Resource to Project",
         "category": "Pedantic"
-      },
-      {
-        "command": "pedantic.refreshInventory",
-        "title": "Refresh Inventory",
-        "category": "Pedantic",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "pedantic.showInventoryDetail",
-        "title": "Show Details",
-        "category": "Pedantic"
-      },
-      {
-        "command": "pedantic.gatherHostFacts",
-        "title": "Gather Facts",
-        "category": "Pedantic",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "pedantic.pushConfigToHost",
-        "title": "Push Configuration",
-        "category": "Pedantic",
-        "icon": "$(cloud-upload)"
       }
     ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "pedantic.refreshInventory",
-          "when": "view == pedanticInventory",
-          "group": "navigation"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "pedantic.gatherHostFacts",
-          "when": "view == pedanticInventory && viewItem == host",
-          "group": "inline"
-        },
-        {
-          "command": "pedantic.pushConfigToHost",
-          "when": "view == pedanticInventory && viewItem == host",
-          "group": "inline"
-        }
-      ]
-    },
     "configuration": {
       "title": "Pedantic",
       "properties": {
