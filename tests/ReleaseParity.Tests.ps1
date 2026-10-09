@@ -4,8 +4,17 @@ Describe 'Pedantic release parity' {
   BeforeAll {
     $repoRoot = Join-Path $PSScriptRoot '..'
     $installerWorkflow = Get-Content (Join-Path $repoRoot '.github/workflows/installers.yml') -Raw
+    $releaseWorkflow = Get-Content (Join-Path $repoRoot '.github/workflows/release.yml') -Raw
     $wix = Get-Content (Join-Path $repoRoot 'installers/windows/pedantic.wxs') -Raw
     $versionSync = Get-Content (Join-Path $repoRoot 'scripts/sync-release-version.mjs') -Raw
+  }
+
+  It 'skips release generation when an open preparation PR already targets the base branch' {
+    $releaseWorkflow | Should -Match 'release_pr_guard'
+    $releaseWorkflow | Should -Match 'gh pr list'
+    $releaseWorkflow | Should -Match '--base "\$BASE"'
+    $releaseWorkflow | Should -Match '--state open'
+    $releaseWorkflow | Should -Match "needs\.release_pr_guard\.outputs\.should_release == 'true'"
   }
 
   It 'builds and packages the Windows-local service with the CLI' {
