@@ -1,3 +1,8 @@
+## [0.11.0] — 2026-10-09
+
+- feat: prepare Windows transfer hosts with gMSA recovery (#207) (d19b369)
+- [WIP] Fix PowerShell bridge invocation issues in VS Code extension (#205) (08fa356)
+
 ## [0.10.0] — 2026-10-08
 
 - [WIP] Restore deterministic build, test, and VSIX release pipeline (#203) (77b44c7)
