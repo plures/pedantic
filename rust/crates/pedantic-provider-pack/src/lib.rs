@@ -488,7 +488,7 @@ Invoke-Command -ComputerName $env:PEDANTIC_HYPERV_HOST -ScriptBlock {
         }
         return $chain
     }
-    @(
+    ConvertTo-Json -InputObject @(
         Get-VM -ErrorAction Stop | ForEach-Object {
             $vm = $_
             [pscustomobject]@{
@@ -503,7 +503,7 @@ Invoke-Command -ComputerName $env:PEDANTIC_HYPERV_HOST -ScriptBlock {
                 })
             }
         }
-    ) | ConvertTo-Json -Compress -Depth 8
+    ) -Compress -Depth 8
 }
 "#;
         let output = Command::new("powershell.exe")
