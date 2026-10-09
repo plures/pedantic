@@ -398,10 +398,11 @@ mod tests {
         assert!(result.host_failures.is_empty());
         assert!(result.validation_errors.is_empty());
         assert_eq!(plan.pairs.len(), 5);
-        assert!(plan
-            .pairs
-            .windows(2)
-            .all(|pair| pair[0].pair_id < pair[1].pair_id));
+        assert!(
+            plan.pairs
+                .windows(2)
+                .all(|pair| pair[0].pair_id < pair[1].pair_id)
+        );
         assert_eq!(
             plan.pairs[0].source.hard_drives[0].differencing_chain.len(),
             1
@@ -488,12 +489,14 @@ mod tests {
             .push(vm("source-1", "duplicate"));
         let result = create_hyperv_transfer_plan(&provider, &request());
         assert!(result.plan.is_none());
-        assert!(result
-            .validation_errors
-            .contains(&TransferPlanValidationError::DuplicateVmName {
-                host_name: "source-host".into(),
-                vm_name: "source-1".into(),
-            }));
+        assert!(
+            result
+                .validation_errors
+                .contains(&TransferPlanValidationError::DuplicateVmName {
+                    host_name: "source-host".into(),
+                    vm_name: "source-1".into(),
+                })
+        );
     }
 
     #[test]
@@ -535,12 +538,14 @@ mod tests {
             .retain(|vm| vm.name != "target-3");
         let result = create_hyperv_transfer_plan(&provider, &request());
         assert!(result.plan.is_none());
-        assert!(result
-            .validation_errors
-            .contains(&TransferPlanValidationError::MissingPairVm {
-                host_name: "target-host".into(),
-                vm_name: "target-3".into(),
-            }));
+        assert!(
+            result
+                .validation_errors
+                .contains(&TransferPlanValidationError::MissingPairVm {
+                    host_name: "target-host".into(),
+                    vm_name: "target-3".into(),
+                })
+        );
     }
 
     #[test]

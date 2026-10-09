@@ -11,6 +11,11 @@
     "operationId": { "$ref": "#/definitions/identifier" },
     "profileId": { "$ref": "#/definitions/identifier" },
     "targetId": { "$ref": "#/definitions/identifier" },
+    "resolvedSettings": {
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": true
+    },
     "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/step" } }
   },
   "definitions": {

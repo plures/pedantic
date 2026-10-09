@@ -18,6 +18,10 @@ profile, target, agent, and idempotency identities. Authorization contracts
 persist only opaque secret references; diagnostics are bounded and classified
 for redaction before they can become evidence.
 
+Operation plans may include `resolvedSettings`, the immutable result of
+built-in, general, target, and plan settings after PX evaluates capability
+safety requirements.
+
 Contract changes require an ADR, compatibility classification, schema tests,
 and a pre-release client conformance run. The fixtures in `fixtures/` are
 validated by `pedantic-service` tests against the same schemas and live service

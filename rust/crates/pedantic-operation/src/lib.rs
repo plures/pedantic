@@ -3,6 +3,7 @@
 //! inputs from PX rather than reimplemented here.
 
 pub mod hyperv_transfer_plan;
+pub mod settings;
 pub mod transfer_batch;
 
 use serde::{Deserialize, Serialize};
@@ -172,6 +173,8 @@ pub struct OperationPlan {
     pub operation_id: String,
     pub profile_id: String,
     pub target_id: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolved_settings: BTreeMap<String, serde_json::Value>,
     pub steps: Vec<OperationStep>,
 }
 
@@ -962,6 +965,7 @@ mod tests {
             operation_id: "operation".into(),
             profile_id: "profile".into(),
             target_id: "target".into(),
+            resolved_settings: BTreeMap::new(),
             steps,
         }
     }
@@ -1020,6 +1024,8 @@ mod tests {
             plan
         );
         assert_eq!(plan.steps[0].secret_references, ["secret/db-password"]);
+        assert_eq!(plan.resolved_settings["rebootAllowed"], false);
+        assert_eq!(plan.resolved_settings["retryLimit"], 3);
     }
 
     #[test]
