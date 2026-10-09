@@ -17,6 +17,19 @@ supported in v0.6. Do not use those switches as an operational deployment
 contract. See [the parity recovery record](docs/REFACTOR-PARITY-RECOVERY.md)
 for the complete capability map and acceptance gates.
 
+## Open-core model
+
+Pedantic's native core is licensed under Apache-2.0. The open core includes
+the versioned contracts, PX lifecycle, coordinator, profile-scoped local
+service, ephemeral agent, capability SDK, core providers, CLI, MCP server, and
+VS Code authoring and local operation experiences.
+
+Commercial Pedantic products build on those stable public contracts to provide
+shared multi-user governance, enterprise identity and RBAC, high availability,
+private registries, commercial compliance content, fleet analytics, managed
+distribution, and support. See
+[the open-core product boundary](docs/OPEN-CORE-MODEL.md).
+
 ## Features
 
 The legacy Pedantic PowerShell module currently provides:

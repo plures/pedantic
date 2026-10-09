@@ -1237,9 +1237,10 @@ Required safeguards:
 - Treat DTMS only as evidence that the general operational problems are real.
 - Complete legal review of any contributor's employment obligations.
 
-Pedantic also has a repository-level Business Source License while its Rust
-workspace declares MIT. Resolve this discrepancy before distribution or
-commercial adoption.
+Pedantic core is licensed under Apache-2.0. Commercial collaboration,
+governance, compliance content, and enterprise distribution capabilities are
+developed separately so the native execution substrate and provider SDK remain
+usable for production adoption and ecosystem development.
 
 ---
 
