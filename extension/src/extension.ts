@@ -4,13 +4,10 @@ import { ResourceInventoryPanel } from './webviews/resourceInventoryPanel';
 import { activateLanguageServer, deactivateLanguageServer } from './client';
 import { createPwshBridge } from './bridge/pwshBridge';
 import { InventoryTreeProvider } from './inventory/inventoryTreeProvider';
-import { InventoryDetailPanel } from './inventory/inventoryDetailPanel';
-import { InventoryService } from './inventory/inventoryService';
 import * as fs from 'fs';
 import * as path from 'path';
 
 let aiPanel: vscode.WebviewPanel | undefined;
-let inventoryTreeProvider: InventoryTreeProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   const bridge = createPwshBridge(context);
@@ -364,108 +361,12 @@ export function activate(context: vscode.ExtensionContext) {
   // ===== Dynamic Inventory View Commands =====
   
   // Initialize inventory tree provider
-  inventoryTreeProvider = new InventoryTreeProvider();
+  const inventoryTreeProvider = new InventoryTreeProvider();
   const inventoryTreeView = vscode.window.createTreeView('pedanticInventory', {
     treeDataProvider: inventoryTreeProvider,
     showCollapseAll: true
   });
   disposables.push(inventoryTreeView);
-
-  // Command: Refresh inventory
-  disposables.push(vscode.commands.registerCommand('pedantic.refreshInventory', async () => {
-    await vscode.window.withProgress({
-      location: vscode.ProgressLocation.Notification,
-      title: 'Pedantic: Gathering inventory...'
-    }, async () => {
-      const inventoryService = InventoryService.getInstance();
-      const inventory = await inventoryService.gatherInventory();
-      inventoryTreeProvider?.setInventory(inventory);
-    });
-  }));
-
-  // Command: Show inventory detail
-  disposables.push(vscode.commands.registerCommand('pedantic.showInventoryDetail', (item) => {
-    const panel = InventoryDetailPanel.createOrShow(context);
-    panel.showItemDetails(item);
-  }));
-
-  // Command: Gather facts for host
-  disposables.push(vscode.commands.registerCommand('pedantic.gatherHostFacts', async (item) => {
-    if (!item || !item.data || !item.data.name) {
-      vscode.window.showErrorMessage('Please select a host to gather facts');
-      return;
-    }
-
-    const hostName = item.data.name;
-    await vscode.window.withProgress({
-      location: vscode.ProgressLocation.Notification,
-      title: `Pedantic: Gathering facts for ${hostName}...`
-    }, async () => {
-      const inventoryService = InventoryService.getInstance();
-      const facts = await inventoryService.gatherHostFacts(hostName);
-      
-      // Update the host with new facts in the current inventory
-      const currentInventory = await inventoryService.gatherInventory();
-      const host = currentInventory.hosts.find(h => h.name === hostName);
-      if (host) {
-        host.facts = facts;
-        // Update the tree provider with refreshed inventory
-        inventoryTreeProvider?.setInventory(currentInventory);
-        
-        // Show updated details if panel is open
-        const panel = InventoryDetailPanel.current();
-        if (panel) {
-          panel.showItemDetails(item);
-          panel.addLog({
-            hostName,
-            timestamp: new Date(),
-            level: 'success',
-            message: 'Facts gathered successfully'
-          });
-        }
-      }
-      
-      vscode.window.showInformationMessage(`Facts gathered for ${hostName}`);
-    });
-  }));
-
-  // Command: Push configuration to host
-  disposables.push(vscode.commands.registerCommand('pedantic.pushConfigToHost', async (item) => {
-    if (!item || !item.data || !item.data.name) {
-      vscode.window.showErrorMessage('Please select a host to push configuration');
-      return;
-    }
-
-    const hostName = item.data.name;
-    
-    // Ask user for config file
-    const configFiles = await vscode.window.showOpenDialog({
-      canSelectMany: false,
-      filters: {
-        'DSC Config': ['yaml', 'yml', 'dsc.yaml']
-      }
-    });
-
-    if (!configFiles || configFiles.length === 0) {
-      return;
-    }
-
-    const configPath = configFiles[0].fsPath;
-    const panel = InventoryDetailPanel.createOrShow(context);
-    
-    // Start the push operation
-    panel.startConfigPush(hostName, configPath);
-  }));
-
-  // Auto-select item on tree selection change
-  inventoryTreeView.onDidChangeSelection(e => {
-    if (e.selection.length > 0) {
-      vscode.commands.executeCommand('pedantic.showInventoryDetail', e.selection[0]);
-    }
-  });
-
-  // Load initial inventory
-  vscode.commands.executeCommand('pedantic.refreshInventory');
 
   context.subscriptions.push(...disposables);
 }
