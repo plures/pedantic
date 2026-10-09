@@ -1,6 +1,8 @@
 //! Production capability packs. PX authorizes these bounded effects; this
 //! crate only reports readiness and sanitized observations.
 
+pub mod hyperv_resource_transfer;
+
 #[cfg(windows)]
 use base64::Engine as _;
 #[cfg(windows)]
