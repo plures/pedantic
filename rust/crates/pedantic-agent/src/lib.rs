@@ -3,9 +3,12 @@
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
-use pedantic_capability::{CapabilityActivity, CapabilityError, CapabilityRegistry};
+use pedantic_capability::{
+    CapabilityActivity, CapabilityError, CapabilityRegistry, Reconciliation,
+};
 use pedantic_operation::{
     EffectAuthorization, OperationEvent, OperationState, RedactionClass, RetryClass,
+    TransferLaunchCheckpoint,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -43,6 +46,10 @@ pub enum AgentError {
     ArtifactDigest,
     #[error("staged artifact path is not a file")]
     ArtifactPath,
+    #[error("transfer launch does not match its authorization or operation")]
+    TransferLaunchBinding,
+    #[error("transfer launch conflicts with an existing idempotency key")]
+    TransferLaunchConflict,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -363,6 +370,10 @@ pub struct JournalRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfer_launch: Option<TransferLaunchCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_after: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub boot_identity: Option<String>,
@@ -378,6 +389,8 @@ impl JournalRecord {
             authorization_digest: None,
             retry_class: None,
             checkpoint: None,
+            transfer_launch: None,
+            output_digest: None,
             resume_after: None,
             boot_identity: None,
             redaction_class,
@@ -463,6 +476,15 @@ impl Journal {
             .collect()
     }
 
+    fn transfer_launch(&self, idempotency_key: &str) -> Option<&JournalRecord> {
+        self.records.iter().find(|record| {
+            record
+                .transfer_launch
+                .as_ref()
+                .is_some_and(|launch| launch.idempotency_key == idempotency_key)
+        })
+    }
+
     fn rewrite(&self) -> Result<(), AgentError> {
         let temporary = self.path.with_extension("tmp");
         let mut file = File::create(&temporary)?;
@@ -482,9 +504,95 @@ pub enum RecoveryOutcome {
     NeedsReview { event_id: String },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransferRecoveryContext<'a> {
+    pub operation_id: &'a str,
+    pub plan_id: &'a str,
+    pub plan_digest: &'a str,
+    pub boot_identity: &'a str,
+}
+
+pub fn recover_transfer(
+    journal: &Journal,
+    context: &TransferRecoveryContext<'_>,
+    registry: &CapabilityRegistry,
+    input: &serde_json::Value,
+) -> Vec<RecoveryOutcome> {
+    recover(journal)
+        .into_iter()
+        .map(|outcome| {
+            let (event_id, requires_observation) = match outcome {
+                RecoveryOutcome::Resume { event_id } => (event_id, false),
+                RecoveryOutcome::NeedsReview { event_id } => (event_id, true),
+            };
+            let Some(start) = journal
+                .records()
+                .iter()
+                .find(|record| record.event.event_id == event_id)
+            else {
+                return RecoveryOutcome::NeedsReview { event_id };
+            };
+            let Some(launch) = start.transfer_launch.as_ref() else {
+                return RecoveryOutcome::NeedsReview { event_id };
+            };
+            let is_matching_launch = launch.operation_id == context.operation_id
+                && launch.plan_id == context.plan_id
+                && launch.plan_digest == context.plan_digest
+                && (launch.boot_identity == context.boot_identity
+                    || journal.records().iter().any(|record| {
+                        record.event.operation_id == launch.operation_id
+                            && record.event.plan_id == launch.plan_id
+                            && record.event.event_type == "step.reboot_observed"
+                            && record.boot_identity.as_deref() == Some(context.boot_identity)
+                    }));
+            let safely_resumable = is_matching_launch
+                && (!requires_observation
+                    || (start.event.event_type == "step.started"
+                        && start.authorization_digest.is_some()
+                        && start.retry_class == Some(RetryClass::SafeAfterObservation)
+                        && matches!(
+                            registry
+                                .resolve(&launch.provider)
+                                .and_then(|capability| capability.reconcile(input)),
+                            Ok(Reconciliation::RetrySafe)
+                        )));
+            if safely_resumable {
+                RecoveryOutcome::Resume { event_id }
+            } else {
+                RecoveryOutcome::NeedsReview { event_id }
+            }
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TransferExecution {
+    Executed { output_digest: String },
+    AlreadyCompleted { output_digest: String },
+    NeedsReview,
+}
+
 pub fn recover(journal: &Journal) -> Vec<RecoveryOutcome> {
     let mut active = BTreeMap::<(String, String, String), &JournalRecord>::new();
     for record in journal.records() {
+        if matches!(
+            record.event.event_type.as_str(),
+            "operation.succeeded"
+                | "operation.partial"
+                | "operation.verification_failed"
+                | "operation.failed"
+                | "operation.cancelled"
+        ) || matches!(
+            &record.event.resulting_state,
+            OperationState::Succeeded
+                | OperationState::Partial
+                | OperationState::VerificationFailed
+                | OperationState::Failed
+                | OperationState::Cancelled
+        ) {
+            active.retain(|(operation_id, _, _), _| operation_id != &record.event.operation_id);
+            continue;
+        }
         let Some(step_id) = &record.event.step_id else {
             continue;
         };
@@ -500,7 +608,7 @@ pub fn recover(journal: &Journal) -> Vec<RecoveryOutcome> {
             "step.started" => {
                 active.insert(key, record);
             }
-            "step.completed" | "step.failed" | "step.needs_review" => {
+            "step.completed" | "step.failed" | "step.verification_failed" | "step.needs_review" => {
                 active.remove(&key);
             }
             _ => {}
@@ -575,23 +683,78 @@ impl LocalAgent {
         started: OperationEvent,
         completed: OperationEvent,
     ) -> Result<serde_json::Value, AgentError> {
-        let capability = self.registry.resolve(&authorization.capability)?;
-        self.verifier.validate(
-            authorization,
-            &AuthorizationContext {
-                target_id: &self.target_id,
-                agent_id: &self.identity.agent_id,
-                capability: &authorization.capability,
-                input_digest: &authorization.input_digest,
-                now,
-            },
-        )?;
+        self.execute_internal(authorization, input, now, started, completed, None)
+    }
+
+    pub fn execute_transfer(
+        &mut self,
+        launch: TransferLaunchCheckpoint,
+        authorization: &EffectAuthorization,
+        input: &serde_json::Value,
+        now: u64,
+        started: OperationEvent,
+        completed: OperationEvent,
+    ) -> Result<TransferExecution, AgentError> {
+        launch
+            .validate()
+            .map_err(|_| AgentError::TransferLaunchBinding)?;
+        if launch.operation_id != authorization.operation_id
+            || launch.plan_id != started.plan_id
+            || launch.target_id != self.target_id
+            || launch.provider != authorization.capability
+            || launch.authorization_id != authorization.authorization_id
+            || launch.authorization_digest != authorization.digest()
+            || launch.idempotency_key != authorization.idempotency_key
+        {
+            return Err(AgentError::TransferLaunchBinding);
+        }
+        let capability = self.validate_authorization(authorization, input, now)?;
+        if let Some(existing) = self.journal.transfer_launch(&launch.idempotency_key) {
+            if existing.transfer_launch.as_ref() != Some(&launch) {
+                return Err(AgentError::TransferLaunchConflict);
+            }
+            if let Some(completion) = self.journal.records().iter().find(|record| {
+                record.event.operation_id == launch.operation_id
+                    && record.event.plan_id == launch.plan_id
+                    && record.event.step_id == started.step_id
+                    && record.event.attempt_id == started.attempt_id
+                    && record.event.event_type == "step.completed"
+            }) {
+                return Ok(match &completion.output_digest {
+                    Some(output_digest) => TransferExecution::AlreadyCompleted {
+                        output_digest: output_digest.clone(),
+                    },
+                    None => TransferExecution::NeedsReview,
+                });
+            }
+            if !matches!(capability.reconcile(input), Ok(Reconciliation::RetrySafe)) {
+                return Ok(TransferExecution::NeedsReview);
+            }
+        }
+        let output =
+            self.execute_internal(authorization, input, now, started, completed, Some(launch))?;
+        Ok(TransferExecution::Executed {
+            output_digest: output_digest(&output),
+        })
+    }
+
+    fn execute_internal(
+        &mut self,
+        authorization: &EffectAuthorization,
+        input: &serde_json::Value,
+        now: u64,
+        started: OperationEvent,
+        completed: OperationEvent,
+        transfer_launch: Option<TransferLaunchCheckpoint>,
+    ) -> Result<serde_json::Value, AgentError> {
+        let capability = self.validate_authorization(authorization, input, now)?;
         let mut start = JournalRecord::new(
             started.clone(),
             capability.manifest().redaction_class.clone(),
         );
         start.authorization_digest = Some(authorization.digest());
         start.retry_class = Some(authorization.retry_class.clone());
+        start.transfer_launch = transfer_launch;
         self.journal.append(start)?;
         let (output, next_sequence) = {
             let mut next_sequence = started.sequence.saturating_add(1);
@@ -623,11 +786,31 @@ impl LocalAgent {
         };
         let mut completed = completed;
         completed.sequence = completed.sequence.max(next_sequence);
-        self.journal.append(JournalRecord::new(
-            completed,
-            capability.manifest().redaction_class.clone(),
-        ))?;
+        let mut completion =
+            JournalRecord::new(completed, capability.manifest().redaction_class.clone());
+        completion.output_digest = Some(output_digest(&output));
+        self.journal.append(completion)?;
         Ok(output)
+    }
+
+    fn validate_authorization(
+        &self,
+        authorization: &EffectAuthorization,
+        input: &serde_json::Value,
+        now: u64,
+    ) -> Result<Arc<dyn pedantic_capability::Capability>, AgentError> {
+        let capability = self.registry.resolve(&authorization.capability)?;
+        self.verifier.validate(
+            authorization,
+            &AuthorizationContext {
+                target_id: &self.target_id,
+                agent_id: &self.identity.agent_id,
+                capability: &authorization.capability,
+                input_digest: &input_digest(input),
+                now,
+            },
+        )?;
+        Ok(capability)
     }
 
     pub fn reboot_observed(
@@ -647,6 +830,13 @@ impl LocalAgent {
 }
 
 pub fn output_digest(value: &serde_json::Value) -> String {
+    format!(
+        "sha256:{:x}",
+        Sha256::digest(serde_json::to_vec(value).expect("value is serializable"))
+    )
+}
+
+pub fn input_digest(value: &serde_json::Value) -> String {
     format!(
         "sha256:{:x}",
         Sha256::digest(serde_json::to_vec(value).expect("value is serializable"))
@@ -750,8 +940,7 @@ mod tests {
             target_id: "target".into(),
             agent_id: "agent".into(),
             capability: "test.capability/v1".into(),
-            input_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                .into(),
+            input_digest: input_digest(&json!({})),
             idempotency_key: "key".into(),
             fencing_token: 1,
             retry_class,
@@ -771,6 +960,38 @@ mod tests {
         authorization.signature.value =
             URL_SAFE_NO_PAD.encode(key.sign(&authorization.signing_payload()).to_bytes());
         authorization
+    }
+
+    fn filesystem_authorization(
+        key: &SigningKey,
+        input: &serde_json::Value,
+    ) -> EffectAuthorization {
+        let mut authorization = authorization(key, RetryClass::SafeAfterObservation);
+        authorization.capability = "transfer.filesystem/v1".into();
+        authorization.input_digest = input_digest(input);
+        authorization.signature.payload_digest = authorization.digest();
+        authorization.signature.value =
+            URL_SAFE_NO_PAD.encode(key.sign(&authorization.signing_payload()).to_bytes());
+        authorization
+    }
+
+    fn transfer_launch(authorization: &EffectAuthorization) -> TransferLaunchCheckpoint {
+        TransferLaunchCheckpoint {
+            schema_version: "pedantic.transfer-launch.v1".into(),
+            operation_id: authorization.operation_id.clone(),
+            plan_id: "plan".into(),
+            plan_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .into(),
+            provider: authorization.capability.clone(),
+            authorization_id: authorization.authorization_id.clone(),
+            authorization_digest: authorization.digest(),
+            approval_reference: "approval".into(),
+            source_id: "artifact".into(),
+            target_id: authorization.target_id.clone(),
+            preflight_evidence: vec!["readiness".into()],
+            boot_identity: "boot-1".into(),
+            idempotency_key: authorization.idempotency_key.clone(),
+        }
     }
 
     fn registry(capability: Arc<TestCapability>) -> CapabilityRegistry {
@@ -845,6 +1066,45 @@ mod tests {
     }
 
     #[test]
+    fn transfer_authorization_is_bound_to_the_supplied_input() {
+        let signing_key = SigningKey::from_bytes(&[12; 32]);
+        let mut verifier = Ed25519AuthorizationVerifier::default();
+        verifier.insert("issuer".into(), signing_key.verifying_key());
+        let directory = tempdir().unwrap();
+        let adapter = capability();
+        let mut agent = LocalAgent::new(
+            AgentIdentity {
+                agent_id: "agent".into(),
+                key_id: "local".into(),
+                private_key: "opaque".into(),
+            },
+            "target".into(),
+            Journal::open(directory.path().join("journal")).unwrap(),
+            registry(adapter.clone()),
+            Arc::new(verifier),
+        );
+        let authorization = authorization(&signing_key, RetryClass::Safe);
+        let input = json!({"destinationPath": "other-target"});
+        let result = agent.execute_transfer(
+            transfer_launch(&authorization),
+            &authorization,
+            &input,
+            2,
+            event("start", "step.started", OperationState::Running),
+            event("done", "step.completed", OperationState::Running),
+        );
+
+        assert!(matches!(
+            result,
+            Err(AgentError::Authorization(AuthorizationError::Binding(
+                "input digest"
+            )))
+        ));
+        assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(agent.journal.records().is_empty());
+    }
+
+    #[test]
     fn execution_activity_is_journaled_between_start_and_completion() {
         let signing_key = SigningKey::from_bytes(&[7; 32]);
         let mut verifier = Ed25519AuthorizationVerifier::default();
@@ -909,11 +1169,12 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[8; 32]);
         let mut verifier = Ed25519AuthorizationVerifier::default();
         verifier.insert("issuer".into(), signing_key.verifying_key());
+        let digest = input_digest(&json!({}));
         let context = AuthorizationContext {
             target_id: "target",
             agent_id: "agent",
             capability: "test.capability/v1",
-            input_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            input_digest: &digest,
             now: 2,
         };
         let grant = authorization(&signing_key, RetryClass::Safe);
@@ -979,6 +1240,199 @@ mod tests {
         assert_eq!(
             recover(&journal),
             vec![RecoveryOutcome::Resume {
+                event_id: "start".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn recovery_closes_attempts_for_all_terminal_events() {
+        for event_type in [
+            "step.verification_failed",
+            "operation.partial",
+            "operation.verification_failed",
+        ] {
+            let directory = tempdir().unwrap();
+            let mut journal = Journal::open(directory.path().join("journal")).unwrap();
+            journal
+                .append(JournalRecord::new(
+                    event("start", "step.started", OperationState::Running),
+                    RedactionClass::MetadataOnly,
+                ))
+                .unwrap();
+            let resulting_state = match event_type {
+                "operation.partial" => OperationState::Partial,
+                _ => OperationState::VerificationFailed,
+            };
+            let mut terminal = event("terminal", event_type, resulting_state);
+            if event_type.starts_with("operation.") {
+                terminal.step_id = None;
+                terminal.attempt_id = None;
+            }
+            journal
+                .append(JournalRecord::new(terminal, RedactionClass::MetadataOnly))
+                .unwrap();
+            assert!(recover(&journal).is_empty(), "{event_type}");
+        }
+    }
+
+    #[test]
+    fn transfer_launch_is_idempotent_after_completion() {
+        let signing_key = SigningKey::from_bytes(&[10; 32]);
+        let mut verifier = Ed25519AuthorizationVerifier::default();
+        verifier.insert("issuer".into(), signing_key.verifying_key());
+        let directory = tempdir().unwrap();
+        let journal_path = directory.path().join("journal");
+        let adapter = capability();
+        let identity = AgentIdentity {
+            agent_id: "agent".into(),
+            key_id: "local".into(),
+            private_key: "opaque".into(),
+        };
+        let verifier = Arc::new(verifier);
+        let mut agent = LocalAgent::new(
+            identity.clone(),
+            "target".into(),
+            Journal::open(&journal_path).unwrap(),
+            registry(adapter.clone()),
+            verifier.clone(),
+        );
+        let authorization = authorization(&signing_key, RetryClass::Safe);
+        let launch = transfer_launch(&authorization);
+        let first = match agent
+            .execute_transfer(
+                launch.clone(),
+                &authorization,
+                &json!({}),
+                2,
+                event("start", "step.started", OperationState::Running),
+                event("done", "step.completed", OperationState::Running),
+            )
+            .unwrap()
+        {
+            TransferExecution::Executed { output_digest } => output_digest,
+            result => panic!("unexpected transfer result: {result:?}"),
+        };
+        drop(agent);
+        let mut agent = LocalAgent::new(
+            identity,
+            "target".into(),
+            Journal::open(&journal_path).unwrap(),
+            registry(adapter.clone()),
+            verifier,
+        );
+        assert!(matches!(
+            agent.execute_transfer(
+                launch,
+                &authorization,
+                &json!({}),
+                2,
+                event("start", "step.started", OperationState::Running),
+                event("done", "step.completed", OperationState::Running),
+            ),
+            Ok(TransferExecution::AlreadyCompleted { output_digest }) if output_digest == first
+        ));
+        assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn transfer_recovery_requires_matching_plan_and_observed_reboot() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("journal");
+        let signing_key = SigningKey::from_bytes(&[11; 32]);
+        let authorization = authorization(&signing_key, RetryClass::Safe);
+        let mut journal = Journal::open(&path).unwrap();
+        let mut started = JournalRecord::new(
+            event("start", "step.started", OperationState::Running),
+            RedactionClass::MetadataOnly,
+        );
+        started.authorization_digest = Some(authorization.digest());
+        started.retry_class = Some(RetryClass::Safe);
+        started.transfer_launch = Some(transfer_launch(&authorization));
+        journal.append(started).unwrap();
+        drop(journal);
+
+        let mut journal = Journal::open(&path).unwrap();
+        let context = TransferRecoveryContext {
+            operation_id: "operation",
+            plan_id: "plan",
+            plan_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            boot_identity: "boot-1",
+        };
+        let registry = CapabilityRegistry::default();
+        let input = json!({});
+        assert_eq!(
+            recover_transfer(&journal, &context, &registry, &input),
+            vec![RecoveryOutcome::Resume {
+                event_id: "start".into()
+            }]
+        );
+        let mut reboot = JournalRecord::new(
+            event("reboot", "step.reboot_observed", OperationState::Running),
+            RedactionClass::MetadataOnly,
+        );
+        reboot.boot_identity = Some("boot-2".into());
+        journal.append(reboot).unwrap();
+        let rebooted_context = TransferRecoveryContext {
+            boot_identity: "boot-2",
+            ..context
+        };
+        assert_eq!(
+            recover_transfer(&journal, &rebooted_context, &registry, &input),
+            vec![RecoveryOutcome::Resume {
+                event_id: "start".into()
+            }]
+        );
+        let stale_context = TransferRecoveryContext {
+            plan_digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ..rebooted_context
+        };
+        assert_eq!(
+            recover_transfer(&journal, &stale_context, &registry, &input),
+            vec![RecoveryOutcome::NeedsReview {
+                event_id: "start".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn transfer_recovery_requires_safe_provider_observation() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("source");
+        let destination = directory.path().join("destination");
+        let contents = b"recoverable transfer";
+        std::fs::write(&source, contents).unwrap();
+        std::fs::write(&destination, &contents[..8]).unwrap();
+        let input = json!({"sourcePath": source, "destinationPath": destination});
+        let signing_key = SigningKey::from_bytes(&[13; 32]);
+        let authorization = filesystem_authorization(&signing_key, &input);
+        let mut journal = Journal::open(directory.path().join("journal")).unwrap();
+        let mut started = JournalRecord::new(
+            event("start", "step.started", OperationState::Running),
+            RedactionClass::MetadataOnly,
+        );
+        started.authorization_digest = Some(authorization.digest());
+        started.retry_class = Some(RetryClass::SafeAfterObservation);
+        started.transfer_launch = Some(transfer_launch(&authorization));
+        journal.append(started).unwrap();
+        let registry = pedantic_provider_pack::production_registry().unwrap();
+        let context = TransferRecoveryContext {
+            operation_id: "operation",
+            plan_id: "plan",
+            plan_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            boot_identity: "boot-1",
+        };
+
+        assert_eq!(
+            recover_transfer(&journal, &context, &registry, &input),
+            vec![RecoveryOutcome::Resume {
+                event_id: "start".into()
+            }]
+        );
+        std::fs::write(&destination, b"tampered prefix").unwrap();
+        assert_eq!(
+            recover_transfer(&journal, &context, &registry, &input),
+            vec![RecoveryOutcome::NeedsReview {
                 event_id: "start".into()
             }]
         );

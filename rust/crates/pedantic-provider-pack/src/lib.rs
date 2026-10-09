@@ -6,8 +6,8 @@ use base64::Engine as _;
 #[cfg(windows)]
 use std::collections::BTreeSet;
 use pedantic_capability::{
-    validate_manifest, validate_readiness, Capability, CapabilityActivity, CapabilityError,
-    CapabilityRegistry,
+    Capability, CapabilityActivity, CapabilityError, CapabilityRegistry, Reconciliation,
+    validate_manifest, validate_readiness,
 };
 use pedantic_operation::hyperv_transfer_plan::{
     HostFailureCategory, HostQueryFailure, HyperVHardDrive, HyperVHostInventory,
@@ -51,6 +51,12 @@ const HYPERV_PROBE: &[&str] = &[
 pub trait ProviderBackend: Send + Sync {
     fn ready(&self) -> Result<(), CapabilityError>;
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError>;
+
+    fn reconcile(&self, _input: &Value) -> Result<Reconciliation, CapabilityError> {
+        Err(CapabilityError::Execution(
+            "provider does not support state reconciliation".into(),
+        ))
+    }
 
     fn execute_with_activity(
         &self,
@@ -612,6 +618,10 @@ impl<B: ProviderBackend> Capability for Provider<B> {
         self.backend.execute(input)
     }
 
+    fn reconcile_unchecked(&self, input: &Value) -> Result<Reconciliation, CapabilityError> {
+        self.backend.reconcile(input)
+    }
+
     fn execute_unchecked_with_activity(
         &self,
         input: &Value,
@@ -672,6 +682,60 @@ impl ProviderBackend for FilesystemTransfer {
     fn execute(&self, input: &Value) -> Result<Value, CapabilityError> {
         let mut activity_sink = |_| Ok(());
         self.execute_with_activity(input, &mut activity_sink)
+    }
+
+    fn reconcile(&self, input: &Value) -> Result<Reconciliation, CapabilityError> {
+        let source = Path::new(required_string(input, "sourcePath")?);
+        let destination = Path::new(required_string(input, "destinationPath")?);
+        let source_metadata = fs::metadata(source)
+            .map_err(|_| CapabilityError::Execution("transfer source is unavailable".into()))?;
+        if !source_metadata.is_file() {
+            return Err(CapabilityError::Execution(
+                "transfer source is unavailable".into(),
+            ));
+        }
+        let destination_metadata = match fs::metadata(destination) {
+            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(_) => return Ok(Reconciliation::Unsafe),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Reconciliation::RetrySafe);
+            }
+            Err(_) => {
+                return Err(CapabilityError::Execution(
+                    "transfer destination is unavailable".into(),
+                ));
+            }
+        };
+        if destination_metadata.len() > source_metadata.len() {
+            return Ok(Reconciliation::Unsafe);
+        }
+
+        let mut source_file = File::open(source)
+            .map_err(|_| CapabilityError::Execution("transfer source is unavailable".into()))?;
+        let mut destination_file = File::open(destination).map_err(|_| {
+            CapabilityError::Execution("transfer destination is unavailable".into())
+        })?;
+        let mut source_buffer = [0; 64 * 1024];
+        let mut destination_buffer = [0; 64 * 1024];
+        let mut remaining = destination_metadata.len();
+        while remaining > 0 {
+            let count = remaining.min(source_buffer.len() as u64) as usize;
+            source_file
+                .read_exact(&mut source_buffer[..count])
+                .map_err(|_| {
+                    CapabilityError::Execution("transfer source could not be read".into())
+                })?;
+            destination_file
+                .read_exact(&mut destination_buffer[..count])
+                .map_err(|_| {
+                    CapabilityError::Execution("transfer destination could not be read".into())
+                })?;
+            if source_buffer[..count] != destination_buffer[..count] {
+                return Ok(Reconciliation::Unsafe);
+            }
+            remaining -= count as u64;
+        }
+        Ok(Reconciliation::RetrySafe)
     }
 
     fn execute_with_activity(
@@ -1659,6 +1723,34 @@ mod tests {
             .unwrap();
         assert_eq!(observation["resumeCount"], 0);
         assert_eq!(fs::read(invalid_destination).unwrap(), contents);
+    }
+
+    #[test]
+    fn transfer_reconciliation_only_allows_missing_or_matching_prefix_destinations() {
+        let directory = tempdir().unwrap();
+        let source = directory.path().join("source");
+        let destination = directory.path().join("destination");
+        let contents = b"verified transfer contents";
+        fs::write(&source, contents).unwrap();
+        let provider = Provider::new(transfer_manifest(), FilesystemTransfer, vec![]);
+        let input = json!({"sourcePath": source, "destinationPath": destination});
+
+        assert_eq!(
+            provider.reconcile(&input).unwrap(),
+            Reconciliation::RetrySafe
+        );
+        fs::write(&destination, &contents[..8]).unwrap();
+        assert_eq!(
+            provider.reconcile(&input).unwrap(),
+            Reconciliation::RetrySafe
+        );
+        fs::write(&destination, contents).unwrap();
+        assert_eq!(
+            provider.reconcile(&input).unwrap(),
+            Reconciliation::RetrySafe
+        );
+        fs::write(&destination, b"modified prefix").unwrap();
+        assert_eq!(provider.reconcile(&input).unwrap(), Reconciliation::Unsafe);
     }
 
     #[test]
