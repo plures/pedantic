@@ -1015,17 +1015,27 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../../contracts/v1/fixtures/operation-plan.valid.json"
         ));
-        let plan: OperationPlan = serde_json::from_str(source).expect("valid plan fixture");
+        let fixture_plan: OperationPlan = serde_json::from_str(source).expect("valid plan fixture");
+        let serialized = serde_json::to_string(&fixture_plan).expect("serialize plan");
         assert_eq!(
-            serde_json::from_str::<OperationPlan>(
-                &serde_json::to_string(&plan).expect("serialize plan")
-            )
-            .expect("deserialize serialized plan"),
-            plan
+            serde_json::from_str::<OperationPlan>(&serialized)
+                .expect("deserialize serialized plan"),
+            fixture_plan
         );
-        assert_eq!(plan.steps[0].secret_references, ["secret/db-password"]);
-        assert_eq!(plan.resolved_settings["rebootAllowed"], false);
-        assert_eq!(plan.resolved_settings["retryLimit"], 3);
+        assert_eq!(
+            fixture_plan.steps[0].secret_references,
+            ["secret/db-password"]
+        );
+        assert_eq!(fixture_plan.resolved_settings["rebootAllowed"], false);
+        assert_eq!(fixture_plan.resolved_settings["retryLimit"], 3);
+        assert!(schema_accepts(CONTRACT_SCHEMA_SOURCES[0], &serialized));
+
+        let mut plan_without_settings = fixture_plan;
+        plan_without_settings.resolved_settings.clear();
+        let serialized =
+            serde_json::to_string(&plan_without_settings).expect("serialize plan without settings");
+        assert!(!serialized.contains("resolvedSettings"));
+        assert!(schema_accepts(CONTRACT_SCHEMA_SOURCES[0], &serialized));
     }
 
     #[test]

@@ -22,7 +22,15 @@ Operation plans may include `resolvedSettings`, the immutable result of
 built-in, general, target, and plan settings after PX evaluates capability
 safety requirements.
 
+This is an optional additive v1 field: existing plans without it remain valid.
+Consumers validating with the previous closed v1 schema reject populated
+`resolvedSettings`, so providers must only emit it after those consumers update
+to the current schema. The compatibility decision is recorded in
+[ADR 0007](../../docs/adr/0007-operation-plan-resolved-settings.md).
+
 Contract changes require an ADR, compatibility classification, schema tests,
 and a pre-release client conformance run. The fixtures in `fixtures/` are
 validated by `pedantic-service` tests against the same schemas and live service
-responses.
+responses. Before release, run `cargo test -p pedantic-operation` from `rust/`;
+the operation-plan fixture is validated against the schema and round-tripped
+through the Rust client model.
