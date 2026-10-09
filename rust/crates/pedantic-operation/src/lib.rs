@@ -3,6 +3,7 @@
 //! inputs from PX rather than reimplemented here.
 
 pub mod hyperv_transfer_plan;
+pub mod transfer_batch;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
