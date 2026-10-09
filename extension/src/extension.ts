@@ -12,14 +12,25 @@ import * as path from 'path';
 
 let aiPanel: vscode.WebviewPanel | undefined;
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const bridge = new PwshBridge(context, {
     getPwshPath: () => vscode.workspace.getConfiguration('pedantic').get<string>('bridge.pwshPath', 'pwsh')
   });
-  // Start the language server
-  activateLanguageServer(context);
+  try {
+    await activateLanguageServer(context);
+  } catch {
+    // The startup failure is reported by activateLanguageServer.
+  }
 
   const disposables: vscode.Disposable[] = [];
+  let outputChannel: vscode.OutputChannel | undefined;
+  const getOutputChannel = (): vscode.OutputChannel => {
+    if (!outputChannel) {
+      outputChannel = vscode.window.createOutputChannel('Pedantic DSL');
+      context.subscriptions.push(outputChannel);
+    }
+    return outputChannel;
+  };
   const commonResources = [
     'Microsoft.DSC/Archive',
     'Microsoft.DSC/File',
@@ -260,23 +271,22 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }));
 
-  // Debounced graph refresh support
-  let graphRefreshTimer: any;
   const scheduleGraphRefresh = () => {
-  if (graphRefreshTimer) (globalThis as any).clearTimeout(graphRefreshTimer);
-  graphRefreshTimer = (globalThis as any).setTimeout(async () => {
-      const panel = ResourceGraphPanel.current();
-      if (!panel) return;
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) return;
-      try {
-        const parserMod: any = await import('./dsl/simpleParser.js');
-        const doc = parserMod.parseSimple(editor.document.getText());
-        panel.updateFromSimpleDocument(doc);
-      } catch (e: any) {
-        vscode.window.showErrorMessage('Graph auto-refresh failed: ' + e.message);
-      }
-    }, 200); // 200ms debounce
+    const panel = ResourceGraphPanel.current();
+    if (!panel) return;
+    panel.scheduleRefresh(() => {
+      void (async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) return;
+        try {
+          const parserMod: any = await import('./dsl/simpleParser.js');
+          const doc = parserMod.parseSimple(editor.document.getText());
+          panel.updateFromSimpleDocument(doc);
+        } catch (e: any) {
+          vscode.window.showErrorMessage('Graph auto-refresh failed: ' + e.message);
+        }
+      })();
+    });
   };
 
   disposables.push(vscode.commands.registerCommand('pedantic.openGraph', async () => {
@@ -374,12 +384,13 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: inventoryTreeProvider,
     showCollapseAll: true
   });
+  disposables.push(inventoryTreeProvider);
   disposables.push(inventoryTreeView);
 
   context.subscriptions.push(...disposables);
 }
 
-export function deactivate() {
+export function deactivate(): Promise<void> {
   aiPanel = undefined;
   return deactivateLanguageServer();
 }
@@ -400,12 +411,4 @@ function getBasicHtml(title: string, body: string): string {
 ${body}
 </body>
 </html>`;
-}
-
-let _outputChannel: vscode.OutputChannel | undefined;
-function getOutputChannel(): vscode.OutputChannel {
-  if (!_outputChannel) {
-    _outputChannel = vscode.window.createOutputChannel('Pedantic DSL');
-  }
-  return _outputChannel;
 }

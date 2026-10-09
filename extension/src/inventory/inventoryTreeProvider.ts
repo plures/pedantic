@@ -65,13 +65,17 @@ export class InventoryTreeItem extends vscode.TreeItem {
   }
 }
 
-export class InventoryTreeProvider implements vscode.TreeDataProvider<InventoryTreeItem> {
+export class InventoryTreeProvider implements vscode.TreeDataProvider<InventoryTreeItem>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<InventoryTreeItem | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private inventory: Inventory | undefined;
 
   constructor() {}
+
+  dispose(): void {
+    this._onDidChangeTreeData.dispose();
+  }
 
   refresh(): void {
     this._onDidChangeTreeData.fire(undefined);

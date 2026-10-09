@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { ExtensionContext, workspace } from 'vscode';
+import { ExtensionContext, window, workspace } from 'vscode';
 import {
   LanguageClient,
   LanguageClientOptions,
@@ -9,7 +9,7 @@ import {
 
 let client: LanguageClient | undefined;
 
-export function activateLanguageServer(context: ExtensionContext): void {
+export async function activateLanguageServer(context: ExtensionContext): Promise<void> {
   // The server is implemented in Node
   const serverModule = context.asAbsolutePath(
     path.join('dist', 'server', 'server.js')
@@ -30,6 +30,8 @@ export function activateLanguageServer(context: ExtensionContext): void {
   };
 
   // Options to control the language client
+  const fileEvents = workspace.createFileSystemWatcher('**/*.{simple.dsc.yaml,ssudo}');
+  context.subscriptions.push(fileEvents);
   const clientOptions: LanguageClientOptions = {
     // Register the server for Simple DSL and SudoLang files
     documentSelector: [
@@ -40,25 +42,50 @@ export function activateLanguageServer(context: ExtensionContext): void {
       // Synchronize the setting section 'pedantic' to the server
       configurationSection: 'pedantic',
       // Notify the server about file changes to DSC files
-      fileEvents: workspace.createFileSystemWatcher('**/*.{simple.dsc.yaml,ssudo}')
+      fileEvents
     }
   };
 
   // Create the language client and start the client
-  client = new LanguageClient(
+  const languageClient = new LanguageClient(
     'pedanticLanguageServer',
     'Pedantic Language Server',
     serverOptions,
     clientOptions
   );
 
-  // Start the client. This will also launch the server
-  client.start();
+  client = languageClient;
+  try {
+    await languageClient.start();
+  } catch (error) {
+    if (client === languageClient) {
+      client = undefined;
+    }
+    fileEvents.dispose();
+    try {
+      await languageClient.stop();
+    } catch {
+      // Startup errors are reported below.
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    window.showErrorMessage(`Pedantic: Language server failed to start: ${message}`);
+    throw error;
+  }
+
+  context.subscriptions.push({
+    dispose: () => {
+      if (client === languageClient) {
+        void deactivateLanguageServer();
+      }
+    }
+  });
 }
 
-export function deactivateLanguageServer(): Thenable<void> | undefined {
+export async function deactivateLanguageServer(): Promise<void> {
   if (!client) {
-    return undefined;
+    return;
   }
-  return client.stop();
+  const activeClient = client;
+  client = undefined;
+  await activeClient.stop();
 }

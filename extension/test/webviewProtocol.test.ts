@@ -313,4 +313,16 @@ describe('webview protocol validation', () => {
       });
     });
   }
+
+  it('clears graph refresh work when its panel is disposed', async () => {
+    activeHarness = new MockPanelHarness();
+    const panel = ResourceGraphPanel.createOrShow({ extensionPath: '/extension' } as never);
+    let refreshes = 0;
+    panel.scheduleRefresh(() => { refreshes += 1; }, 10);
+
+    activeHarness.dispose();
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    assert.equal(refreshes, 0);
+  });
 });
