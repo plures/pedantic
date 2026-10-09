@@ -14,7 +14,7 @@ export class BoundedOutput {
     const text = chunk.toString();
     const remaining = this.limit - Buffer.byteLength(this.value);
     if (remaining <= 0 || Buffer.byteLength(text) > remaining) {
-      this.value += text.slice(0, Math.max(0, remaining - Buffer.byteLength(truncationMarker))) + truncationMarker;
+      this.value += truncationMarker.slice(0, remaining);
       this.truncated = true;
       return;
     }

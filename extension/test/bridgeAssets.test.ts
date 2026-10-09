@@ -50,10 +50,11 @@ describe('PowerShell bridge assets', () => {
   });
 
   it('bounds captured output and redacts sensitive diagnostics', () => {
-    const output = new BoundedOutput(16);
-    output.append('this output is much larger than sixteen bytes');
+    const output = new BoundedOutput(32);
+    output.append('this output is much larger than thirty-two bytes');
 
     assert.equal(output.wasTruncated, true);
+    assert.ok(Buffer.byteLength(output.text) <= 32);
     assert.match(output.text, /output truncated/);
     assert.equal(redactDiagnostic('token=abc123 password: secret'), 'token=[REDACTED] password: [REDACTED]');
   });
