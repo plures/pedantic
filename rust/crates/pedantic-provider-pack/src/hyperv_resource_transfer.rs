@@ -48,6 +48,7 @@ pub struct HyperVCopyObservation {
     pub destination_size: u64,
     pub source_sha256: String,
     pub destination_sha256: String,
+    pub destination_created: bool,
     pub complete: bool,
 }
 
@@ -101,6 +102,7 @@ pub struct HyperVResourceTransferObservation {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HyperVAppliedChanges {
+    pub destination_vm_name: String,
     pub copied_destination_paths: Vec<String>,
     pub changed_mac_configurations: Vec<HyperVMacObservation>,
 }
@@ -116,7 +118,7 @@ pub trait HyperVResourceTransferBackend: Send + Sync {
     fn copy_resource(
         &self,
         resource: &HyperVResource,
-    ) -> Result<HyperVCopyObservation, CapabilityError>;
+    ) -> Result<HyperVCopyObservation, HyperVCopyFailure>;
     fn configure_mac(
         &self,
         destination_vm_name: &str,
@@ -130,6 +132,15 @@ pub trait HyperVResourceTransferBackend: Send + Sync {
         &self,
         changes: &HyperVAppliedChanges,
     ) -> Result<HyperVRollbackObservation, CapabilityError>;
+
+    fn available(&self) -> Result<(), CapabilityError> {
+        Ok(())
+    }
+}
+
+pub struct HyperVCopyFailure {
+    pub error: CapabilityError,
+    pub destination_created: bool,
 }
 
 pub struct HyperVResourceTransfer<B> {
@@ -158,19 +169,27 @@ impl<B: HyperVResourceTransferBackend> HyperVResourceTransfer<B> {
             });
         }
 
-        let mut changes = HyperVAppliedChanges::default();
+        let mut changes = HyperVAppliedChanges {
+            destination_vm_name: request.destination_vm_name.clone(),
+            ..HyperVAppliedChanges::default()
+        };
         let mut copies = Vec::new();
         let mut mac_configurations = Vec::new();
         for resource in &request.resources {
             let copy = match self.backend.copy_resource(resource) {
                 Ok(copy) => copy,
-                Err(error) => {
+                Err(failure) => {
+                    if failure.destination_created {
+                        changes
+                            .copied_destination_paths
+                            .push(resource.destination_path.clone());
+                    }
                     return self.rollback_error(
                         preflight,
                         copies,
                         mac_configurations,
                         changes,
-                        error,
+                        failure.error,
                     );
                 }
             };
@@ -182,12 +201,14 @@ impl<B: HyperVResourceTransferBackend> HyperVResourceTransfer<B> {
                 && copy.source_sha256 == resource.expected_sha256
                 && copy.destination_sha256 == resource.expected_sha256;
             copies.push(copy);
-            if !valid_copy {
-                return self.rollback_failure(preflight, copies, mac_configurations, changes);
+            if copies.last().is_some_and(|copy| copy.destination_created) {
+                changes
+                    .copied_destination_paths
+                    .push(resource.destination_path.clone());
             }
-            changes
-                .copied_destination_paths
-                .push(resource.destination_path.clone());
+            if !valid_copy {
+                return self.rollback_failure(preflight, copies, mac_configurations, changes, None);
+            }
         }
         for configuration in request
             .mac_configurations
@@ -214,7 +235,7 @@ impl<B: HyperVResourceTransferBackend> HyperVResourceTransfer<B> {
             changes.changed_mac_configurations.push(mac.clone());
             mac_configurations.push(mac);
             if !valid_mac {
-                return self.rollback_failure(preflight, copies, mac_configurations, changes);
+                return self.rollback_failure(preflight, copies, mac_configurations, changes, None);
             }
         }
         let verification = match self.backend.verify(request) {
@@ -234,7 +255,13 @@ impl<B: HyperVResourceTransferBackend> HyperVResourceTransfer<B> {
                 rollback: None,
             })
         } else {
-            Ok(self.rollback_failure(preflight, copies, mac_configurations, changes)?)
+            self.rollback_failure(
+                preflight,
+                copies,
+                mac_configurations,
+                changes,
+                Some(verification),
+            )
         }
     }
 
@@ -244,8 +271,15 @@ impl<B: HyperVResourceTransferBackend> HyperVResourceTransfer<B> {
         copies: Vec<HyperVCopyObservation>,
         mac_configurations: Vec<HyperVMacObservation>,
         changes: HyperVAppliedChanges,
+        verification: Option<HyperVVerificationObservation>,
     ) -> Result<HyperVResourceTransferObservation, CapabilityError> {
-        let rollback = self.backend.rollback(&changes)?;
+        let rollback = self.backend.rollback(&changes).unwrap_or_else(|error| {
+            HyperVRollbackObservation {
+                completed: false,
+                recovery_action: "operator-review-required: inspect destination disks and restore adapter MAC addresses".into(),
+                diagnostics: vec![error.to_string()],
+            }
+        });
         Ok(HyperVResourceTransferObservation {
             state: if rollback.completed {
                 HyperVResourceTransferState::Failed
@@ -256,7 +290,7 @@ impl<B: HyperVResourceTransferBackend> HyperVResourceTransfer<B> {
             diagnostics: Vec::new(),
             copies,
             mac_configurations,
-            verification: None,
+            verification,
             rollback: Some(rollback),
         })
     }
@@ -270,9 +304,24 @@ impl<B: HyperVResourceTransferBackend> HyperVResourceTransfer<B> {
         error: CapabilityError,
     ) -> Result<HyperVResourceTransferObservation, CapabilityError> {
         let mut observation =
-            self.rollback_failure(preflight, copies, mac_configurations, changes)?;
+            self.rollback_failure(preflight, copies, mac_configurations, changes, None)?;
         observation.diagnostics.push(error.to_string());
         Ok(observation)
+    }
+}
+
+impl<B: HyperVResourceTransferBackend> super::ProviderBackend for HyperVResourceTransfer<B> {
+    fn ready(&self) -> Result<(), CapabilityError> {
+        self.backend.available()
+    }
+
+    fn execute(&self, input: &serde_json::Value) -> Result<serde_json::Value, CapabilityError> {
+        let request = serde_json::from_value(input.clone()).map_err(|_| {
+            CapabilityError::InvalidInput("Hyper-V transfer request is invalid".into())
+        })?;
+        serde_json::to_value(self.execute(&request)?).map_err(|_| {
+            CapabilityError::Execution("Hyper-V transfer result could not be serialized".into())
+        })
     }
 }
 
@@ -285,8 +334,11 @@ mod tests {
     struct Backend {
         preflight_ready: bool,
         copy_complete: bool,
+        copy_destination_created: bool,
+        copy_error: bool,
         verification_valid: bool,
         rollback_complete: bool,
+        rollback_error: bool,
         changes: std::sync::Arc<Mutex<Vec<HyperVAppliedChanges>>>,
     }
 
@@ -304,7 +356,13 @@ mod tests {
         fn copy_resource(
             &self,
             resource: &HyperVResource,
-        ) -> Result<HyperVCopyObservation, CapabilityError> {
+        ) -> Result<HyperVCopyObservation, HyperVCopyFailure> {
+            if self.copy_error {
+                return Err(HyperVCopyFailure {
+                    error: CapabilityError::Execution("copy failed".into()),
+                    destination_created: true,
+                });
+            }
             Ok(HyperVCopyObservation {
                 source_path: resource.source_path.clone(),
                 destination_path: resource.destination_path.clone(),
@@ -312,6 +370,7 @@ mod tests {
                 destination_size: resource.expected_size,
                 source_sha256: resource.expected_sha256.clone(),
                 destination_sha256: resource.expected_sha256.clone(),
+                destination_created: self.copy_destination_created,
                 complete: self.copy_complete,
             })
         }
@@ -343,6 +402,9 @@ mod tests {
             changes: &HyperVAppliedChanges,
         ) -> Result<HyperVRollbackObservation, CapabilityError> {
             self.changes.lock().unwrap().push(changes.clone());
+            if self.rollback_error {
+                return Err(CapabilityError::Execution("rollback failed".into()));
+            }
             Ok(HyperVRollbackObservation {
                 completed: self.rollback_complete,
                 recovery_action: "remove-copied-disks-and-restore-macs".into(),
@@ -387,8 +449,11 @@ mod tests {
         Backend {
             preflight_ready,
             copy_complete,
+            copy_destination_created: true,
+            copy_error: false,
             verification_valid,
             rollback_complete,
+            rollback_error: false,
             changes: Default::default(),
         }
     }
@@ -454,6 +519,42 @@ mod tests {
             observation.rollback.unwrap().recovery_action,
             "remove-copied-disks-and-restore-macs"
         );
+        assert_eq!(
+            changes.lock().unwrap()[0].copied_destination_paths,
+            vec!["destination/base.vhdx"]
+        );
+        assert_eq!(
+            changes.lock().unwrap()[0].destination_vm_name,
+            "destination"
+        );
+    }
+
+    #[test]
+    fn copy_error_after_destination_creation_is_rolled_back() {
+        let mut backend = backend(true, true, true, true);
+        backend.copy_error = true;
+        let changes = backend.changes.clone();
+        let adapter = HyperVResourceTransfer::new(backend);
+
+        let observation = adapter.execute(&request(true)).unwrap();
+
+        assert_eq!(observation.state, HyperVResourceTransferState::Failed);
+        assert_eq!(
+            changes.lock().unwrap()[0].copied_destination_paths,
+            vec!["destination/base.vhdx"]
+        );
+    }
+
+    #[test]
+    fn incomplete_copy_without_creation_evidence_is_not_removed() {
+        let mut backend = backend(true, false, true, true);
+        backend.copy_destination_created = false;
+        let changes = backend.changes.clone();
+        let adapter = HyperVResourceTransfer::new(backend);
+
+        let observation = adapter.execute(&request(true)).unwrap();
+
+        assert_eq!(observation.state, HyperVResourceTransferState::Failed);
         assert!(
             changes.lock().unwrap()[0]
                 .copied_destination_paths
@@ -470,6 +571,10 @@ mod tests {
         let observation = adapter.execute(&request(true)).unwrap();
 
         assert_eq!(observation.state, HyperVResourceTransferState::Failed);
+        assert_eq!(
+            observation.verification.as_ref().unwrap().diagnostics,
+            vec!["attachments-and-differencing-chain-checked"]
+        );
         let rollback = changes.lock().unwrap();
         assert_eq!(rollback[0].copied_destination_paths.len(), 2);
         assert_eq!(
@@ -491,5 +596,27 @@ mod tests {
 
         assert_eq!(observation.state, HyperVResourceTransferState::NeedsReview);
         assert!(!observation.rollback.unwrap().completed);
+    }
+
+    #[test]
+    fn rollback_backend_error_returns_needs_review_with_recovery_instructions() {
+        let mut backend = backend(true, true, false, true);
+        backend.rollback_error = true;
+        let adapter = HyperVResourceTransfer::new(backend);
+
+        let observation = adapter.execute(&request(true)).unwrap();
+
+        assert_eq!(observation.state, HyperVResourceTransferState::NeedsReview);
+        let rollback = observation.rollback.unwrap();
+        assert!(!rollback.completed);
+        assert!(
+            rollback
+                .recovery_action
+                .contains("operator-review-required")
+        );
+        assert_eq!(
+            rollback.diagnostics,
+            vec!["bounded adapter failed: rollback failed"]
+        );
     }
 }
