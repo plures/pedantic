@@ -17,7 +17,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:yaml",
+    "onLanguage:pedantic-simple-dsc",
+    "onLanguage:pedantic-sudolang",
     "onCommand:pedantic.checkPrereqs",
     "onCommand:pedantic.showResourceInventory",
     "onCommand:pedantic.addResourceToProject",
@@ -31,6 +32,26 @@
     "LICENSE"
   ],
   "contributes": {
+    "languages": [
+      {
+        "id": "pedantic-simple-dsc",
+        "aliases": [
+          "Pedantic Simple DSC"
+        ],
+        "filenamePatterns": [
+          "*.simple.dsc.yaml"
+        ]
+      },
+      {
+        "id": "pedantic-sudolang",
+        "aliases": [
+          "Pedantic SudoLang"
+        ],
+        "filenamePatterns": [
+          "*.ssudo"
+        ]
+      }
+    ],
     "views": {
       "explorer": [
         {

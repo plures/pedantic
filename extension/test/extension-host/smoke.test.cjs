@@ -9,6 +9,34 @@ async function run() {
   const extension = vscode.extensions.getExtension('pedantic.pedantic-dsc');
   assert.ok(extension, 'The packaged Pedantic extension should be installed');
 
+  assert.equal(extension.isActive, false, 'Pedantic should not activate before a matching document is opened');
+  const ordinaryYaml = vscode.Uri.file(path.join(os.tmpdir(), `pedantic-smoke-${process.pid}.yaml`));
+  fs.writeFileSync(ordinaryYaml.fsPath, 'apiVersion: v1\nkind: ConfigMap\n', 'utf8');
+  const ordinaryDocument = await vscode.workspace.openTextDocument(ordinaryYaml);
+  await vscode.window.showTextDocument(ordinaryDocument);
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.equal(extension.isActive, false, 'Ordinary YAML must not activate Pedantic');
+
+  const pedanticDsl = vscode.Uri.file(path.join(os.tmpdir(), `pedantic-smoke-${process.pid}.simple.dsc.yaml`));
+  fs.writeFileSync(pedanticDsl.fsPath, 'dsc.install:\n  packages: []\n', 'utf8');
+  const pedanticDocument = await vscode.workspace.openTextDocument(pedanticDsl);
+  await vscode.window.showTextDocument(pedanticDocument);
+  await waitFor(() => extension.isActive, 'Pedantic should activate for Simple DSC documents');
+  await waitFor(
+    () => vscode.languages.getDiagnostics(pedanticDocument.uri).some(diagnostic => diagnostic.source === 'pedantic'),
+    'Pedantic should publish diagnostics for Simple DSC documents before checking ordinary YAML',
+  );
+
+  const ordinaryEditor = await vscode.window.showTextDocument(ordinaryDocument);
+  await ordinaryEditor.edit(editBuilder => editBuilder.insert(new vscode.Position(0, 0), '# updated\n'));
+  await new Promise(resolve => setTimeout(resolve, 250));
+  const ordinaryDiagnostics = vscode.languages.getDiagnostics(ordinaryDocument.uri);
+  assert.equal(
+    ordinaryDiagnostics.some(diagnostic => diagnostic.source === 'pedantic'),
+    false,
+    'Pedantic must not publish diagnostics for ordinary YAML',
+  );
+
   await extension.activate();
   assert.ok(
     fs.existsSync(path.join(extension.extensionPath, 'dist/server/server.js')),
@@ -39,6 +67,19 @@ async function run() {
 
   const commands = await vscode.commands.getCommands(true);
   assert.ok(commands.includes('pedantic.generateConfig'), 'Pedantic commands should be registered');
+
+  fs.rmSync(pedanticDsl.fsPath, { force: true });
+  fs.rmSync(ordinaryYaml.fsPath, { force: true });
+}
+
+async function waitFor(predicate, message) {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      assert.fail(message);
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
 }
 
 function runBridge(bridgePath, commandArgs) {
