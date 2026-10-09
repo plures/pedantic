@@ -44,8 +44,6 @@ export class ResourceGraphPanel {
     this.panel = panel;
     this.context = context;
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
-    this.panel.webview.html = this.getHtml();
-    
     this.panel.webview.onDidReceiveMessage(
       async (msg: unknown) => {
         if (isReadyMessage(msg)) {
@@ -58,6 +56,7 @@ export class ResourceGraphPanel {
       null,
       this.disposables
     );
+    this.panel.webview.html = this.getHtml();
   }
 
   updateFromSimpleDocument(simpleDoc: any) {
@@ -155,6 +154,7 @@ export class ResourceGraphPanel {
       const delivered = await this.panel.webview.postMessage(this.latestPayload);
       if (!delivered) this.ready = false;
     } catch {
+      this.ready = false;
       // Retain the newest payload for the next ready notification.
     }
   }

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
-import { InventoryPayload, isInventoryPayload, isReadyMessage } from './webviewProtocol';
+import { InventoryPayload, InventoryResourceRow, isInventoryPayload, isReadyMessage } from './webviewProtocol';
 
 export interface ResourceInventoryData {
   dscInstalled?: boolean;
@@ -15,6 +15,27 @@ export interface ResourceInventoryData {
   installed?: any[];
   cached?: any[];
   catalog?: any;
+}
+
+function projectResourceRows(value: unknown): InventoryResourceRow[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const keys = ['type', 'Type', 'name', 'Key', 'version', 'Version', 'source', 'Source', 'path', 'Path'] as const;
+  return value.flatMap(item => {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      return [];
+    }
+    const source = item as Record<string, unknown>;
+    const row: Record<string, string> = {};
+    for (const key of keys) {
+      if (typeof source[key] === 'string') {
+        row[key] = source[key];
+      }
+    }
+    return [row as InventoryResourceRow];
+  });
 }
 
 export class ResourceInventoryPanel {
@@ -70,7 +91,16 @@ export class ResourceInventoryPanel {
   }
 
   update(data: ResourceInventoryData): void {
-    const payload: unknown = { command: 'inventoryData', data };
+    const payload: unknown = {
+      command: 'inventoryData',
+      data: {
+        dscInstalled: data.dscInstalled,
+        dscVersion: data.dscVersion,
+        commonResources: data.commonResources,
+        installed: projectResourceRows(data.installed),
+        cached: projectResourceRows(data.cached),
+      }
+    };
     if (!isInventoryPayload(payload) || this.disposed) {
       return;
     }
@@ -88,6 +118,7 @@ export class ResourceInventoryPanel {
       const delivered = await this.panel.webview.postMessage(this.latestPayload);
       if (!delivered) this.ready = false;
     } catch {
+      this.ready = false;
       // Retain the newest payload for the next ready notification.
     }
   }
