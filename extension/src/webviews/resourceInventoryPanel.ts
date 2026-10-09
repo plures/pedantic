@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
+import { InventoryPayload, InventoryResourceRow, isInventoryPayload, isReadyMessage } from './webviewProtocol';
 
 export interface ResourceInventoryData {
   dscInstalled?: boolean;
@@ -15,11 +17,35 @@ export interface ResourceInventoryData {
   catalog?: any;
 }
 
+function projectResourceRows(value: unknown): InventoryResourceRow[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const keys = ['type', 'Type', 'name', 'Key', 'version', 'Version', 'source', 'Source', 'path', 'Path'] as const;
+  return value.flatMap(item => {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      return [];
+    }
+    const source = item as Record<string, unknown>;
+    const row: Record<string, string> = {};
+    for (const key of keys) {
+      if (typeof source[key] === 'string') {
+        row[key] = source[key];
+      }
+    }
+    return [row as InventoryResourceRow];
+  });
+}
+
 export class ResourceInventoryPanel {
   private static instance: ResourceInventoryPanel | undefined;
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly context: vscode.ExtensionContext;
+  private latestPayload: InventoryPayload | undefined;
+  private ready = false;
+  private disposed = false;
 
   static createOrShow(context: vscode.ExtensionContext): ResourceInventoryPanel {
     if (ResourceInventoryPanel.instance) {
@@ -33,7 +59,6 @@ export class ResourceInventoryPanel {
       vscode.ViewColumn.Beside,
       {
         enableScripts: true,
-        retainContextWhenHidden: true,
         localResourceRoots: [
           vscode.Uri.file(path.join(context.extensionPath, 'dist', 'vendor'))
         ]
@@ -52,18 +77,55 @@ export class ResourceInventoryPanel {
     this.panel = panel;
     this.context = context;
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+    this.panel.webview.onDidReceiveMessage(
+      message => {
+        if (isReadyMessage(message)) {
+          this.ready = true;
+          void this.flushLatestPayload();
+        }
+      },
+      undefined,
+      this.disposables,
+    );
     this.panel.webview.html = this.getHtml();
   }
 
-  update(data: ResourceInventoryData) {
+  update(data: ResourceInventoryData): void {
+    const payload: unknown = {
+      command: 'inventoryData',
+      data: {
+        dscInstalled: data.dscInstalled,
+        dscVersion: data.dscVersion,
+        commonResources: data.commonResources,
+        installed: projectResourceRows(data.installed),
+        cached: projectResourceRows(data.cached),
+      }
+    };
+    if (!isInventoryPayload(payload) || this.disposed) {
+      return;
+    }
+    this.latestPayload = payload;
+    if (this.ready) {
+      void this.flushLatestPayload();
+    }
+  }
+
+  private async flushLatestPayload(): Promise<void> {
+    if (!this.ready || this.disposed || !this.latestPayload) {
+      return;
+    }
     try {
-      this.panel.webview.postMessage({ command: 'inventoryData', data });
+      const delivered = await this.panel.webview.postMessage(this.latestPayload);
+      if (!delivered) this.ready = false;
     } catch {
-      /* ignore */
+      this.ready = false;
+      // Retain the newest payload for the next ready notification.
     }
   }
 
   dispose() {
+    this.disposed = true;
+    this.latestPayload = undefined;
     while (this.disposables.length) {
       const x = this.disposables.pop();
       if (x) {
@@ -84,17 +146,18 @@ export class ResourceInventoryPanel {
   }
 
   private getHtml(): string {
-    const nonce = Math.random().toString(36).slice(2);
+    const nonce = randomBytes(16).toString('base64');
     const echartsUri = this.getEChartsUri();
+    const cspSource = this.panel.webview.cspSource;
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' ${echartsUri}; img-src data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}' ${cspSource};">
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Pedantic Resource Inventory</title>
-<style>
+<style nonce="${nonce}">
 body { font-family: var(--vscode-font-family, Segoe UI, Arial, sans-serif); margin: 0; padding: 0.75rem; }
 .summary { margin-bottom: 0.5rem; }
 .card { border: 1px solid var(--vscode-editorWidget-border,#555); padding: 0.75rem; border-radius: 6px; margin-top: 0.75rem; background: var(--vscode-editor-background,#1e1e1e); }
@@ -135,15 +198,36 @@ small { color: var(--vscode-descriptionForeground,#999); }
     }
   }
 
+  function replaceChildren(host, ...children) {
+    host.replaceChildren(...children);
+  }
+
+  function textElement(tag, text, className) {
+    const element = document.createElement(tag);
+    element.textContent = String(text);
+    if (className) element.className = className;
+    return element;
+  }
+
   function renderTable(targetId, rows, emptyText){
     const host = document.getElementById(targetId);
     if (!rows || rows.length === 0) {
-      host.innerHTML = '<small>' + emptyText + '</small>';
+      replaceChildren(host, textElement('small', emptyText));
       return;
     }
-    const header = '<tr><th>Type</th><th>Version</th><th>Source</th></tr>';
-    const body = rows.map(r => '<tr><td>' + (r.type || r.Type || r.name || '') + '</td><td>' + (r.version || r.Version || '') + '</td><td>' + (r.source || r.Source || '') + '</td></tr>').join('');
-    host.innerHTML = '<table class="table">' + header + body + '</table>';
+    const table = document.createElement('table');
+    table.className = 'table';
+    const header = document.createElement('tr');
+    for (const label of ['Type', 'Version', 'Source']) header.appendChild(textElement('th', label));
+    table.appendChild(header);
+    for (const row of rows) {
+      const tableRow = document.createElement('tr');
+      for (const value of [row.type || row.Type || row.name || '', row.version || row.Version || '', row.source || row.Source || '']) {
+        tableRow.appendChild(textElement('td', value));
+      }
+      table.appendChild(tableRow);
+    }
+    replaceChildren(host, table);
   }
 
   function render(data){
@@ -153,11 +237,16 @@ small { color: var(--vscode-descriptionForeground,#999); }
     const missing = (data.commonResources && data.commonResources.missing) || [];
     const availableCommon = (data.commonResources && data.commonResources.available) || [];
 
-    document.getElementById('summary').innerHTML =
-      '<div><strong>DSC:</strong> ' + (data.dscInstalled ? 'Detected' : 'Not detected') +
-      (data.dscVersion ? ' <span class="badge">' + data.dscVersion + '</span>' : '') + '</div>' +
-      '<div><strong>Installed:</strong> ' + installed.length + ' &nbsp; <strong>Cached:</strong> ' + cached.length + '</div>' +
-      '<div><strong>Common resources:</strong> ' + availableCommon.length + ' available, ' + missing.length + ' missing</div>';
+    const summary = document.getElementById('summary');
+    const dsc = document.createElement('div');
+    dsc.append(textElement('strong', 'DSC:'), document.createTextNode(' ' + (data.dscInstalled ? 'Detected' : 'Not detected')));
+    if (data.dscVersion) dsc.appendChild(textElement('span', data.dscVersion, 'badge'));
+    replaceChildren(
+      summary,
+      dsc,
+      textElement('div', 'Installed: ' + installed.length + '   Cached: ' + cached.length),
+      textElement('div', 'Common resources: ' + availableCommon.length + ' available, ' + missing.length + ' missing'),
+    );
 
     if (chart) {
       chart.setOption({
@@ -181,9 +270,16 @@ small { color: var(--vscode-descriptionForeground,#999); }
     }
     const commonHost = document.getElementById('common');
     if (commonRows.length === 0) {
-      commonHost.innerHTML = '<small>No common resources specified.</small>';
+      replaceChildren(commonHost, textElement('small', 'No common resources specified.'));
     } else {
-      commonHost.innerHTML = commonRows.map(r => '<div class="' + (r.ok ? 'ok' : 'missing') + '">' + r.type + ' <span class="badge">' + r.version + '</span></div>').join('');
+      const fragment = document.createDocumentFragment();
+      for (const row of commonRows) {
+        const item = document.createElement('div');
+        item.className = row.ok ? 'ok' : 'missing';
+        item.append(document.createTextNode(row.type + ' '), textElement('span', row.version, 'badge'));
+        fragment.appendChild(item);
+      }
+      replaceChildren(commonHost, fragment);
     }
 
     renderTable('installed', installed.map(r => ({ type: r.type || r.Type, version: r.version || r.Version, source: r.source || r.Source || 'local' })), 'No installed resources reported.');
@@ -192,11 +288,13 @@ small { color: var(--vscode-descriptionForeground,#999); }
 
   window.addEventListener('message', e => {
     const msg = e.data;
-    if (!msg) return;
+    if (!msg || Object.getPrototypeOf(msg) !== Object.prototype || Object.keys(msg).length !== 2 ||
+      msg.command !== 'inventoryData' || !msg.data || Object.getPrototypeOf(msg.data) !== Object.prototype) return;
     if (msg.command === 'inventoryData') {
-      render(msg.data || {});
+      render(msg.data);
     }
   });
+  vscode.postMessage({ command: 'ready' });
 })();
 </script>
 </body>
