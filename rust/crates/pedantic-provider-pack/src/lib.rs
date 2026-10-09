@@ -3,6 +3,8 @@
 
 #[cfg(windows)]
 use base64::Engine as _;
+#[cfg(windows)]
+use std::collections::BTreeSet;
 use pedantic_capability::{
     validate_manifest, validate_readiness, Capability, CapabilityActivity, CapabilityError,
     CapabilityRegistry,
@@ -23,7 +25,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Instant;
 #[cfg(windows)]
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MANIFEST_VERSION: &str = "pedantic.capability-manifest.v1";
 const READINESS_VERSION: &str = "pedantic.capability-readiness.v1";
@@ -203,15 +205,138 @@ struct TemporaryPreparationFiles {
 }
 
 #[cfg(windows)]
-impl Drop for TemporaryPreparationFiles {
-    fn drop(&mut self) {
+impl TemporaryPreparationFiles {
+    fn stop_task(&self) {
         let _ = Command::new("schtasks.exe")
-            .args(["/Delete", "/TN", &self.task_name, "/F"])
+            .args(["/End", "/TN", &self.task_name])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+        loop {
+            match preparation_task_state(&self.task_name) {
+                Some(PreparationTaskState::Missing) => {
+                    return;
+                }
+                Some(PreparationTaskState::Stopped) => {
+                    let _ = Command::new("schtasks.exe")
+                        .args(["/Delete", "/TN", &self.task_name, "/F"])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                    if matches!(
+                        preparation_task_state(&self.task_name),
+                        Some(PreparationTaskState::Missing)
+                    ) {
+                        return;
+                    }
+                }
+                Some(PreparationTaskState::Running) | None => {}
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+
+    fn cleanup(&self) {
+        self.stop_task();
         let _ = fs::remove_dir_all(&self.directory);
     }
+}
+
+#[cfg(windows)]
+impl Drop for TemporaryPreparationFiles {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+enum PreparationTaskState {
+    Missing,
+    Running,
+    Stopped,
+}
+
+#[cfg(windows)]
+fn powershell_output(script: &str) -> Option<String> {
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+#[cfg(windows)]
+fn preparation_task_state(task_name: &str) -> Option<PreparationTaskState> {
+    if !is_preparation_task_name(task_name) {
+        return None;
+    }
+    let script = format!(
+        "$task = Get-ScheduledTask -TaskName '{task_name}' -TaskPath '\\' -ErrorAction SilentlyContinue; \
+         if ($null -eq $task) {{ 'Missing' }} else {{ [string]$task.State }}"
+    );
+    match powershell_output(&script)?.as_str() {
+        "Missing" => Some(PreparationTaskState::Missing),
+        "Running" | "Queued" => Some(PreparationTaskState::Running),
+        "Ready" | "Disabled" => Some(PreparationTaskState::Stopped),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn is_preparation_task_name(task_name: &str) -> bool {
+    task_name
+        .strip_prefix("PedanticTransferPreparation-")
+        .is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+        })
+}
+
+#[cfg(windows)]
+fn scavenge_stale_preparation_tasks() -> Result<(), CapabilityError> {
+    let task_names = loop {
+        if let Some(output) = powershell_output(
+            "Get-ScheduledTask -TaskPath '\\' | \
+             Where-Object { $_.TaskName -like 'PedanticTransferPreparation-*' } | \
+             ForEach-Object { $_.TaskName }",
+        ) {
+            break output;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    };
+    let mut stale_names: BTreeSet<String> = task_names
+        .lines()
+        .map(str::trim)
+        .filter(|name| is_preparation_task_name(name))
+        .map(str::to_owned)
+        .collect();
+    let temp_directory = std::env::temp_dir();
+    let entries = fs::read_dir(&temp_directory).map_err(|_| {
+        CapabilityError::Execution("preparation workspaces could not be inspected".into())
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|_| {
+            CapabilityError::Execution("preparation workspaces could not be inspected".into())
+        })?;
+        let file_name = entry.file_name();
+        if let Some(name) = file_name.to_str() {
+            if is_preparation_task_name(name) {
+                stale_names.insert(name.to_owned());
+            }
+        }
+    }
+    for task_name in stale_names {
+        TemporaryPreparationFiles {
+            directory: temp_directory.join(&task_name),
+            task_name,
+        }
+        .cleanup();
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -219,6 +344,7 @@ fn run_windows_transfer_preparation(
     request: &TransferHostPreparationRequest,
     remediation: Option<&str>,
 ) -> Result<TransferHostPreparationResult, CapabilityError> {
+    scavenge_stale_preparation_tasks()?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| CapabilityError::Execution("system clock is unavailable".into()))?
@@ -299,10 +425,19 @@ fn run_windows_transfer_preparation(
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
-    let result: Value = serde_json::from_slice(&fs::read(&result_path).map_err(|_| {
+    if !result_path.exists() {
+        temporary.cleanup();
+        return Err(CapabilityError::Execution(
+            "target-local SYSTEM task did not report a result".into(),
+        ));
+    }
+    temporary.stop_task();
+    let result_bytes = fs::read(&result_path).map_err(|_| {
         CapabilityError::Execution("target-local SYSTEM task did not report a result".into())
-    })?)
-    .map_err(|_| CapabilityError::Execution("target-local SYSTEM result was invalid".into()))?;
+    })?;
+    temporary.cleanup();
+    let result: Value = serde_json::from_slice(&result_bytes)
+        .map_err(|_| CapabilityError::Execution("target-local SYSTEM result was invalid".into()))?;
     let failure_category = result
         .get("failureCategory")
         .and_then(Value::as_str)
