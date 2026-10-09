@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { bridgeAssetRelativePath, resolveBridgeAsset, validateBridgeAsset } from '../src/bridge/assets';
+import { bridgeAssetRelativePath, resolveBridgeAsset, validateBridgeAsset, validatePwshExecutable } from '../src/bridge/assets';
+import { BoundedOutput, redactDiagnostic } from '../src/bridge/output';
 import { bridgeProtocolVersion, parseBridgeResponse } from '../src/bridge/schema';
 
 describe('PowerShell bridge assets', () => {
@@ -27,6 +29,33 @@ describe('PowerShell bridge assets', () => {
       validateBridgeAsset(path.join(path.sep, 'missing', 'bridge.ps1')),
       /Reinstall the Pedantic extension/
     );
+  });
+
+  it('rejects a non-absolute configured PowerShell executable', async () => {
+    await assert.rejects(
+      validatePwshExecutable('malicious-pwsh'),
+      /must be "pwsh" or an absolute path/
+    );
+  });
+
+  it('restricts the PowerShell executable setting to the local machine', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8'));
+    const setting = manifest.contributes.configuration.properties['pedantic.bridge.pwshPath'];
+
+    assert.equal(setting.scope, 'machine');
+    assert.deepEqual(
+      manifest.capabilities.untrustedWorkspaces.restrictedConfigurations,
+      ['pedantic.bridge.pwshPath']
+    );
+  });
+
+  it('bounds captured output and redacts sensitive diagnostics', () => {
+    const output = new BoundedOutput(16);
+    output.append('this output is much larger than sixteen bytes');
+
+    assert.equal(output.wasTruncated, true);
+    assert.match(output.text, /output truncated/);
+    assert.equal(redactDiagnostic('token=abc123 password: secret'), 'token=[REDACTED] password: [REDACTED]');
   });
 
   it('accepts only compatible bridge responses', () => {

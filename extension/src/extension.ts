@@ -3,6 +3,8 @@ import { ResourceGraphPanel } from './webviews/resourceGraphPanel';
 import { ResourceInventoryPanel } from './webviews/resourceInventoryPanel';
 import { activateLanguageServer, deactivateLanguageServer } from './client';
 import { createPwshBridge } from './bridge/pwshBridge';
+import { BridgeRequest, BridgeResponse } from './bridge/schema';
+import { redactDiagnostic } from './bridge/output';
 import { InventoryTreeProvider } from './inventory/inventoryTreeProvider';
 import { InventoryDetailPanel } from './inventory/inventoryDetailPanel';
 import { InventoryService } from './inventory/inventoryService';
@@ -27,48 +29,67 @@ export function activate(context: vscode.ExtensionContext) {
     'Microsoft.Windows/Service'
   ];
   const defaultTimeoutMs = 60000;
+  const requireTrustedWorkspace = (): boolean => {
+    if (vscode.workspace.isTrusted) {
+      return true;
+    }
+    vscode.window.showWarningMessage('Pedantic: This operation requires a trusted workspace.');
+    return false;
+  };
+  const runBridge = async (title: string, request: BridgeRequest): Promise<BridgeResponse | undefined> => {
+    if (!requireTrustedWorkspace()) {
+      return undefined;
+    }
+    try {
+      const response = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title,
+        cancellable: true
+      }, (_progress, token) => bridge.invoke(request, token));
+      if (!response.success) {
+        getOutputChannel().appendLine(`[bridge] ${title}: ${redactDiagnostic(response.errors?.join('\n') || 'Unknown error')}`);
+      }
+      return response;
+    } catch (error) {
+      const message = redactDiagnostic(error instanceof Error ? error.message : String(error));
+      getOutputChannel().appendLine(`[bridge] ${title}: ${message}`);
+      vscode.window.showErrorMessage(`Pedantic: ${title} failed. See Pedantic DSL output for details.`);
+      return undefined;
+    }
+  };
 
   const installResource = async (resourceType: string) => {
-    return vscode.window.withProgress({
-      location: vscode.ProgressLocation.Notification,
-      title: `Pedantic: Installing ${resourceType}`,
-      cancellable: true
-    }, async (_progress, token) => {
-      const response = await bridge.invoke({
-        command: 'installResource',
-        resourceType,
-        options: { timeout: defaultTimeoutMs }
-      }, token);
-
-      if (!response.success) {
-        const errors = response.errors?.join('\n') || 'Unknown error';
-        vscode.window.showErrorMessage(`Pedantic: Failed to install ${resourceType}: ${errors}`);
-        return false;
-      }
-
-      const installed = response.data?.installed;
-      vscode.window.showInformationMessage(installed
-        ? `Pedantic: Resource ${resourceType} installed`
-        : `Pedantic: Install attempted for ${resourceType} (see output)`);
-      return installed;
+    const response = await runBridge(`Pedantic: Installing ${resourceType}`, {
+      command: 'installResource',
+      resourceType,
+      options: { timeout: defaultTimeoutMs }
     });
+
+    if (!response) {
+      return false;
+    }
+    if (!response.success) {
+      const errors = redactDiagnostic(response.errors?.join('\n') || 'Unknown error');
+      vscode.window.showErrorMessage(`Pedantic: Failed to install ${resourceType}: ${errors}`);
+      return false;
+    }
+
+    const installed = response.data?.installed;
+    vscode.window.showInformationMessage(installed
+      ? `Pedantic: Resource ${resourceType} installed`
+      : `Pedantic: Install attempted for ${resourceType} (see output)`);
+    return installed;
   };
 
   disposables.push(vscode.commands.registerCommand('pedantic.checkPrereqs', async () => {
-    const response = await vscode.window.withProgress({
-      location: vscode.ProgressLocation.Notification,
-      title: 'Pedantic: Checking DSC prerequisites',
-      cancellable: true
-    }, async (_progress, token) => {
-      return bridge.invoke({
-        command: 'prereqs',
-        resourceTypes: commonResources,
-        options: { timeout: defaultTimeoutMs }
-      }, token);
+    const response = await runBridge('Pedantic: Checking DSC prerequisites', {
+      command: 'prereqs',
+      resourceTypes: commonResources,
+      options: { timeout: defaultTimeoutMs }
     });
-
+    if (!response) return;
     if (!response.success) {
-      const errors = response.errors?.join('\n') || 'Unknown error';
+      const errors = redactDiagnostic(response.errors?.join('\n') || 'Unknown error');
       vscode.window.showErrorMessage(`Pedantic: Prerequisite check failed: ${errors}`);
       return;
     }
@@ -103,20 +124,14 @@ export function activate(context: vscode.ExtensionContext) {
   }));
 
   disposables.push(vscode.commands.registerCommand('pedantic.showResourceInventory', async () => {
-    const response = await vscode.window.withProgress({
-      location: vscode.ProgressLocation.Notification,
-      title: 'Pedantic: Gathering resource inventory',
-      cancellable: true
-    }, async (_progress, token) => {
-      return bridge.invoke({
-        command: 'resources',
-        resourceTypes: commonResources,
-        options: { timeout: defaultTimeoutMs }
-      }, token);
+    const response = await runBridge('Pedantic: Gathering resource inventory', {
+      command: 'resources',
+      resourceTypes: commonResources,
+      options: { timeout: defaultTimeoutMs }
     });
-
+    if (!response) return;
     if (!response.success) {
-      const errors = response.errors?.join('\n') || 'Unknown error';
+      const errors = redactDiagnostic(response.errors?.join('\n') || 'Unknown error');
       vscode.window.showErrorMessage(`Pedantic: Resource inventory failed: ${errors}`);
       return;
     }
@@ -126,20 +141,14 @@ export function activate(context: vscode.ExtensionContext) {
   }));
 
   disposables.push(vscode.commands.registerCommand('pedantic.addResourceToProject', async () => {
-    const response = await vscode.window.withProgress({
-      location: vscode.ProgressLocation.Notification,
-      title: 'Pedantic: Loading available resources',
-      cancellable: true
-    }, async (_progress, token) => {
-      return bridge.invoke({
-        command: 'resources',
-        resourceTypes: commonResources,
-        options: { timeout: defaultTimeoutMs }
-      }, token);
+    const response = await runBridge('Pedantic: Loading available resources', {
+      command: 'resources',
+      resourceTypes: commonResources,
+      options: { timeout: defaultTimeoutMs }
     });
-
+    if (!response) return;
     if (!response.success) {
-      const errors = response.errors?.join('\n') || 'Unknown error';
+      const errors = redactDiagnostic(response.errors?.join('\n') || 'Unknown error');
       vscode.window.showErrorMessage(`Pedantic: Failed to load resources: ${errors}`);
       return;
     }
@@ -197,9 +206,7 @@ export function activate(context: vscode.ExtensionContext) {
   }));
 
   disposables.push(vscode.commands.registerCommand('pedantic.generateConfig', async () => {
-    const workspaceIsTrusted = ((vscode.workspace as unknown) as { isTrusted?: boolean }).isTrusted ?? true;
-    if (!workspaceIsTrusted) {
-      vscode.window.showWarningMessage('Pedantic: Workspace is not trusted. Enable trust to generate DSC output.');
+    if (!requireTrustedWorkspace()) {
       return;
     }
     const editor = vscode.window.activeTextEditor;
@@ -225,14 +232,14 @@ export function activate(context: vscode.ExtensionContext) {
     }
     
     try {
-      vscode.window.showInformationMessage('Pedantic: Generating DSC configuration...');
-      
-      const response = await bridge.invoke({
+      const response = await runBridge('Pedantic: Generating DSC configuration...', {
         command: 'generate',
         dslPath,
         options: { timeout: 30000 }
       });
-      
+      if (!response) {
+        return;
+      }
       if (response.success) {
         // Create a new document with the generated output
         const outputDoc = await vscode.workspace.openTextDocument({
@@ -242,7 +249,7 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.window.showTextDocument(outputDoc, vscode.ViewColumn.Beside);
         vscode.window.showInformationMessage('Pedantic: DSC configuration generated successfully');
       } else {
-        const errors = response.errors?.join('\n') || 'Unknown error';
+        const errors = redactDiagnostic(response.errors?.join('\n') || 'Unknown error');
         vscode.window.showErrorMessage(`Pedantic: Generation failed:\n${errors}`);
       }
     } catch (err: any) {
@@ -391,6 +398,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command: Gather facts for host
   disposables.push(vscode.commands.registerCommand('pedantic.gatherHostFacts', async (item) => {
+    if (!requireTrustedWorkspace()) {
+      return;
+    }
     if (!item || !item.data || !item.data.name) {
       vscode.window.showErrorMessage('Please select a host to gather facts');
       return;
@@ -431,6 +441,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command: Push configuration to host
   disposables.push(vscode.commands.registerCommand('pedantic.pushConfigToHost', async (item) => {
+    if (!requireTrustedWorkspace()) {
+      return;
+    }
     if (!item || !item.data || !item.data.name) {
       vscode.window.showErrorMessage('Please select a host to push configuration');
       return;

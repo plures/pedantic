@@ -132,6 +132,11 @@ Settings are available under `pedantic.*` in VS Code settings:
 }
 ```
 
+Bridge commands run only in trusted workspaces. The PowerShell executable setting
+is machine-scoped and restricted in untrusted workspaces; use either `pwsh` or
+an absolute path to an executable. Bridge execution does not override
+PowerShell's execution policy.
+
 ## 🧪 Development
 
 ### Building from Source

@@ -24,6 +24,14 @@
     "onView:pedanticInventory"
   ],
   "main": "dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "restrictedConfigurations": [
+        "pedantic.bridge.pwshPath"
+      ]
+    }
+  },
   "files": [
     "dist/**",
     "bridge/**",
@@ -127,12 +135,14 @@
         "pedantic.telemetry.enabled": {
           "type": "boolean",
           "default": false,
+          "scope": "window",
           "description": "Enable anonymous telemetry (preview)."
         },
         "pedantic.bridge.pwshPath": {
           "type": "string",
           "default": "pwsh",
-          "description": "Path to PowerShell executable for DSC bridge."
+          "scope": "machine",
+          "description": "Path to the PowerShell executable for the DSC bridge. This setting is ignored in untrusted workspaces."
         }
       }
     }
