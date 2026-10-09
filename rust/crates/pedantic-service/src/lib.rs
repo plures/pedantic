@@ -10,6 +10,10 @@ use pedantic_operation::{
     EffectAuthorization, FederatedTransferRegistry, RetryClass, RiskClass,
     Signature as GrantSignature, TRANSFER_REGISTRY_STORAGE_SCHEMA_VERSION, TransferEvent,
     TransferIngestResult, TransferQuery, TransferReport,
+    transfer_batch::{
+        BatchAuthorizationContext, BatchPolicyDecision, BatchTransferState, TransferBatchPlan,
+        TransferBatchProgress,
+    },
 };
 use pluresdb::{CrdtStore, SledStorage, StorageEngine};
 use pluresdb_chronos::{ChronosAction, ChronosEntry, ChronosTimeline};
@@ -49,14 +53,21 @@ const EFFECT_AUTHORIZATION_SOURCE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../praxis/procedures/pedantic-effect-authorization.px"
 ));
+const TRANSFER_BATCH_POLICY_SOURCE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../praxis/procedures/pedantic-transfer-batch-lifecycle.px"
+));
 const EFFECT_AUTHORIZATION_SCHEMA: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../contracts/v1/effect-authorization.schema.json"
 ));
 const EFFECT_AUTHORIZATION_SCHEMA_VERSION: &str = "pedantic.effect-authorization.v1";
+const TRANSFER_BATCH_STORAGE_SCHEMA_VERSION: &str = "pedantic.transfer-batch-storage.v1";
 const EFFECT_AUTHORIZATION_LIFETIME: Duration = Duration::from_secs(5 * 60);
 static CONFIGURATION_CONSTRAINTS: OnceLock<Result<Vec<ConstraintDecl>, String>> = OnceLock::new();
 static EFFECT_AUTHORIZATION_CONSTRAINTS: OnceLock<Result<Vec<ConstraintDecl>, String>> =
+    OnceLock::new();
+static TRANSFER_BATCH_POLICY_CONSTRAINTS: OnceLock<Result<Vec<ConstraintDecl>, String>> =
     OnceLock::new();
 
 /// A bounded, redacted projection of a Chronos entry for local clients.
@@ -273,6 +284,54 @@ pub struct RemediationExecutionRequest {
     pub document: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferBatchTransitionRequest {
+    pub batch_id: String,
+    pub expected_revision: u64,
+    pub command: TransferBatchCommand,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum TransferBatchCommand {
+    Approve {
+        number: u64,
+        approval_id: String,
+        authorization: Box<EffectAuthorization>,
+    },
+    Start {
+        number: u64,
+    },
+    Finish {
+        number: u64,
+        state: BatchTransferState,
+        observation: Option<pedantic_operation::TransferObservation>,
+    },
+    Deny {
+        number: u64,
+        approval_id: String,
+        outcome: BatchTransferState,
+        continue_batch: bool,
+        actor_id: String,
+        reason: String,
+    },
+    Skip {
+        number: u64,
+        actor_id: String,
+        reason: String,
+    },
+    Exclude {
+        number: u64,
+        actor_id: String,
+        reason: String,
+    },
+}
+
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct RemediationExecution {
     #[serde(rename = "executionId")]
@@ -467,6 +526,137 @@ impl ServiceFoundation {
         let mut registry = self.transfer_registry.lock().await;
         registry.retain_terminal_after(retain_after);
         self.persist_transfer_registry(&registry);
+    }
+
+    pub async fn create_transfer_batch(
+        &self,
+        plan: TransferBatchPlan,
+    ) -> Result<TransferBatchProgress, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let progress = TransferBatchProgress::new(plan)
+            .map_err(|error| ServiceErrorKind::InvalidRequest(error.to_string()))?;
+        let key = self.transfer_batch_key(&progress.plan.batch_id);
+        if self._store.get(&key).is_some() {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "A transfer batch with this identifier already exists.".into(),
+            ));
+        }
+        self.persist_transfer_batch(&progress);
+        Ok(progress)
+    }
+
+    pub async fn transfer_batch_progress(
+        &self,
+        batch_id: &str,
+    ) -> Result<TransferBatchProgress, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        self.load_transfer_batch(batch_id)
+    }
+
+    pub async fn transition_transfer_batch(
+        &self,
+        request: TransferBatchTransitionRequest,
+    ) -> Result<TransferBatchProgress, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let mut progress = self.load_transfer_batch(&request.batch_id)?;
+        if progress.revision != request.expected_revision {
+            return Err(ServiceErrorKind::InvalidRequest(format!(
+                "Transfer batch revision is stale; current revision is {}.",
+                progress.revision
+            )));
+        }
+        let key = self.authorization_signing_key.verifying_key();
+        let key_id = authorization_verifying_key_id(&key);
+        let fencing_token = self.current_effect_fencing_token();
+        let now = current_unix_timestamp();
+        let authorization_context = BatchAuthorizationContext {
+            key: &key,
+            expected_key_id: &key_id,
+            expected_fencing_token: fencing_token,
+            now,
+        };
+        let result = match request.command {
+            TransferBatchCommand::Approve {
+                number,
+                approval_id,
+                authorization,
+            } => {
+                self.validate_recorded_transfer_authorization(&authorization)?;
+                progress.approve(number, approval_id, *authorization, &authorization_context)
+            }
+            TransferBatchCommand::Start { number } => {
+                let authorization = progress
+                    .transfers
+                    .iter()
+                    .find(|transfer| transfer.transfer.number == number)
+                    .and_then(|transfer| transfer.approval.as_ref())
+                    .filter(|approval| approval.approved)
+                    .and_then(|approval| approval.authorization.as_ref())
+                    .ok_or_else(|| {
+                        ServiceErrorKind::InvalidRequest(
+                            "Transfer approval has no effect authorization.".into(),
+                        )
+                    })?;
+                self.validate_recorded_transfer_authorization(authorization)?;
+                progress.start(number, &authorization_context)
+            }
+            TransferBatchCommand::Finish {
+                number,
+                state,
+                observation,
+            } => progress.finish(number, state, observation),
+            TransferBatchCommand::Deny {
+                number,
+                approval_id,
+                outcome,
+                continue_batch,
+                actor_id,
+                reason,
+            } => {
+                let decision = self.transfer_batch_policy_decision(
+                    &progress,
+                    number,
+                    outcome,
+                    continue_batch,
+                    &actor_id,
+                    &reason,
+                )?;
+                progress.deny(number, approval_id, decision)
+            }
+            TransferBatchCommand::Skip {
+                number,
+                actor_id,
+                reason,
+            } => {
+                let decision = self.transfer_batch_policy_decision(
+                    &progress,
+                    number,
+                    BatchTransferState::Skipped,
+                    true,
+                    &actor_id,
+                    &reason,
+                )?;
+                progress.transition_pending(number, decision)
+            }
+            TransferBatchCommand::Exclude {
+                number,
+                actor_id,
+                reason,
+            } => {
+                let decision = self.transfer_batch_policy_decision(
+                    &progress,
+                    number,
+                    BatchTransferState::Excluded,
+                    true,
+                    &actor_id,
+                    &reason,
+                )?;
+                progress.transition_pending(number, decision)
+            }
+        };
+        result.map_err(|error| ServiceErrorKind::InvalidRequest(error.to_string()))?;
+        self.persist_transfer_batch(&progress);
+        Ok(progress)
     }
 
     pub async fn enroll_agent(
@@ -1395,7 +1585,7 @@ impl ServiceFoundation {
     ) -> Result<EffectAuthorization, ServiceErrorKind> {
         let issued_at = current_unix_timestamp();
         let expires_at = issued_at.saturating_add(EFFECT_AUTHORIZATION_LIFETIME.as_secs());
-        let fencing_token_key = format!("pedantic:effect-authorization-fence:{}", self.profile_id);
+        let fencing_token_key = self.effect_authorization_fencing_key();
         let fencing_token = self
             ._store
             .get(&fencing_token_key)
@@ -1907,6 +2097,159 @@ impl ServiceFoundation {
                 "registry": registry,
             }),
         );
+    }
+
+    fn persist_transfer_batch(&self, progress: &TransferBatchProgress) {
+        self._store.put(
+            self.transfer_batch_key(&progress.plan.batch_id),
+            SERVICE_ACTOR,
+            serde_json::json!({
+                "storageSchemaVersion": TRANSFER_BATCH_STORAGE_SCHEMA_VERSION,
+                "profileId": self.profile_id,
+                "revision": progress.revision,
+                "progress": progress,
+            }),
+        );
+    }
+
+    fn load_transfer_batch(
+        &self,
+        batch_id: &str,
+    ) -> Result<TransferBatchProgress, ServiceErrorKind> {
+        let record = self
+            ._store
+            .get(self.transfer_batch_key(batch_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest("Transfer batch was not found.".into())
+            })?;
+        if record.data["storageSchemaVersion"].as_str()
+            != Some(TRANSFER_BATCH_STORAGE_SCHEMA_VERSION)
+            || record.data["profileId"].as_str() != Some(self.profile_id.as_str())
+        {
+            return Err(ServiceErrorKind::Foundation(
+                "Persisted transfer batch has an incompatible schema or profile.".into(),
+            ));
+        }
+        let progress: TransferBatchProgress =
+            serde_json::from_value(record.data["progress"].clone()).map_err(|_| {
+                ServiceErrorKind::Foundation("Persisted transfer batch is malformed.".into())
+            })?;
+        if progress.schema_version
+            != pedantic_operation::transfer_batch::TRANSFER_BATCH_SCHEMA_VERSION
+            || progress.plan.batch_id != batch_id
+            || progress.plan.validate().is_err()
+            || record.data["revision"].as_u64() != Some(progress.revision)
+            || progress.transfers.len() != progress.plan.transfers.len()
+            || progress
+                .transfers
+                .iter()
+                .zip(&progress.plan.transfers)
+                .any(|(item, planned)| item.transfer != *planned)
+        {
+            return Err(ServiceErrorKind::Foundation(
+                "Persisted transfer batch progress is inconsistent.".into(),
+            ));
+        }
+        Ok(progress)
+    }
+
+    fn validate_recorded_transfer_authorization(
+        &self,
+        authorization: &EffectAuthorization,
+    ) -> Result<(), ServiceErrorKind> {
+        if authorization.profile_id != self.profile_id || authorization.issuer_id != "px" {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "Transfer authorization is not issued for this profile.".into(),
+            ));
+        }
+        let record = self
+            ._store
+            .get(self.effect_authorization_key(&authorization.authorization_id))
+            .ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest(
+                    "Transfer authorization is not recorded for this profile.".into(),
+                )
+            })?;
+        let authorization_value = serde_json::to_value(authorization).map_err(|error| {
+            ServiceErrorKind::Foundation(format!("Transfer authorization encoding failed: {error}"))
+        })?;
+        if record.data["decision"].as_str() != Some("accepted")
+            || record.data["evidenceRecorded"].as_bool() != Some(true)
+            || record.data["authorization"] != authorization_value
+        {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "Transfer authorization is not fully recorded.".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn transfer_batch_policy_decision(
+        &self,
+        progress: &TransferBatchProgress,
+        number: u64,
+        requested_state: BatchTransferState,
+        continue_batch: bool,
+        actor_id: &str,
+        reason: &str,
+    ) -> Result<BatchPolicyDecision, ServiceErrorKind> {
+        let transfer = progress
+            .transfers
+            .iter()
+            .find(|transfer| transfer.transfer.number == number)
+            .ok_or_else(|| {
+                ServiceErrorKind::InvalidRequest("Transfer number was not found.".into())
+            })?;
+        let prior_state = serde_json::to_value(&transfer.state)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        let requested_state_name = serde_json::to_value(&requested_state)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        let variables = HashMap::from([(
+            "transition".to_owned(),
+            serde_json::json!({
+                "batch_id": progress.plan.batch_id,
+                "operation_id": transfer.transfer.operation_id,
+                "actor_id": actor_id,
+                "prior_state": prior_state,
+                "requested_state": requested_state_name,
+                "continue_batch": continue_batch,
+                "reason": reason,
+            }),
+        )]);
+        let decision = evaluate_transfer_batch_policy_constraint(
+            "transfer batch transition",
+            "transfer_batch_terminal_transition_is_authorized",
+            &variables,
+        )?;
+        if !decision.accepted {
+            return Err(ServiceErrorKind::InvalidRequest(decision.reason));
+        }
+        Ok(BatchPolicyDecision {
+            accepted: decision.accepted,
+            constraint_id: decision.constraint_id,
+            reason: decision.reason,
+            outcome: requested_state,
+            continue_batch,
+        })
+    }
+
+    fn transfer_batch_key(&self, batch_id: &str) -> String {
+        format!("pedantic:transfer-batch:{}:{batch_id}", self.profile_id)
+    }
+
+    fn effect_authorization_fencing_key(&self) -> String {
+        format!("pedantic:effect-authorization-fence:{}", self.profile_id)
+    }
+
+    fn current_effect_fencing_token(&self) -> u64 {
+        self._store
+            .get(self.effect_authorization_fencing_key())
+            .and_then(|record| record.data["value"].as_u64())
+            .unwrap_or_default()
     }
 
     fn transfer_registry_key(&self) -> String {
@@ -2765,6 +3108,15 @@ fn evaluate_effect_authorization_constraint(
     evaluate_px_constraint(operation, constraint, variables)
 }
 
+fn evaluate_transfer_batch_policy_constraint(
+    operation: &str,
+    constraint_name: &str,
+    variables: &HashMap<String, serde_json::Value>,
+) -> Result<PxConstraintDecision, ServiceErrorKind> {
+    let constraint = transfer_batch_policy_constraint(constraint_name)?;
+    evaluate_px_constraint(operation, constraint, variables)
+}
+
 fn evaluate_px_constraint(
     operation: &str,
     constraint: &ConstraintDecl,
@@ -2846,6 +3198,36 @@ fn effect_authorization_constraint(
                 .ok_or_else(|| {
                     ServiceErrorKind::Foundation(format!(
                         "PX effect authorization constraint '{name}' is missing."
+                    ))
+                })
+        })
+}
+
+fn transfer_batch_policy_constraint(
+    name: &str,
+) -> Result<&'static ConstraintDecl, ServiceErrorKind> {
+    let result = TRANSFER_BATCH_POLICY_CONSTRAINTS.get_or_init(|| {
+        let document = px_compiler::parse(TRANSFER_BATCH_POLICY_SOURCE)
+            .map_err(|error| format!("PX transfer batch lifecycle parse failed: {error}"))?;
+        Ok(document
+            .statements
+            .into_iter()
+            .filter_map(|statement| match statement {
+                Statement::Constraint(constraint) => Some(constraint),
+                _ => None,
+            })
+            .collect())
+    });
+    result
+        .as_ref()
+        .map_err(|error| ServiceErrorKind::Foundation(error.clone()))
+        .and_then(|constraints| {
+            constraints
+                .iter()
+                .find(|constraint| constraint.name.name == name)
+                .ok_or_else(|| {
+                    ServiceErrorKind::Foundation(format!(
+                        "PX transfer batch constraint '{name}' is missing."
                     ))
                 })
         })
@@ -3110,6 +3492,46 @@ impl LocalServiceClient {
         )
         .await
     }
+
+    pub async fn create_transfer_batch(
+        &self,
+        plan: TransferBatchPlan,
+    ) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        self.call(
+            "transfer-batch-create",
+            "transfer.batch.create",
+            serde_json::json!({ "plan": plan }),
+        )
+        .await
+    }
+
+    pub async fn transfer_batch(
+        &self,
+        batch_id: impl Into<String>,
+    ) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        self.call(
+            "transfer-batch-get",
+            "transfer.batch.get",
+            serde_json::json!({ "batchId": batch_id.into() }),
+        )
+        .await
+    }
+
+    pub async fn transition_transfer_batch(
+        &self,
+        request: TransferBatchTransitionRequest,
+    ) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        self.call(
+            "transfer-batch-transition",
+            "transfer.batch.transition",
+            serde_json::to_value(request).map_err(|error| {
+                ServiceErrorKind::InvalidRequest(format!(
+                    "Transfer batch transition encoding failed: {error}"
+                ))
+            })?,
+        )
+        .await
+    }
 }
 
 async fn exchange<T>(
@@ -3209,6 +3631,20 @@ struct TransferRetentionRequest {
 }
 
 #[cfg(any(windows, test))]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferBatchCreateRequest {
+    plan: TransferBatchPlan,
+}
+
+#[cfg(any(windows, test))]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferBatchGetRequest {
+    batch_id: String,
+}
+
+#[cfg(any(windows, test))]
 async fn dispatch_transfer_request(
     foundation: &ServiceFoundation,
     method: &str,
@@ -3252,6 +3688,26 @@ async fn dispatch_transfer_request(
                 .retain_terminal_transfer_history(request.retain_after)
                 .await;
             Ok(serde_json::json!({ "retained": true }))
+        }
+        "transfer.batch.create" => {
+            let request: TransferBatchCreateRequest = parse(method, params)?;
+            Ok(serde_json::json!(
+                foundation.create_transfer_batch(request.plan).await?
+            ))
+        }
+        "transfer.batch.get" => {
+            let request: TransferBatchGetRequest = parse(method, params)?;
+            Ok(serde_json::json!(
+                foundation
+                    .transfer_batch_progress(&request.batch_id)
+                    .await?
+            ))
+        }
+        "transfer.batch.transition" => {
+            let request: TransferBatchTransitionRequest = parse(method, params)?;
+            Ok(serde_json::json!(
+                foundation.transition_transfer_batch(request).await?
+            ))
         }
         _ => Err(ServiceErrorKind::InvalidRequest(
             "Transfer method is not registered.".into(),
@@ -3743,16 +4199,24 @@ where
                 ),
             }
         }
-        "transfer.record" | "transfer.reconcile" | "transfer.query" | "transfer.report"
-        | "transfer.retain" => match (handlers.transfer)(request.method, request.params).await {
-            Ok(result) => response(Some(request.id), true, Some(result), None),
-            Err(error) => response(
-                Some(request.id),
-                false,
-                None,
-                Some(("transfer_failed", error.to_string())),
-            ),
-        },
+        "transfer.record"
+        | "transfer.reconcile"
+        | "transfer.query"
+        | "transfer.report"
+        | "transfer.retain"
+        | "transfer.batch.create"
+        | "transfer.batch.get"
+        | "transfer.batch.transition" => {
+            match (handlers.transfer)(request.method, request.params).await {
+                Ok(result) => response(Some(request.id), true, Some(result), None),
+                Err(error) => response(
+                    Some(request.id),
+                    false,
+                    None,
+                    Some(("transfer_failed", error.to_string())),
+                ),
+            }
+        }
         _ => response(
             Some(request.id),
             false,
@@ -3785,6 +4249,9 @@ fn is_registered_method(method: &str) -> bool {
             | "transfer.query"
             | "transfer.report"
             | "transfer.retain"
+            | "transfer.batch.create"
+            | "transfer.batch.get"
+            | "transfer.batch.transition"
     )
 }
 
@@ -4692,6 +5159,87 @@ mod tests {
         }
     }
 
+    fn transfer_batch_plan(count: u64) -> TransferBatchPlan {
+        TransferBatchPlan {
+            schema_version: pedantic_operation::transfer_batch::TRANSFER_BATCH_SCHEMA_VERSION
+                .into(),
+            batch_id: "batch-1".into(),
+            plan_digest: format!("sha256:{}", "a".repeat(64)),
+            preview: false,
+            transfers: (1..=count)
+                .map(|number| pedantic_operation::transfer_batch::BatchTransfer {
+                    number,
+                    operation_id: format!("operation-{number}"),
+                    source_vm: format!("source-{number}"),
+                    target_vm: format!("target-{number}"),
+                    provider: "filesystem".into(),
+                    input_digest: format!("sha256:{}", "b".repeat(64)),
+                })
+                .collect(),
+        }
+    }
+
+    fn signed_transfer_authorization(
+        service: &ServiceFoundation,
+        number: u64,
+    ) -> EffectAuthorization {
+        use ed25519_dalek::Signer;
+
+        let mut authorization = EffectAuthorization {
+            schema_version: EFFECT_AUTHORIZATION_SCHEMA_VERSION.into(),
+            authorization_id: format!("authorization-{number}"),
+            issuer_id: "px".into(),
+            actor_id: "operator".into(),
+            profile_id: service.profile_id.clone(),
+            operation_id: format!("operation-{number}"),
+            step_id: "transfer".into(),
+            attempt_id: format!("attempt-{number}"),
+            target_id: format!("target-{number}"),
+            agent_id: "pedantic-agent".into(),
+            capability: "filesystem".into(),
+            input_digest: format!("sha256:{}", "b".repeat(64)),
+            idempotency_key: format!("transfer-{number}"),
+            fencing_token: number,
+            retry_class: RetryClass::Safe,
+            risk_class: RiskClass::Moderate,
+            reboot_permitted: false,
+            issued_at: current_unix_timestamp(),
+            expires_at: current_unix_timestamp().saturating_add(300),
+            revoked_at: 0,
+            signature: GrantSignature {
+                algorithm: "Ed25519".into(),
+                key_id: authorization_verifying_key_id(
+                    &service.authorization_signing_key.verifying_key(),
+                ),
+                payload_digest: String::new(),
+                value: String::new(),
+            },
+        };
+        authorization.signature.payload_digest = authorization.digest();
+        authorization.signature.value = URL_SAFE_NO_PAD.encode(
+            service
+                .authorization_signing_key
+                .sign(&authorization.signing_payload())
+                .to_bytes(),
+        );
+        authorization
+    }
+
+    fn record_transfer_authorization(
+        service: &ServiceFoundation,
+        authorization: &EffectAuthorization,
+    ) {
+        service._store.put(
+            service.effect_authorization_key(&authorization.authorization_id),
+            SERVICE_ACTOR,
+            serde_json::json!({
+                "decision": "accepted",
+                "evidenceRecorded": true,
+                "authorization": authorization,
+            }),
+        );
+    }
+
     #[tokio::test]
     async fn transport_exchange_frames_requests_and_decodes_responses() {
         let (client, mut server) = tokio::io::duplex(MAX_FRAME_BYTES);
@@ -4814,6 +5362,195 @@ mod tests {
         let reopened = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
             .expect("reopen profile store");
         assert_eq!(reopened.evidence_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn transfer_batch_progress_persists_and_serializes_concurrent_starts() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        {
+            let service = ServiceFoundation::open_at("profile", directory.path(), "test").unwrap();
+            service
+                .create_transfer_batch(transfer_batch_plan(2))
+                .await
+                .unwrap();
+            service._store.put(
+                service.effect_authorization_fencing_key(),
+                SERVICE_ACTOR,
+                serde_json::json!({ "profileId": "profile", "value": 1 }),
+            );
+            let unrecorded_authorization = signed_transfer_authorization(&service, 1);
+            assert!(
+                service
+                    .transition_transfer_batch(TransferBatchTransitionRequest {
+                        batch_id: "batch-1".into(),
+                        expected_revision: 0,
+                        command: TransferBatchCommand::Approve {
+                            number: 1,
+                            approval_id: "unrecorded-approval".into(),
+                            authorization: Box::new(unrecorded_authorization),
+                        },
+                    })
+                    .await
+                    .is_err()
+            );
+            let mut invalid_authorization = signed_transfer_authorization(&service, 1);
+            invalid_authorization.signature.value.push('x');
+            record_transfer_authorization(&service, &invalid_authorization);
+            assert!(
+                service
+                    .transition_transfer_batch(TransferBatchTransitionRequest {
+                        batch_id: "batch-1".into(),
+                        expected_revision: 0,
+                        command: TransferBatchCommand::Approve {
+                            number: 1,
+                            approval_id: "invalid-approval".into(),
+                            authorization: Box::new(invalid_authorization),
+                        },
+                    })
+                    .await
+                    .is_err()
+            );
+            let authorization = signed_transfer_authorization(&service, 1);
+            record_transfer_authorization(&service, &authorization);
+            let approved = service
+                .transition_transfer_batch(TransferBatchTransitionRequest {
+                    batch_id: "batch-1".into(),
+                    expected_revision: 0,
+                    command: TransferBatchCommand::Approve {
+                        number: 1,
+                        approval_id: "approval-1".into(),
+                        authorization: Box::new(authorization),
+                    },
+                })
+                .await
+                .unwrap();
+            assert_eq!(approved.revision, 1);
+            assert!(
+                approved.transfers[0]
+                    .approval
+                    .as_ref()
+                    .and_then(|approval| approval.authorization_digest.as_ref())
+                    .is_some()
+            );
+
+            let make_start = || TransferBatchTransitionRequest {
+                batch_id: "batch-1".into(),
+                expected_revision: 1,
+                command: TransferBatchCommand::Start { number: 1 },
+            };
+            let (first, second) = tokio::join!(
+                service.transition_transfer_batch(make_start()),
+                service.transition_transfer_batch(make_start())
+            );
+            assert_ne!(first.is_ok(), second.is_ok());
+            let current = service.transfer_batch_progress("batch-1").await.unwrap();
+            assert_eq!(current.revision, 2);
+            assert_eq!(current.transfers[0].state, BatchTransferState::Running);
+        }
+
+        let service = ServiceFoundation::open_at("profile", directory.path(), "test").unwrap();
+        let restored = service.transfer_batch_progress("batch-1").await.unwrap();
+        assert_eq!(restored.revision, 2);
+        assert_eq!(restored.transfers[0].state, BatchTransferState::Running);
+        assert_eq!(
+            service
+                .transition_transfer_batch(TransferBatchTransitionRequest {
+                    batch_id: "batch-1".into(),
+                    expected_revision: 1,
+                    command: TransferBatchCommand::Start { number: 1 },
+                })
+                .await
+                .unwrap_err()
+                .to_string(),
+            "invalid request: Transfer batch revision is stale; current revision is 2."
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_batch_outcomes_require_px_policy_decisions() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let service = ServiceFoundation::open_at("profile", directory.path(), "test").unwrap();
+        service
+            .create_transfer_batch(transfer_batch_plan(4))
+            .await
+            .unwrap();
+        for (number, command) in [
+            (
+                1,
+                TransferBatchCommand::Skip {
+                    number: 1,
+                    actor_id: "operator".into(),
+                    reason: "outside approved scope".into(),
+                },
+            ),
+            (
+                2,
+                TransferBatchCommand::Exclude {
+                    number: 2,
+                    actor_id: "operator".into(),
+                    reason: "not needed".into(),
+                },
+            ),
+            (
+                3,
+                TransferBatchCommand::Deny {
+                    number: 3,
+                    approval_id: "approval-3".into(),
+                    outcome: BatchTransferState::NeedsReview,
+                    continue_batch: false,
+                    actor_id: "operator".into(),
+                    reason: "policy rejected".into(),
+                },
+            ),
+        ] {
+            let progress = service
+                .transition_transfer_batch(TransferBatchTransitionRequest {
+                    batch_id: "batch-1".into(),
+                    expected_revision: number - 1,
+                    command,
+                })
+                .await
+                .unwrap();
+            assert_eq!(progress.revision, number);
+            assert!(
+                progress.transfers[(number - 1) as usize]
+                    .policy_decision
+                    .as_ref()
+                    .is_some_and(|decision| decision.accepted)
+            );
+        }
+        let progress = service.transfer_batch_progress("batch-1").await.unwrap();
+        assert!(!progress.continue_batch);
+        let stopped = service
+            .transition_transfer_batch(TransferBatchTransitionRequest {
+                batch_id: "batch-1".into(),
+                expected_revision: 3,
+                command: TransferBatchCommand::Skip {
+                    number: 4,
+                    actor_id: "operator".into(),
+                    reason: "continue was denied by PX".into(),
+                },
+            })
+            .await;
+        assert!(matches!(
+            stopped,
+            Err(ServiceErrorKind::InvalidRequest(message)) if message.contains("policy stopped")
+        ));
+        let rejected = service
+            .transition_transfer_batch(TransferBatchTransitionRequest {
+                batch_id: "batch-1".into(),
+                expected_revision: 3,
+                command: TransferBatchCommand::Skip {
+                    number: 3,
+                    actor_id: String::new(),
+                    reason: String::new(),
+                },
+            })
+            .await;
+        assert!(matches!(
+            rejected,
+            Err(ServiceErrorKind::InvalidRequest(message)) if message.contains("require a pending transfer")
+        ));
     }
 
     #[tokio::test]
@@ -4998,6 +5735,71 @@ mod tests {
                 .len(),
             1
         );
+
+        let created = transfer_api_request(
+            &service,
+            "transfer.batch.create",
+            serde_json::json!({ "plan": transfer_batch_plan(2) }),
+        )
+        .await;
+        assert!(created.ok, "{:?}", created.error);
+        let created_progress: TransferBatchProgress =
+            serde_json::from_value(created.result.expect("created transfer batch")).unwrap();
+        assert_eq!(created_progress.revision, 0);
+
+        let resumed = transfer_api_request(
+            &service,
+            "transfer.batch.get",
+            serde_json::json!({ "batchId": "batch-1" }),
+        )
+        .await;
+        assert!(resumed.ok, "{:?}", resumed.error);
+        assert_eq!(
+            serde_json::from_value::<TransferBatchProgress>(
+                resumed.result.expect("resumed transfer batch")
+            )
+            .unwrap(),
+            created_progress
+        );
+
+        let skipped = transfer_api_request(
+            &service,
+            "transfer.batch.transition",
+            serde_json::json!({
+                "batchId": "batch-1",
+                "expectedRevision": 0,
+                "command": {
+                    "type": "skip",
+                    "number": 1,
+                    "actorId": "operator",
+                    "reason": "out of scope"
+                }
+            }),
+        )
+        .await;
+        assert!(skipped.ok, "{:?}", skipped.error);
+        assert_eq!(skipped.result.expect("skipped progress")["revision"], 1);
+
+        let denied = transfer_api_request(
+            &service,
+            "transfer.batch.transition",
+            serde_json::json!({
+                "batchId": "batch-1",
+                "expectedRevision": 1,
+                "command": {
+                    "type": "deny",
+                    "number": 2,
+                    "approvalId": "approval-2",
+                    "outcome": "needs-review",
+                    "continueBatch": false,
+                    "actorId": "operator",
+                    "reason": "policy denied execution"
+                }
+            }),
+        )
+        .await;
+        assert!(denied.ok, "{:?}", denied.error);
+        assert_eq!(denied.result.expect("denied progress")["continueBatch"], false);
     }
 
     #[test]

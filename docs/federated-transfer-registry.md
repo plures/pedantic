@@ -27,6 +27,18 @@ sequence is present. The authenticated versioned service API exposes
 `transfer.record`, `transfer.reconcile`, `transfer.query`, `transfer.report`,
 and `transfer.retain`; `LocalServiceClient` provides matching typed methods.
 
+Sequential batches use `transfer.batch.create`, `transfer.batch.get`, and
+`transfer.batch.transition`. The service owns each batch's PluresDB record;
+transitions supply the expected revision and are serialized with other
+profile-state mutations. A transition increments the revision before returning,
+so a stale concurrent start is rejected and reconnecting clients resume from the
+stored progress. Approval records retain the signed effect authorization and
+its digest; the service checks its signature and transfer bindings before
+starting, and the agent validates it again at execution. Denial, skip, and
+exclusion require the PX transfer-batch lifecycle constraint to accept the
+pending-state outcome and continuation choice. A denial may halt the remaining
+batch; skipped and excluded transfers continue to the next pending item.
+
 ## Reports and redaction
 
 `transfer_report` is derived only from recorded evidence. It includes provider,

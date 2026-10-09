@@ -1,0 +1,16 @@
+entity TransferBatchTransition:
+  fields:
+    batch_id: String
+    operation_id: String
+    actor_id: String
+    prior_state: String
+    requested_state: String
+    continue_batch: bool
+    reason: String
+
+constraint transfer_batch_terminal_transition_is_authorized:
+  scope: transfer_batch_transition
+  phase: execution
+  require: transition.batch_id != "" AND transition.operation_id != "" AND transition.actor_id != "" AND transition.prior_state == "pending" AND (transition.requested_state == "needs-review" OR transition.requested_state == "skipped" OR transition.requested_state == "excluded") AND (transition.requested_state == "needs-review" OR transition.continue_batch == true) AND transition.reason != ""
+  severity: error
+  message: "Transfer batch terminal transitions require a pending transfer, identified actor, and reason."
