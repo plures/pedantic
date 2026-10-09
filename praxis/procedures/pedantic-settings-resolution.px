@@ -31,4 +31,4 @@ constraint settings_resolution_requires_px_safety_decision:
 procedure resolve_plan_settings(resolution: SettingsResolution from "settings_resolutions") -> SettingsResolution into "settings_resolutions":
   given: "Resolve built-in, general, target, and plan settings after PX policy evaluates capability safety requirements"
   evaluate_settings_resolution resolution -> $decision
-  return {profile_id: resolution.profile_id, target_id: resolution.target_id, plan_id: resolution.plan_id, resolved_settings: $decision.value}
+  return {profile_id: resolution.profile_id, target_id: resolution.target_id, plan_id: resolution.plan_id, built_in_settings: resolution.built_in_settings, general_settings: resolution.general_settings, target_settings: resolution.target_settings, plan_settings: resolution.plan_settings, capability_requirements: resolution.capability_requirements, resolved_settings: $decision.value}
