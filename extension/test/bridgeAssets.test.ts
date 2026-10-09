@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { bridgeAssetRelativePath, resolveBridgeAsset, validateBridgeAsset, validatePwshExecutable } from '../src/bridge/assets';
 import { BoundedOutput, redactDiagnostic } from '../src/bridge/output';
 import { bridgeProtocolVersion, parseBridgeResponse } from '../src/bridge/schema';
+import { invokeInTrustedWorkspace } from '../src/bridge/trust';
 
 describe('PowerShell bridge assets', () => {
   it('resolves the bridge from the extension directory', () => {
@@ -57,6 +58,26 @@ describe('PowerShell bridge assets', () => {
     assert.ok(Buffer.byteLength(output.text) <= 32);
     assert.match(output.text, /output truncated/);
     assert.equal(redactDiagnostic('token=abc123 password: secret'), 'token=[REDACTED] password: [REDACTED]');
+    assert.equal(redactDiagnostic('{"token":"abc123"}'), '{"token":"[REDACTED]"}');
+    assert.equal(redactDiagnostic('password: "correct horse battery staple"'), 'password: "[REDACTED]"');
+    assert.equal(redactDiagnostic('secret="contains \\"quotes\\""'), 'secret="[REDACTED]"');
+  });
+
+  it('blocks bridge commands in untrusted workspaces', async () => {
+    let warningShown = false;
+    let operationCalled = false;
+
+    const denied = await invokeInTrustedWorkspace(false, () => { warningShown = true; }, async () => {
+      operationCalled = true;
+      return 'invoked';
+    });
+    assert.equal(denied, undefined);
+    assert.equal(warningShown, true);
+    assert.equal(operationCalled, false);
+    assert.equal(
+      await invokeInTrustedWorkspace(true, () => assert.fail('trusted workspaces should not warn'), async () => 'invoked'),
+      'invoked'
+    );
   });
 
   it('accepts only compatible bridge responses', () => {

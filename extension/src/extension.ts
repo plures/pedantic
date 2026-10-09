@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import { ResourceGraphPanel } from './webviews/resourceGraphPanel';
 import { ResourceInventoryPanel } from './webviews/resourceInventoryPanel';
 import { activateLanguageServer, deactivateLanguageServer } from './client';
-import { createPwshBridge } from './bridge/pwshBridge';
+import { PwshBridge } from './bridge/pwshBridge';
+import { invokeInTrustedWorkspace, requireTrustedWorkspace as checkWorkspaceTrust } from './bridge/trust';
 import { BridgeRequest, BridgeResponse } from './bridge/schema';
 import { redactDiagnostic } from './bridge/output';
 import { InventoryTreeProvider } from './inventory/inventoryTreeProvider';
@@ -15,7 +16,9 @@ let aiPanel: vscode.WebviewPanel | undefined;
 let inventoryTreeProvider: InventoryTreeProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-  const bridge = createPwshBridge(context);
+  const bridge = new PwshBridge(context, {
+    getPwshPath: () => vscode.workspace.getConfiguration('pedantic').get<string>('bridge.pwshPath', 'pwsh')
+  });
   // Start the language server
   activateLanguageServer(context);
 
@@ -29,34 +32,32 @@ export function activate(context: vscode.ExtensionContext) {
     'Microsoft.Windows/Service'
   ];
   const defaultTimeoutMs = 60000;
-  const requireTrustedWorkspace = (): boolean => {
-    if (vscode.workspace.isTrusted) {
-      return true;
-    }
+  const requireTrustedWorkspace = (): boolean => checkWorkspaceTrust(vscode.workspace.isTrusted, () => {
     vscode.window.showWarningMessage('Pedantic: This operation requires a trusted workspace.');
-    return false;
-  };
-  const runBridge = async (title: string, request: BridgeRequest): Promise<BridgeResponse | undefined> => {
-    if (!requireTrustedWorkspace()) {
-      return undefined;
-    }
-    try {
-      const response = await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title,
-        cancellable: true
-      }, (_progress, token) => bridge.invoke(request, token));
-      if (!response.success) {
-        getOutputChannel().appendLine(`[bridge] ${title}: ${redactDiagnostic(response.errors?.join('\n') || 'Unknown error')}`);
+  });
+  const runBridge = (title: string, request: BridgeRequest): Promise<BridgeResponse | undefined> =>
+    invokeInTrustedWorkspace(
+      vscode.workspace.isTrusted,
+      () => { vscode.window.showWarningMessage('Pedantic: This operation requires a trusted workspace.'); },
+      async () => {
+        try {
+          const response = await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title,
+            cancellable: true
+          }, (_progress, token) => bridge.invoke(request, token));
+          if (!response.success) {
+            getOutputChannel().appendLine(`[bridge] ${title}: ${redactDiagnostic(response.errors?.join('\n') || 'Unknown error')}`);
+          }
+          return response;
+        } catch (error) {
+          const message = redactDiagnostic(error instanceof Error ? error.message : String(error));
+          getOutputChannel().appendLine(`[bridge] ${title}: ${message}`);
+          vscode.window.showErrorMessage(`Pedantic: ${title} failed. See Pedantic DSL output for details.`);
+          return undefined;
+        }
       }
-      return response;
-    } catch (error) {
-      const message = redactDiagnostic(error instanceof Error ? error.message : String(error));
-      getOutputChannel().appendLine(`[bridge] ${title}: ${message}`);
-      vscode.window.showErrorMessage(`Pedantic: ${title} failed. See Pedantic DSL output for details.`);
-      return undefined;
-    }
-  };
+    );
 
   const installResource = async (resourceType: string) => {
     const response = await runBridge(`Pedantic: Installing ${resourceType}`, {

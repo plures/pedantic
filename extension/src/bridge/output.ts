@@ -31,5 +31,12 @@ export class BoundedOutput {
 }
 
 export function redactDiagnostic(value: string): string {
-  return value.replace(/((?:password|token|secret|apikey|api_key)\s*[:=]\s*)\S+/gi, '$1[REDACTED]');
+  return value.replace(
+    /((?:"(?:password|token|secret|apikey|api_key)"|(?:password|token|secret|apikey|api_key))\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi,
+    (match, prefix: string) => {
+      const secret = match.slice(prefix.length);
+      const quote = secret[0] === '"' || secret[0] === "'" ? secret[0] : '';
+      return `${prefix}${quote}[REDACTED]${quote}`;
+    },
+  );
 }

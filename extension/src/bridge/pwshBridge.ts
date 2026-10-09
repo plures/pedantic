@@ -1,29 +1,47 @@
 /// <reference types="node" />
 import { setTimeout, clearTimeout } from 'node:timers';
 import { execFile, spawn } from 'child_process';
-import * as vscode from 'vscode';
+import type * as vscode from 'vscode';
 import { ExtensionAssetContext, resolveBridgeAsset, validateBridgeAsset, validatePwshExecutable } from './assets';
 import { bridgeProtocolVersion, BridgeRequest, BridgeResponse, parseBridgeResponse } from './schema';
 import { BoundedOutput, redactDiagnostic } from './output';
 
 const maximumOutputBytes = 64 * 1024;
 
+interface BridgeDependencies {
+  getPwshPath(): string;
+  spawn: typeof spawn;
+  execFile: typeof execFile;
+  platform: NodeJS.Platform;
+}
+
 export class PwshBridge {
   private readonly bridgePath: string;
+  private readonly dependencies: BridgeDependencies;
 
-  constructor(context: ExtensionAssetContext) {
+  constructor(
+    context: ExtensionAssetContext,
+    dependencies: Pick<BridgeDependencies, 'getPwshPath'> & Partial<Omit<BridgeDependencies, 'getPwshPath'>>
+  ) {
     this.bridgePath = resolveBridgeAsset(context);
+    this.dependencies = {
+      getPwshPath: dependencies.getPwshPath,
+      spawn: dependencies.spawn ?? spawn,
+      execFile: dependencies.execFile ?? execFile,
+      platform: dependencies.platform ?? process.platform
+    };
   }
 
   async invoke(request: BridgeRequest, cancellationToken?: vscode.CancellationToken): Promise<BridgeResponse> {
+    let pwshPath: string;
     try {
+      pwshPath = this.dependencies.getPwshPath();
       await validateBridgeAsset(this.bridgePath);
-      await validatePwshExecutable(vscode.workspace.getConfiguration('pedantic').get<string>('bridge.pwshPath', 'pwsh'));
+      await validatePwshExecutable(pwshPath);
     } catch (error) {
       return bridgeFailure(error);
     }
 
-  const pwshPath = vscode.workspace.getConfiguration('pedantic').get<string>('bridge.pwshPath', 'pwsh');
   const timeout = request.options?.timeout || 30000;
 
   const args = [
@@ -55,7 +73,7 @@ export class PwshBridge {
   }
   
   return new Promise(resolve => {
-    const proc = spawn(pwshPath, args, { detached: process.platform !== 'win32' });
+    const proc = this.dependencies.spawn(pwshPath, args, { detached: this.dependencies.platform !== 'win32' });
     const stdout = new BoundedOutput(maximumOutputBytes);
     const stderr = new BoundedOutput(maximumOutputBytes);
     let timedOut = false;
@@ -77,21 +95,34 @@ export class PwshBridge {
       }
       timedOut = reason === 'timeout';
       cancelled = reason === 'cancelled';
-      void terminateProcessTree(proc).finally(finishTermination);
+      void terminateProcessTree(proc, this.dependencies).then(
+        () => finishTermination(),
+        () => {
+          try {
+            proc.kill('SIGKILL');
+          } catch {
+            // The cleanup failure is returned to the caller below.
+          }
+          finishTermination(true);
+        }
+      );
     };
 
-    const finishTermination = () => {
+    const finishTermination = (cleanupFailed = false) => {
+      const cleanupError = cleanupFailed
+        ? ['PowerShell process-tree cleanup failed; a direct-process termination fallback was attempted.']
+        : [];
       if (timedOut) {
         finish({
           protocolVersion: bridgeProtocolVersion,
           success: false,
-          errors: [`PowerShell process timed out after ${timeout}ms`]
+          errors: [`PowerShell process timed out after ${timeout}ms`, ...cleanupError]
         });
       } else {
         finish({
           protocolVersion: bridgeProtocolVersion,
           success: false,
-          errors: ['PowerShell bridge operation was cancelled.']
+          errors: ['PowerShell bridge operation was cancelled.', ...cleanupError]
         });
       }
     };
@@ -145,27 +176,32 @@ export class PwshBridge {
   }
 }
 
-function terminateProcessTree(proc: ReturnType<typeof spawn>): Promise<void> {
+function terminateProcessTree(proc: ReturnType<typeof spawn>, dependencies: BridgeDependencies): Promise<void> {
   if (proc.pid === undefined) {
-    return Promise.resolve();
+    return Promise.reject(new Error('PowerShell process has no PID.'));
   }
 
-  if (process.platform === 'win32') {
-    return new Promise(resolve => {
-      execFile('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true }, () => resolve());
+  if (dependencies.platform === 'win32') {
+    return new Promise((resolve, reject) => {
+      dependencies.execFile('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true }, error => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
     });
   }
 
   try {
     process.kill(-proc.pid, 'SIGKILL');
-  } catch {
-    proc.kill('SIGKILL');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+      return Promise.resolve();
+    }
+    return Promise.reject(error);
   }
   return Promise.resolve();
-}
-
-export function createPwshBridge(context: ExtensionAssetContext): PwshBridge {
-  return new PwshBridge(context);
 }
 
 function bridgeFailure(error: unknown): BridgeResponse {
