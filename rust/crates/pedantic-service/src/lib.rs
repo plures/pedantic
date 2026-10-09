@@ -1,12 +1,16 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use jsonschema::{Draft, JSONSchema};
+use pedantic_agent::{AgentEnrollment, AgentObservationBatch};
 use pedantic_executor::dsc::{
     DscCommand, DscError, DscInput, DscRunOptions, DscTestResult, parse_test_results, run_dsc,
 };
 use pedantic_executor::inventory::{HostRecord, parse_hosts};
-use pedantic_agent::{AgentEnrollment, AgentObservationBatch};
-use pedantic_operation::{EffectAuthorization, RetryClass, RiskClass, Signature as GrantSignature};
+use pedantic_operation::{
+    EffectAuthorization, FederatedTransferRegistry, RetryClass, RiskClass,
+    Signature as GrantSignature, TRANSFER_REGISTRY_STORAGE_SCHEMA_VERSION, TransferEvent,
+    TransferIngestResult, TransferQuery, TransferReport,
+};
 use pluresdb::{CrdtStore, SledStorage, StorageEngine};
 use pluresdb_chronos::{ChronosAction, ChronosEntry, ChronosTimeline};
 use px_ast::{ConstraintDecl, Statement};
@@ -299,6 +303,7 @@ pub struct ServiceFoundation {
     timeline: ChronosTimeline,
     _store: Arc<CrdtStore>,
     revision_lock: tokio::sync::Mutex<()>,
+    transfer_registry: tokio::sync::Mutex<FederatedTransferRegistry>,
     authorization_signing_key: SigningKey,
 }
 
@@ -327,11 +332,29 @@ impl ServiceFoundation {
         let store =
             Arc::new(CrdtStore::default().with_persistence(storage as Arc<dyn StorageEngine>));
         let timeline = ChronosTimeline::new(Arc::clone(&store));
+        let transfer_registry = match store.get(format!("pedantic:transfer-registry:{profile_id}"))
+        {
+            Some(record) => {
+                if record.data["profileId"].as_str() != Some(&profile_id)
+                    || record.data["registrySchemaVersion"].as_str()
+                        != Some(TRANSFER_REGISTRY_STORAGE_SCHEMA_VERSION)
+                {
+                    return Err(ServiceErrorKind::Foundation(
+                        "Persisted transfer registry has an incompatible schema or profile.".into(),
+                    ));
+                }
+                serde_json::from_value(record.data["registry"].clone()).map_err(|_| {
+                    ServiceErrorKind::Foundation("Persisted transfer registry is malformed.".into())
+                })?
+            }
+            None => FederatedTransferRegistry::default(),
+        };
         let foundation = Self {
             profile_id: profile_id.clone(),
             timeline,
             _store: store,
             revision_lock: tokio::sync::Mutex::new(()),
+            transfer_registry: tokio::sync::Mutex::new(transfer_registry),
             authorization_signing_key,
         };
         Ok(foundation)
@@ -365,6 +388,85 @@ impl ServiceFoundation {
             truncated: count > entries.len(),
             entries,
         }
+    }
+
+    /// Stores redacted immutable transfer evidence in the profile PluresDB
+    /// store. Repeated identical event IDs are idempotent; conflicting IDs fail.
+    pub async fn record_transfer_event(
+        &self,
+        event: TransferEvent,
+    ) -> Result<bool, ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let mut registry = self.transfer_registry.lock().await;
+        let event_id = event.operation.event_id.clone();
+        let ingest_result = registry.ingest(event);
+        match ingest_result {
+            TransferIngestResult::Duplicate => return Ok(false),
+            TransferIngestResult::Conflict => {
+                self.persist_transfer_registry(&registry);
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "Transfer event ID conflicts with immutable durable evidence.".into(),
+                ));
+            }
+            TransferIngestResult::Invalid => {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "Transfer event is missing required safe identity fields.".into(),
+                ));
+            }
+            TransferIngestResult::Inserted => {}
+        }
+        self.persist_transfer_registry(&registry);
+        let event = registry
+            .event(&event_id)
+            .expect("new transfer event is present")
+            .clone();
+        let entry = self.timeline.build_entry(
+            &self.transfer_event_key(&event.operation.event_id),
+            SERVICE_ACTOR,
+            ChronosAction::Create,
+            &serde_json::json!({
+                "operationId": event.operation.operation_id,
+                "eventId": event.operation.event_id,
+                "sequence": event.operation.sequence,
+                "state": event.operation.resulting_state,
+                "sourceVm": event.source_vm,
+                "targetVm": event.target_vm,
+                "targetHost": event.target_host,
+            }),
+            Vec::new(),
+            Some("Redacted immutable transfer evidence recorded.".into()),
+        );
+        self.record_evidence_summary(entry)?;
+        Ok(true)
+    }
+
+    pub async fn reconcile_transfer_registry(
+        &self,
+        replica: FederatedTransferRegistry,
+    ) -> Result<(), ServiceErrorKind> {
+        let _revision_guard = self.revision_lock.lock().await;
+        let mut registry = self.transfer_registry.lock().await;
+        registry.merge(&replica);
+        self.persist_transfer_registry(&registry);
+        Ok(())
+    }
+
+    pub async fn query_transfers(
+        &self,
+        query: &TransferQuery,
+    ) -> Vec<pedantic_operation::TransferOperation> {
+        self.transfer_registry.lock().await.query(query)
+    }
+
+    pub async fn transfer_report(&self, operation_id: &str) -> Option<TransferReport> {
+        self.transfer_registry.lock().await.report(operation_id)
+    }
+
+    pub async fn retain_terminal_transfer_history(&self, retain_after: u64) {
+        let _revision_guard = self.revision_lock.lock().await;
+        let mut registry = self.transfer_registry.lock().await;
+        registry.retain_terminal_after(retain_after);
+        self.persist_transfer_registry(&registry);
     }
 
     pub async fn enroll_agent(
@@ -1795,6 +1897,26 @@ impl ServiceFoundation {
         self.record_evidence_summary(entry)
     }
 
+    fn persist_transfer_registry(&self, registry: &FederatedTransferRegistry) {
+        self._store.put(
+            self.transfer_registry_key(),
+            SERVICE_ACTOR,
+            serde_json::json!({
+                "registrySchemaVersion": TRANSFER_REGISTRY_STORAGE_SCHEMA_VERSION,
+                "profileId": self.profile_id,
+                "registry": registry,
+            }),
+        );
+    }
+
+    fn transfer_registry_key(&self) -> String {
+        format!("pedantic:transfer-registry:{}", self.profile_id)
+    }
+
+    fn transfer_event_key(&self, event_id: &str) -> String {
+        format!("pedantic:transfer-event:{}:{event_id}", self.profile_id)
+    }
+
     fn configuration_key(&self, revision_id: &str) -> String {
         format!("pedantic:configuration:{}:{revision_id}", self.profile_id)
     }
@@ -2926,6 +3048,68 @@ impl LocalServiceClient {
         self.call("evidence-list", "evidence.list", serde_json::Value::Null)
             .await
     }
+
+    pub async fn record_transfer(
+        &self,
+        event: TransferEvent,
+    ) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        self.call(
+            "transfer-record",
+            "transfer.record",
+            serde_json::json!({ "event": event }),
+        )
+        .await
+    }
+
+    pub async fn reconcile_transfers(
+        &self,
+        registry: FederatedTransferRegistry,
+    ) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        self.call(
+            "transfer-reconcile",
+            "transfer.reconcile",
+            serde_json::json!({ "registry": registry }),
+        )
+        .await
+    }
+
+    pub async fn query_transfers(
+        &self,
+        query: TransferQuery,
+    ) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        self.call(
+            "transfer-query",
+            "transfer.query",
+            serde_json::to_value(query).map_err(|error| {
+                ServiceErrorKind::InvalidRequest(format!("Transfer query encoding failed: {error}"))
+            })?,
+        )
+        .await
+    }
+
+    pub async fn transfer_report(
+        &self,
+        operation_id: impl Into<String>,
+    ) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        self.call(
+            "transfer-report",
+            "transfer.report",
+            serde_json::json!({ "operationId": operation_id.into() }),
+        )
+        .await
+    }
+
+    pub async fn retain_transfer_history(
+        &self,
+        retain_after: u64,
+    ) -> Result<LocalServiceResponse, ServiceErrorKind> {
+        self.call(
+            "transfer-retain",
+            "transfer.retain",
+            serde_json::json!({ "retainAfter": retain_after }),
+        )
+        .await
+    }
 }
 
 async fn exchange<T>(
@@ -2967,7 +3151,7 @@ where
     })
 }
 
-pub struct RequestHandlers<F, G, H, I, J, K, L, M, N> {
+pub struct RequestHandlers<F, G, H, I, J, K, L, M, N, P> {
     pub evidence: F,
     pub admission: G,
     pub validation: H,
@@ -2977,6 +3161,102 @@ pub struct RequestHandlers<F, G, H, I, J, K, L, M, N> {
     pub remediation: L,
     pub approval: M,
     pub execution: N,
+    pub transfer: P,
+}
+
+impl<F, G, H, I, J, K, L, M, N, P> RequestHandlers<F, G, H, I, J, K, L, M, N, P> {
+    #[cfg(test)]
+    fn with_transfer<Q>(self, transfer: Q) -> RequestHandlers<F, G, H, I, J, K, L, M, N, Q> {
+        RequestHandlers {
+            evidence: self.evidence,
+            admission: self.admission,
+            validation: self.validation,
+            inventory: self.inventory,
+            compliance: self.compliance,
+            observation: self.observation,
+            remediation: self.remediation,
+            approval: self.approval,
+            execution: self.execution,
+            transfer,
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+#[derive(Deserialize)]
+struct TransferEventRequest {
+    event: TransferEvent,
+}
+
+#[cfg(any(windows, test))]
+#[derive(Deserialize)]
+struct TransferRegistryRequest {
+    registry: FederatedTransferRegistry,
+}
+
+#[cfg(any(windows, test))]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferReportRequest {
+    operation_id: String,
+}
+
+#[cfg(any(windows, test))]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferRetentionRequest {
+    retain_after: u64,
+}
+
+#[cfg(any(windows, test))]
+async fn dispatch_transfer_request(
+    foundation: &ServiceFoundation,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, ServiceErrorKind> {
+    fn parse<T: serde::de::DeserializeOwned>(
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<T, ServiceErrorKind> {
+        serde_json::from_value(params).map_err(|error| {
+            ServiceErrorKind::InvalidRequest(format!("{method} parameters are invalid: {error}"))
+        })
+    }
+
+    match method {
+        "transfer.record" => {
+            let request: TransferEventRequest = parse(method, params)?;
+            let recorded = foundation.record_transfer_event(request.event).await?;
+            Ok(serde_json::json!({ "recorded": recorded }))
+        }
+        "transfer.reconcile" => {
+            let request: TransferRegistryRequest = parse(method, params)?;
+            foundation
+                .reconcile_transfer_registry(request.registry)
+                .await?;
+            Ok(serde_json::json!({ "reconciled": true }))
+        }
+        "transfer.query" => {
+            let query: TransferQuery = parse(method, params)?;
+            Ok(serde_json::json!(foundation.query_transfers(&query).await))
+        }
+        "transfer.report" => {
+            let request: TransferReportRequest = parse(method, params)?;
+            Ok(serde_json::json!(
+                foundation.transfer_report(&request.operation_id).await
+            ))
+        }
+        "transfer.retain" => {
+            let request: TransferRetentionRequest = parse(method, params)?;
+            foundation
+                .retain_terminal_transfer_history(request.retain_after)
+                .await;
+            Ok(serde_json::json!({ "retained": true }))
+        }
+        _ => Err(ServiceErrorKind::InvalidRequest(
+            "Transfer method is not registered.".into(),
+        )),
+    }
 }
 
 pub async fn handle_request<
@@ -2989,6 +3269,7 @@ pub async fn handle_request<
     L,
     M,
     N,
+    P,
     AdmissionFuture,
     ValidationFuture,
     InventoryFuture,
@@ -2997,13 +3278,14 @@ pub async fn handle_request<
     RemediationFuture,
     ApprovalFuture,
     ExecutionFuture,
+    TransferFuture,
 >(
     frame: &str,
     expected_profile: &str,
     expected_token: &str,
     version: &str,
     chronos_entries: usize,
-    handlers: RequestHandlers<F, G, H, I, J, K, L, M, N>,
+    handlers: RequestHandlers<F, G, H, I, J, K, L, M, N, P>,
 ) -> LocalServiceResponse
 where
     F: FnOnce() -> EvidencePage,
@@ -3015,6 +3297,7 @@ where
     L: FnOnce(RemediationRequest) -> RemediationFuture,
     M: FnOnce(RemediationApprovalRequest) -> ApprovalFuture,
     N: FnOnce(RemediationExecutionRequest) -> ExecutionFuture,
+    P: FnOnce(String, serde_json::Value) -> TransferFuture,
     AdmissionFuture: Future<Output = Result<ConfigurationAdmission, ServiceErrorKind>>,
     ValidationFuture: Future<Output = Result<ConfigurationValidation, ServiceErrorKind>>,
     InventoryFuture: Future<Output = Result<InventoryObservation, ServiceErrorKind>>,
@@ -3023,6 +3306,7 @@ where
     RemediationFuture: Future<Output = Result<RemediationDecision, ServiceErrorKind>>,
     ApprovalFuture: Future<Output = Result<RemediationApproval, ServiceErrorKind>>,
     ExecutionFuture: Future<Output = Result<RemediationExecution, ServiceErrorKind>>,
+    TransferFuture: Future<Output = Result<serde_json::Value, ServiceErrorKind>>,
 {
     let request_value = match serde_json::from_str::<serde_json::Value>(frame) {
         Ok(request) => request,
@@ -3459,6 +3743,16 @@ where
                 ),
             }
         }
+        "transfer.record" | "transfer.reconcile" | "transfer.query" | "transfer.report"
+        | "transfer.retain" => match (handlers.transfer)(request.method, request.params).await {
+            Ok(result) => response(Some(request.id), true, Some(result), None),
+            Err(error) => response(
+                Some(request.id),
+                false,
+                None,
+                Some(("transfer_failed", error.to_string())),
+            ),
+        },
         _ => response(
             Some(request.id),
             false,
@@ -3486,6 +3780,11 @@ fn is_registered_method(method: &str) -> bool {
             | "approval.record"
             | "effect.authorize"
             | "remediation.execute"
+            | "transfer.record"
+            | "transfer.reconcile"
+            | "transfer.query"
+            | "transfer.report"
+            | "transfer.retain"
     )
 }
 
@@ -3599,6 +3898,9 @@ async fn serve_connection(
                         }
                     },
                     execution: |request| foundation.execute_remediation(request),
+                    transfer: |method, params| async {
+                        dispatch_transfer_request(&foundation, &method, params).await
+                    },
                 },
             )
             .await;
@@ -3743,6 +4045,7 @@ fn parse_current_user_sid(output: &str) -> Result<String, ServiceErrorKind> {
 mod tests {
     use super::*;
     use jsonschema::{Draft, JSONSchema, SchemaResolver, SchemaResolverError};
+    use pedantic_operation::{OperationEvent, OperationState, TransferObservation};
     use std::sync::Arc;
     use url::Url;
 
@@ -3978,62 +4281,76 @@ mod tests {
         }
     }
 
-    fn test_handlers() -> RequestHandlers<
-        impl FnOnce() -> EvidencePage,
-        impl FnOnce(
-            ConfigurationAdmissionRequest,
-        ) -> std::future::Ready<Result<ConfigurationAdmission, ServiceErrorKind>>,
-        impl FnOnce(
-            ConfigurationValidationRequest,
-        ) -> std::future::Ready<Result<ConfigurationValidation, ServiceErrorKind>>,
-        impl FnOnce(
-            InventoryObservationRequest,
-        ) -> std::future::Ready<Result<InventoryObservation, ServiceErrorKind>>,
-        impl FnOnce(
-            ComplianceRequest,
-        ) -> std::future::Ready<Result<ComplianceDecision, ServiceErrorKind>>,
-        impl FnOnce(
-            ComplianceObservationRequest,
-        ) -> std::future::Ready<Result<ComplianceObservation, ServiceErrorKind>>,
-        impl FnOnce(
-            RemediationRequest,
-        ) -> std::future::Ready<Result<RemediationDecision, ServiceErrorKind>>,
-        impl FnOnce(
-            RemediationApprovalRequest,
-        ) -> std::future::Ready<Result<RemediationApproval, ServiceErrorKind>>,
-        impl FnOnce(
-            RemediationExecutionRequest,
-        ) -> std::future::Ready<Result<RemediationExecution, ServiceErrorKind>>,
-    > {
+    type TestReady<T> = std::future::Ready<Result<T, ServiceErrorKind>>;
+
+    type TestRequestHandlers = RequestHandlers<
+        fn() -> EvidencePage,
+        fn(ConfigurationAdmissionRequest) -> TestReady<ConfigurationAdmission>,
+        fn(ConfigurationValidationRequest) -> TestReady<ConfigurationValidation>,
+        fn(InventoryObservationRequest) -> TestReady<InventoryObservation>,
+        fn(ComplianceRequest) -> TestReady<ComplianceDecision>,
+        fn(ComplianceObservationRequest) -> TestReady<ComplianceObservation>,
+        fn(RemediationRequest) -> TestReady<RemediationDecision>,
+        fn(RemediationApprovalRequest) -> TestReady<RemediationApproval>,
+        fn(RemediationExecutionRequest) -> TestReady<RemediationExecution>,
+        fn(String, serde_json::Value) -> TestReady<serde_json::Value>,
+    >;
+
+    fn empty_evidence() -> EvidencePage {
+        EvidencePage {
+            entries: Vec::new(),
+            truncated: false,
+        }
+    }
+
+    fn reject_request<T, U>(_: T) -> TestReady<U> {
+        std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+    }
+
+    fn reject_transfer(_: String, _: serde_json::Value) -> TestReady<serde_json::Value> {
+        std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
+    }
+
+    async fn transfer_api_request(
+        foundation: &ServiceFoundation,
+        method: &str,
+        params: serde_json::Value,
+    ) -> LocalServiceResponse {
+        let frame = serde_json::json!({
+            "id": "transfer-api",
+            "method": method,
+            "profileId": "default",
+            "authorization": "0123456789abcdef0123456789abcdef",
+            "params": params,
+        })
+        .to_string();
+        let handlers =
+            test_handlers().with_transfer(|method: String, params: serde_json::Value| async move {
+                dispatch_transfer_request(foundation, &method, params).await
+            });
+        handle_request(
+            &frame,
+            "default",
+            "0123456789abcdef0123456789abcdef",
+            "0.1.0",
+            0,
+            handlers,
+        )
+        .await
+    }
+
+    fn test_handlers() -> TestRequestHandlers {
         RequestHandlers {
-            evidence: || EvidencePage {
-                entries: Vec::new(),
-                truncated: false,
-            },
-            admission: |_| {
-                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
-            },
-            validation: |_| {
-                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
-            },
-            inventory: |_| {
-                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
-            },
-            compliance: |_| {
-                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
-            },
-            observation: |_| {
-                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
-            },
-            remediation: |_| {
-                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
-            },
-            approval: |_| {
-                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
-            },
-            execution: |_| {
-                std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
-            },
+            evidence: empty_evidence,
+            admission: reject_request,
+            validation: reject_request,
+            inventory: reject_request,
+            compliance: reject_request,
+            observation: reject_request,
+            remediation: reject_request,
+            approval: reject_request,
+            execution: reject_request,
+            transfer: reject_transfer,
         }
     }
 
@@ -4081,6 +4398,7 @@ mod tests {
             execution: |_| {
                 std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
             },
+            transfer: reject_transfer,
         };
         let response = handle_request(
             r#"{"id":"authorize-1","method":"effect.authorize","profileId":"default","authorization":"0123456789abcdef0123456789abcdef","params":{"approvalId":"approval-1","requestId":"request-1","actorId":"actor-1","approved":true}}"#,
@@ -4291,6 +4609,7 @@ mod tests {
                 execution: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -4496,6 +4815,381 @@ mod tests {
         assert_eq!(reopened.evidence_count(), 1);
     }
 
+    #[tokio::test]
+    async fn transfer_registry_is_durable_idempotent_and_reconciles_replicas() {
+        let directory = tempfile::tempdir().expect("temporary profile store");
+        let service = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("open profile store");
+        let started = transfer_registry_event("started", 1, OperationState::Running, None);
+        assert!(
+            service
+                .record_transfer_event(started.clone())
+                .await
+                .expect("record start")
+        );
+        assert!(
+            !service
+                .record_transfer_event(started.clone())
+                .await
+                .expect("deduplicate start")
+        );
+
+        let mut replica = FederatedTransferRegistry::default();
+        replica.ingest(transfer_registry_event(
+            "completed",
+            2,
+            OperationState::Succeeded,
+            Some(TransferObservation {
+                provider: "filesystem".into(),
+                bytes_transferred: 1024,
+                elapsed_millis: 50,
+                throughput_bps: 20_480,
+                retry_count: 1,
+                resume_count: 1,
+                verification_state: "verified".into(),
+                failure_category: None,
+            }),
+        ));
+        service
+            .reconcile_transfer_registry(replica)
+            .await
+            .expect("merge replica");
+        assert_eq!(
+            service
+                .transfer_report("transfer")
+                .await
+                .expect("report")
+                .state,
+            pedantic_operation::TransferReportState::Succeeded
+        );
+        let mut conflicting = started;
+        conflicting.target_host = "different-sensitive-host.example".into();
+        assert!(service.record_transfer_event(conflicting).await.is_err());
+        assert_eq!(
+            service
+                .transfer_report("transfer")
+                .await
+                .expect("conflict report")
+                .state,
+            pedantic_operation::TransferReportState::Conflicted
+        );
+        let persisted_registry = service
+            ._store
+            .get(service.transfer_registry_key())
+            .expect("durable transfer registry");
+        let persisted_registry = persisted_registry.data.to_string();
+        for identifier in [
+            "source-vm",
+            "target-vm",
+            "target-host",
+            "different-sensitive-host.example",
+        ] {
+            assert!(!persisted_registry.contains(identifier));
+        }
+        drop(service);
+
+        let restarted = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+            .expect("reopen profile store");
+        assert_eq!(
+            restarted
+                .query_transfers(&TransferQuery {
+                    operation_id: Some("transfer".into()),
+                    source_vm: None,
+                    target_vm: None,
+                    target_host: None,
+                    active: Some(false),
+                })
+                .await
+                .len(),
+            1
+        );
+        assert_eq!(
+            restarted
+                .transfer_report("transfer")
+                .await
+                .expect("conflict report after restart")
+                .state,
+            pedantic_operation::TransferReportState::Conflicted
+        );
+    }
+
+    #[tokio::test]
+    async fn transfer_versioned_api_records_reconciles_queries_reports_and_retains() {
+        let first_directory = tempfile::tempdir().expect("first profile store");
+        let service = ServiceFoundation::open_at("default", first_directory.path(), "0.1.0")
+            .expect("open first profile store");
+        let started = transfer_registry_event("started", 1, OperationState::Running, None);
+
+        let recorded = transfer_api_request(
+            &service,
+            "transfer.record",
+            serde_json::json!({ "event": started }),
+        )
+        .await;
+        assert!(recorded.ok, "{:?}", recorded.error);
+
+        let mut replica = FederatedTransferRegistry::default();
+        replica.ingest(transfer_registry_event(
+            "completed",
+            2,
+            OperationState::Succeeded,
+            Some(TransferObservation {
+                provider: "filesystem".into(),
+                bytes_transferred: 1024,
+                elapsed_millis: 50,
+                throughput_bps: 20_480,
+                retry_count: 1,
+                resume_count: 1,
+                verification_state: "verified".into(),
+                failure_category: None,
+            }),
+        ));
+        let reconciled = transfer_api_request(
+            &service,
+            "transfer.reconcile",
+            serde_json::json!({ "registry": replica }),
+        )
+        .await;
+        assert!(reconciled.ok, "{:?}", reconciled.error);
+
+        let queried = transfer_api_request(
+            &service,
+            "transfer.query",
+            serde_json::json!({ "sourceVm": "source-vm", "active": false }),
+        )
+        .await;
+        assert!(queried.ok, "{:?}", queried.error);
+        let operation = &queried.result.expect("query result")[0];
+        assert!(
+            operation["sourceVm"]
+                .as_str()
+                .unwrap()
+                .starts_with("opaque:")
+        );
+        assert!(!operation.to_string().contains("source-vm"));
+
+        let report = transfer_api_request(
+            &service,
+            "transfer.report",
+            serde_json::json!({ "operationId": "transfer" }),
+        )
+        .await;
+        assert!(report.ok, "{:?}", report.error);
+        assert_eq!(report.result.expect("report result")["state"], "succeeded");
+
+        let retained = transfer_api_request(
+            &service,
+            "transfer.retain",
+            serde_json::json!({ "retainAfter": 2 }),
+        )
+        .await;
+        assert!(retained.ok, "{:?}", retained.error);
+        assert_eq!(
+            service
+                .query_transfers(&TransferQuery {
+                    operation_id: Some("transfer".into()),
+                    source_vm: None,
+                    target_vm: None,
+                    target_host: None,
+                    active: None,
+                })
+                .await
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn persisted_transfer_registry_corruption_and_schema_mismatch_fail_startup() {
+        for (registry_schema_version, registry) in [
+            (
+                TRANSFER_REGISTRY_STORAGE_SCHEMA_VERSION,
+                serde_json::json!("malformed"),
+            ),
+            (
+                "pedantic.transfer-registry-storage.v99",
+                serde_json::json!({}),
+            ),
+        ] {
+            let directory = tempfile::tempdir().expect("temporary profile store");
+            let service = ServiceFoundation::open_at("default", directory.path(), "0.1.0")
+                .expect("create profile store");
+            service._store.put(
+                service.transfer_registry_key(),
+                SERVICE_ACTOR,
+                serde_json::json!({
+                    "profileId": "default",
+                    "registrySchemaVersion": registry_schema_version,
+                    "registry": registry,
+                }),
+            );
+            drop(service);
+
+            assert!(matches!(
+                ServiceFoundation::open_at("default", directory.path(), "0.1.0"),
+                Err(ServiceErrorKind::Foundation(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn transfer_registries_replicate_concurrent_writes_and_retain_at_volume() {
+        let first_directory = tempfile::tempdir().expect("first profile store");
+        let second_directory = tempfile::tempdir().expect("second profile store");
+        let first = Arc::new(
+            ServiceFoundation::open_at("default", first_directory.path(), "0.1.0")
+                .expect("open first profile store"),
+        );
+        let second = Arc::new(
+            ServiceFoundation::open_at("default", second_directory.path(), "0.1.0")
+                .expect("open second profile store"),
+        );
+        const OPERATION_COUNT: u64 = 128;
+        let mut writes = tokio::task::JoinSet::new();
+        for index in 0..OPERATION_COUNT {
+            let service = Arc::clone(&first);
+            writes.spawn(async move {
+                service
+                    .record_transfer_event(transfer_registry_event_for(
+                        &format!("transfer-{index}"),
+                        &format!("start-{index}"),
+                        1,
+                        OperationState::Running,
+                        100,
+                        None,
+                    ))
+                    .await
+                    .expect("concurrent source-side write");
+            });
+            let service = Arc::clone(&second);
+            let occurred_at = if index < OPERATION_COUNT / 2 {
+                200
+            } else {
+                2_000
+            };
+            writes.spawn(async move {
+                service
+                    .record_transfer_event(transfer_registry_event_for(
+                        &format!("transfer-{index}"),
+                        &format!("finish-{index}"),
+                        2,
+                        OperationState::Succeeded,
+                        occurred_at,
+                        Some(TransferObservation {
+                            provider: "filesystem".into(),
+                            bytes_transferred: index,
+                            elapsed_millis: 50,
+                            throughput_bps: index * 20,
+                            retry_count: 0,
+                            resume_count: 0,
+                            verification_state: "verified".into(),
+                            failure_category: None,
+                        }),
+                    ))
+                    .await
+                    .expect("concurrent target-side write");
+            });
+        }
+        while let Some(result) = writes.join_next().await {
+            result.expect("concurrent transfer write task");
+        }
+
+        let first_replica = first.transfer_registry.lock().await.clone();
+        let second_replica = second.transfer_registry.lock().await.clone();
+        first
+            .reconcile_transfer_registry(second_replica)
+            .await
+            .expect("replicate target events");
+        second
+            .reconcile_transfer_registry(first_replica)
+            .await
+            .expect("replicate source events");
+        let query = TransferQuery {
+            operation_id: None,
+            source_vm: Some("source-vm".into()),
+            target_vm: Some("target-vm".into()),
+            target_host: Some("target-host".into()),
+            active: Some(false),
+        };
+        assert_eq!(
+            first.query_transfers(&query).await.len(),
+            OPERATION_COUNT as usize
+        );
+        assert_eq!(
+            second.query_transfers(&query).await.len(),
+            OPERATION_COUNT as usize
+        );
+        assert_eq!(
+            second
+                .transfer_report("transfer-127")
+                .await
+                .expect("replicated operation report")
+                .state,
+            pedantic_operation::TransferReportState::Succeeded
+        );
+
+        first.retain_terminal_transfer_history(1_000).await;
+        assert_eq!(
+            first.query_transfers(&query).await.len(),
+            (OPERATION_COUNT / 2) as usize
+        );
+        assert_eq!(
+            first
+                .transfer_report("transfer-127")
+                .await
+                .expect("operation retained as an atomic unit")
+                .state,
+            pedantic_operation::TransferReportState::Succeeded
+        );
+    }
+
+    fn transfer_registry_event(
+        event_id: &str,
+        sequence: u64,
+        state: OperationState,
+        observation: Option<TransferObservation>,
+    ) -> TransferEvent {
+        TransferEvent {
+            schema_version: pedantic_operation::TRANSFER_REGISTRY_SCHEMA_VERSION.into(),
+            operation: OperationEvent {
+                schema_version: pedantic_operation::OPERATION_EVENT_SCHEMA_VERSION.into(),
+                event_id: event_id.into(),
+                event_type: "transfer.observed".into(),
+                resulting_state: state,
+                operation_id: "transfer".into(),
+                plan_id: "plan".into(),
+                step_id: Some("step".into()),
+                attempt_id: Some("attempt".into()),
+                profile_id: "default".into(),
+                actor_id: "agent".into(),
+                target_id: "target".into(),
+                agent_id: "agent".into(),
+                causation_id: "cause".into(),
+                correlation_id: "correlation".into(),
+                sequence,
+                occurred_at: Some(sequence),
+            },
+            source_vm: "source-vm".into(),
+            target_vm: "target-vm".into(),
+            target_host: "target-host".into(),
+            observation,
+        }
+    }
+
+    fn transfer_registry_event_for(
+        operation_id: &str,
+        event_id: &str,
+        sequence: u64,
+        state: OperationState,
+        occurred_at: u64,
+        observation: Option<TransferObservation>,
+    ) -> TransferEvent {
+        let mut event = transfer_registry_event(event_id, sequence, state, observation);
+        event.operation.operation_id = operation_id.into();
+        event.operation.occurred_at = Some(occurred_at);
+        event
+    }
+
     #[test]
     fn evidence_query_is_bounded_and_redacted() {
         let directory = tempfile::tempdir().expect("temporary profile store");
@@ -4541,6 +5235,7 @@ mod tests {
                 remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -4569,6 +5264,7 @@ mod tests {
                 remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -4650,6 +5346,7 @@ mod tests {
                 remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -4707,6 +5404,7 @@ mod tests {
                 execution: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -4745,6 +5443,7 @@ mod tests {
                 execution: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -4785,6 +5484,7 @@ mod tests {
                 execution: |_| {
                     std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into())))
                 },
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -4976,6 +5676,7 @@ mod tests {
                 remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -5013,6 +5714,7 @@ mod tests {
                 remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -5051,6 +5753,7 @@ mod tests {
                 remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -5171,6 +5874,7 @@ mod tests {
                 remediation: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                transfer: reject_transfer,
             },
         )
         .await;
@@ -5990,6 +6694,7 @@ mod tests {
                 })),
                 approval: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
                 execution: |_| std::future::ready(Err(ServiceErrorKind::InvalidRequest("not invoked".into()))),
+                transfer: reject_transfer,
             },
         )
         .await;
