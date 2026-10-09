@@ -474,13 +474,21 @@ pub struct TransferReport {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FederatedTransferRegistry {
-    events: BTreeMap<String, TransferEvent>,
+    events: BTreeMap<String, Vec<TransferEvent>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransferIngestResult {
+    Inserted,
+    Duplicate,
+    Conflict,
+    Invalid,
 }
 
 impl FederatedTransferRegistry {
     /// Merges immutable events from a local or federated replica. Event IDs are
-    /// idempotency keys, so a duplicate cannot overwrite prior evidence.
-    pub fn ingest(&mut self, event: TransferEvent) -> bool {
+    /// idempotency keys, so conflicting contents are retained for reconciliation.
+    pub fn ingest(&mut self, event: TransferEvent) -> TransferIngestResult {
         if event.schema_version != TRANSFER_REGISTRY_SCHEMA_VERSION
             || event.operation.event_id.is_empty()
             || event.operation.operation_id.is_empty()
@@ -488,22 +496,33 @@ impl FederatedTransferRegistry {
             || event.target_vm.is_empty()
             || event.target_host.is_empty()
         {
-            return false;
+            return TransferIngestResult::Invalid;
         }
-        self.events
-            .entry(event.operation.event_id.clone())
-            .or_insert(event);
-        true
+        match self.events.entry(event.operation.event_id.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(vec![event]);
+                TransferIngestResult::Inserted
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let variants = entry.get_mut();
+                if variants.contains(&event) {
+                    TransferIngestResult::Duplicate
+                } else {
+                    variants.push(event);
+                    TransferIngestResult::Conflict
+                }
+            }
+        }
     }
 
     pub fn merge(&mut self, replica: &Self) {
-        for event in replica.events.values().cloned() {
+        for event in replica.events.values().flatten().cloned() {
             self.ingest(event);
         }
     }
 
     pub fn event(&self, event_id: &str) -> Option<&TransferEvent> {
-        self.events.get(event_id)
+        self.events.get(event_id).and_then(|variants| variants.first())
     }
 
     pub fn query(&self, query: &TransferQuery) -> Vec<TransferOperation> {
@@ -566,42 +585,77 @@ impl FederatedTransferRegistry {
     }
 
     /// Terminal history may be pruned after `retain_after`, while active event
-    /// history remains immutable and discoverable.
+    /// history remains immutable and discoverable. A terminal operation is
+    /// pruned as a whole, never as a collection of independently aged events.
     pub fn retain_terminal_after(&mut self, retain_after: u64) {
-        let terminal_operations = self
-            .operations()
-            .into_iter()
-            .filter(|operation| !operation.active)
-            .map(|operation| operation.operation_id)
+        let groups = self.grouped_events();
+        let conflicting_event_ids = self.conflicting_event_ids();
+        let expired_operations = groups
+            .iter()
+            .filter_map(|(operation_id, events)| {
+                let operation =
+                    operation_from_events(events.clone(), &conflicting_event_ids)?;
+                (!operation.active
+                    && events.iter().all(|event| {
+                        event
+                            .operation
+                            .occurred_at
+                            .is_some_and(|occurred_at| occurred_at < retain_after)
+                    }))
+                .then(|| operation_id.clone())
+            })
             .collect::<BTreeSet<_>>();
-        self.events.retain(|_, event| {
-            !terminal_operations.contains(&event.operation.operation_id)
-                || event
-                    .operation
-                    .occurred_at
-                    .is_none_or(|at| at >= retain_after)
+        self.events.retain(|_, variants| {
+            variants.retain(|event| !expired_operations.contains(&event.operation.operation_id));
+            !variants.is_empty()
         });
     }
 
     fn operations(&self) -> Vec<TransferOperation> {
+        let conflicting_event_ids = self.conflicting_event_ids();
+        self.grouped_events()
+            .into_values()
+            .filter_map(|events| operation_from_events(events, &conflicting_event_ids))
+            .collect()
+    }
+
+    fn grouped_events(&self) -> BTreeMap<String, Vec<&TransferEvent>> {
         let mut grouped = BTreeMap::<String, Vec<&TransferEvent>>::new();
-        for event in self.events.values() {
+        for event in self.events.values().flatten() {
             grouped
                 .entry(event.operation.operation_id.clone())
                 .or_default()
                 .push(event);
         }
         grouped
-            .into_values()
-            .filter_map(|events| operation_from_events(events))
+    }
+
+    fn conflicting_event_ids(&self) -> BTreeSet<String> {
+        self.events
+            .iter()
+            .filter(|(_, variants)| variants.len() > 1)
+            .map(|(event_id, _)| event_id.clone())
             .collect()
     }
 }
 
-fn operation_from_events(mut events: Vec<&TransferEvent>) -> Option<TransferOperation> {
+fn operation_from_events(
+    mut events: Vec<&TransferEvent>,
+    conflicting_event_ids: &BTreeSet<String>,
+) -> Option<TransferOperation> {
     events.sort_by_key(|event| (event.operation.sequence, event.operation.event_id.clone()));
     let first = events.first()?;
     let mut findings = Vec::new();
+    if events
+        .iter()
+        .any(|event| conflicting_event_ids.contains(&event.operation.event_id))
+    {
+        findings.push(finding(
+            first,
+            "event-id-conflict",
+            "replicas disagree on immutable event contents",
+        ));
+    }
     if events.iter().any(|event| {
         event.source_vm != first.source_vm
             || event.target_vm != first.target_vm
@@ -1021,9 +1075,12 @@ mod tests {
             Some(observation()),
         );
 
-        assert!(source.ingest(started.clone()));
-        assert!(target.ingest(completed));
-        assert!(source.ingest(started));
+        assert_eq!(
+            source.ingest(started.clone()),
+            TransferIngestResult::Inserted
+        );
+        assert_eq!(target.ingest(completed), TransferIngestResult::Inserted);
+        assert_eq!(source.ingest(started), TransferIngestResult::Duplicate);
         source.merge(&target);
         target.merge(&source);
 
@@ -1061,6 +1118,31 @@ mod tests {
                 .findings
                 .iter()
                 .any(|finding| finding.code == "event-history-incomplete")
+        );
+    }
+
+    #[test]
+    fn conflicting_event_ids_are_retained_and_reported() {
+        let mut registry = FederatedTransferRegistry::default();
+        let original = transfer_event("event-1", 1, OperationState::Running, 10, None);
+        let conflicting = transfer_event("event-1", 1, OperationState::Admitted, 10, None);
+
+        assert_eq!(
+            registry.ingest(original.clone()),
+            TransferIngestResult::Inserted
+        );
+        assert_eq!(
+            registry.ingest(conflicting),
+            TransferIngestResult::Conflict
+        );
+        assert_eq!(registry.event("event-1"), Some(&original));
+        assert!(
+            registry
+                .report("operation")
+                .expect("conflict report")
+                .findings
+                .iter()
+                .any(|finding| finding.code == "event-id-conflict")
         );
     }
 
@@ -1117,6 +1199,54 @@ mod tests {
                 })
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn retention_keeps_or_removes_terminal_operations_atomically() {
+        let mut registry = FederatedTransferRegistry::default();
+        registry.ingest(transfer_event(
+            "partly-expired-start",
+            1,
+            OperationState::Running,
+            100,
+            None,
+        ));
+        registry.ingest(transfer_event(
+            "partly-expired-finish",
+            2,
+            OperationState::Succeeded,
+            110,
+            Some(observation()),
+        ));
+        let mut expired_start = transfer_event(
+            "expired-start",
+            1,
+            OperationState::Running,
+            90,
+            None,
+        );
+        expired_start.operation.operation_id = "expired-operation".into();
+        registry.ingest(expired_start);
+        let mut expired_finish = transfer_event(
+            "expired-finish",
+            2,
+            OperationState::Succeeded,
+            99,
+            Some(observation()),
+        );
+        expired_finish.operation.operation_id = "expired-operation".into();
+        registry.ingest(expired_finish);
+
+        registry.retain_terminal_after(105);
+
+        assert!(registry.event("partly-expired-start").is_some());
+        assert!(registry.event("partly-expired-finish").is_some());
+        assert!(registry.event("expired-start").is_none());
+        assert!(registry.event("expired-finish").is_none());
+        assert_eq!(
+            registry.report("operation").expect("retained report").state,
+            TransferReportState::Succeeded
         );
     }
 
