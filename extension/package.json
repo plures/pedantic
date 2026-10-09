@@ -2,7 +2,7 @@
   "name": "pedantic-dsc",
   "displayName": "Pedantic DSC",
   "description": "Pedantic: DSC authoring, visualization, and AI-assisted configuration (Simple DSL + SudoLang).",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "engines": {
     "vscode": ">=1.90.0",
     "node": ">=20.19.0"
