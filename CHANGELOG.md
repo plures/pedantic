@@ -1,3 +1,13 @@
+## [0.11.0] — 2026-10-09
+
+- chore(deps): bump the cargo group across 1 directory with 2 updates (#212) (987fce8)
+- fix(extension): scope language server to Pedantic DSL files (#211) (d61dbec)
+- feat(transfer): validate typed DTMS transfer contracts (#208) (25ad52d)
+- feat(agent): durably checkpoint transfer launches (#209) (92d37f5)
+- feat: add deterministic Hyper-V transfer planning (#206) (85b14be)
+- feat: prepare Windows transfer hosts with gMSA recovery (#207) (d19b369)
+- [WIP] Fix PowerShell bridge invocation issues in VS Code extension (#205) (08fa356)
+
 ## [0.10.0] — 2026-10-08
 
 - [WIP] Restore deterministic build, test, and VSIX release pipeline (#203) (77b44c7)
