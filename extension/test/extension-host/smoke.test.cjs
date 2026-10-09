@@ -18,10 +18,24 @@ async function run() {
   assert.equal(extension.isActive, false, 'Ordinary YAML must not activate Pedantic');
 
   const pedanticDsl = vscode.Uri.file(path.join(os.tmpdir(), `pedantic-smoke-${process.pid}.simple.dsc.yaml`));
-  fs.writeFileSync(pedanticDsl.fsPath, 'dsc.install:\n  packages:\n    - git\n', 'utf8');
+  fs.writeFileSync(pedanticDsl.fsPath, 'dsc.install:\n  packages: []\n', 'utf8');
   const pedanticDocument = await vscode.workspace.openTextDocument(pedanticDsl);
   await vscode.window.showTextDocument(pedanticDocument);
   await waitFor(() => extension.isActive, 'Pedantic should activate for Simple DSC documents');
+  await waitFor(
+    () => vscode.languages.getDiagnostics(pedanticDocument.uri).some(diagnostic => diagnostic.source === 'pedantic'),
+    'Pedantic should publish diagnostics for Simple DSC documents before checking ordinary YAML',
+  );
+
+  const ordinaryEditor = await vscode.window.showTextDocument(ordinaryDocument);
+  await ordinaryEditor.edit(editBuilder => editBuilder.insert(new vscode.Position(0, 0), '# updated\n'));
+  await new Promise(resolve => setTimeout(resolve, 250));
+  const ordinaryDiagnostics = vscode.languages.getDiagnostics(ordinaryDocument.uri);
+  assert.equal(
+    ordinaryDiagnostics.some(diagnostic => diagnostic.source === 'pedantic'),
+    false,
+    'Pedantic must not publish diagnostics for ordinary YAML',
+  );
 
   await extension.activate();
   assert.ok(
@@ -53,14 +67,6 @@ async function run() {
 
   const commands = await vscode.commands.getCommands(true);
   assert.ok(commands.includes('pedantic.generateConfig'), 'Pedantic commands should be registered');
-
-  await vscode.window.showTextDocument(ordinaryDocument);
-  const ordinaryDiagnostics = vscode.languages.getDiagnostics(ordinaryDocument.uri);
-  assert.equal(
-    ordinaryDiagnostics.some(diagnostic => diagnostic.source === 'pedantic'),
-    false,
-    'Pedantic must not publish diagnostics for ordinary YAML',
-  );
 
   fs.rmSync(pedanticDsl.fsPath, { force: true });
   fs.rmSync(ordinaryYaml.fsPath, { force: true });

@@ -34,6 +34,7 @@ let hasWorkspaceFolderCapability = false;
 const documentDiagnostics = new Map<string, Diagnostic[]>();
 const validationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const validationGenerations = new Map<string, number>();
+let nextValidationGeneration = 0;
 const validationDebounceMs = 150;
 
 type Dialect = 'simple' | 'sudo';
@@ -99,7 +100,7 @@ function scheduleValidation(textDocument: TextDocument): void {
     return;
   }
 
-  const generation = (validationGenerations.get(uri) ?? 0) + 1;
+  const generation = ++nextValidationGeneration;
   validationGenerations.set(uri, generation);
   const timer = validationTimers.get(uri);
   if (timer) {
@@ -132,7 +133,7 @@ async function validateDocument(uri: string, version: number, generation: number
       if (!isCurrentValidation(uri, version, generation)) {
         return;
       }
-      parsed = parseSimple(text);
+      parsed = { doc: parseSimple(text) };
     }
     if (!isCurrentValidation(uri, version, generation)) {
       return;
@@ -151,7 +152,7 @@ async function validateDocument(uri: string, version: number, generation: number
 
     // Store diagnostics for code actions
     documentDiagnostics.set(uri, diagnostics);
-    connection.sendDiagnostics({ uri, diagnostics });
+    connection.sendDiagnostics({ uri, version, diagnostics });
   } catch (err: unknown) {
     if (!isCurrentValidation(uri, version, generation)) {
       return;
@@ -171,7 +172,7 @@ async function validateDocument(uri: string, version: number, generation: number
     }];
     
     documentDiagnostics.set(uri, diagnostics);
-    connection.sendDiagnostics({ uri, diagnostics });
+    connection.sendDiagnostics({ uri, version, diagnostics });
   }
 }
 
@@ -199,7 +200,7 @@ documents.onDidClose(change => {
 // Completions provider
 connection.onCompletion((params: CompletionParams, token: CancellationToken): CompletionItem[] => {
   const document = documents.get(params.textDocument.uri);
-  if (!document || !dialectForUri(document.uri) || token.isCancellationRequested) {
+  if (!document || dialectForUri(document.uri) !== 'simple' || token.isCancellationRequested) {
     return [];
   }
 
