@@ -8,6 +8,10 @@
     "rebootAllowed": false,
     "retryLimit": 3
   },
+  "resolvedSettingSources": {
+    "rebootAllowed": "target",
+    "retryLimit": "plan"
+  },
   "steps": [
     {
       "stepId": "validate",

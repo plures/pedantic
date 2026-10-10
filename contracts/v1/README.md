@@ -18,9 +18,9 @@ profile, target, agent, and idempotency identities. Authorization contracts
 persist only opaque secret references; diagnostics are bounded and classified
 for redaction before they can become evidence.
 
-Operation plans may include `resolvedSettings`, the immutable result of
-built-in, general, target, and plan settings after PX evaluates capability
-safety requirements.
+Operation plans may include `resolvedSettings` and `resolvedSettingSources`,
+the immutable result and provenance of built-in, general, target, and plan
+settings after PX evaluates capability safety requirements.
 
 This is an optional additive v1 field: existing plans without it remain valid.
 Consumers validating with the previous closed v1 schema reject populated

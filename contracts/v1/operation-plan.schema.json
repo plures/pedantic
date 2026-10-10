@@ -16,6 +16,13 @@
       "propertyNames": { "minLength": 1 },
       "additionalProperties": true
     },
+    "resolvedSettingSources": {
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": {
+        "enum": ["builtIn", "general", "target", "plan"]
+      }
+    },
     "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/step" } }
   },
   "definitions": {

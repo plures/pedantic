@@ -175,6 +175,8 @@ pub struct OperationPlan {
     pub target_id: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub resolved_settings: BTreeMap<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolved_setting_sources: BTreeMap<String, settings::SettingSource>,
     pub steps: Vec<OperationStep>,
 }
 
@@ -966,6 +968,7 @@ mod tests {
             profile_id: "profile".into(),
             target_id: "target".into(),
             resolved_settings: BTreeMap::new(),
+            resolved_setting_sources: BTreeMap::new(),
             steps,
         }
     }
@@ -1028,13 +1031,32 @@ mod tests {
         );
         assert_eq!(fixture_plan.resolved_settings["rebootAllowed"], false);
         assert_eq!(fixture_plan.resolved_settings["retryLimit"], 3);
+        assert_eq!(
+            fixture_plan.resolved_setting_sources["rebootAllowed"],
+            settings::SettingSource::Target
+        );
+        assert_eq!(
+            fixture_plan.resolved_setting_sources["retryLimit"],
+            settings::SettingSource::Plan
+        );
         assert!(schema_accepts(CONTRACT_SCHEMA_SOURCES[0], &serialized));
+
+        let mut invalid_provenance: Value =
+            serde_json::from_str(&serialized).expect("serialized plan parses");
+        invalid_provenance["resolvedSettingSources"]["retryLimit"] =
+            serde_json::Value::String("unknown".into());
+        assert!(!schema_accepts(
+            CONTRACT_SCHEMA_SOURCES[0],
+            &serde_json::to_string(&invalid_provenance).expect("serialize invalid provenance")
+        ));
 
         let mut plan_without_settings = fixture_plan;
         plan_without_settings.resolved_settings.clear();
+        plan_without_settings.resolved_setting_sources.clear();
         let serialized =
             serde_json::to_string(&plan_without_settings).expect("serialize plan without settings");
         assert!(!serialized.contains("resolvedSettings"));
+        assert!(!serialized.contains("resolvedSettingSources"));
         assert!(schema_accepts(CONTRACT_SCHEMA_SOURCES[0], &serialized));
     }
 
