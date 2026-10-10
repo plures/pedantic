@@ -2,7 +2,7 @@
 name = "pedantic-service"
 version = "0.12.0"
 edition = "2024"
-license = "MIT"
+license = "Apache-2.0"
 
 [dependencies]
 pluresdb = { git = "https://github.com/plures/pluresdb.git", rev = "82fb4f341856166b0da4cf220daa41e4697a1a2b" }

@@ -8,7 +8,7 @@
     "node": ">=20.19.0"
   },
   "publisher": "pedantic",
-  "license": "BUSL-1.1",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/plures/pedantic.git"

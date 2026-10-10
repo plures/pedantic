@@ -198,7 +198,7 @@ file list without creating the VSIX, run `npx --no-install vsce ls`.
 
 ## 📄 License
 
-MIT License - see [LICENSE](../LICENSE) for details
+Apache-2.0 License - see [LICENSE](LICENSE) for details
 
 ## 🙏 Acknowledgments
 
