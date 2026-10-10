@@ -293,7 +293,7 @@ shasum -a 256 "${OUTPUT}"
   "description": "DSC ecosystem hub - authoring, visualization, and community sharing of DSC resources with dual DSL support.",
   "version": "0.1.0",
   "publisher": "plures",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/plures/pedantic"

@@ -166,7 +166,7 @@ Please review our roadmap documents to ensure your contribution aligns with proj
 
 ## License
 
-By contributing to Pedantic, you agree that your contributions will be licensed under the MIT License.
+By contributing to Pedantic, you agree that your contributions will be licensed under the Apache-2.0 License.
 
 ---
 
