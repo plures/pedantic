@@ -4,6 +4,10 @@
   "operationId": "operation-1",
   "profileId": "default",
   "targetId": "target-1",
+  "resolvedSettings": {
+    "rebootAllowed": false,
+    "retryLimit": 3
+  },
   "steps": [
     {
       "stepId": "validate",

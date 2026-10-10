@@ -1,0 +1,34 @@
+# PX supplies settings layers and capability safety requirements; native code
+# only applies the declared precedence and verifies the resolved result.
+
+entity SettingsResolution:
+  prefix: "pedantic:settings-resolution:"
+  fields:
+    profile_id: String
+    target_id: String
+    plan_id: String
+    built_in_settings: String
+    general_settings: String
+    target_settings: String
+    plan_settings: String
+    capability_requirements: String
+    resolved_settings: String
+
+constraint settings_resolution_requires_identity:
+  scope: settings_resolution
+  phase: admission
+  require: resolution.profile_id != "" AND resolution.target_id != "" AND resolution.plan_id != ""
+  severity: error
+  message: "Settings resolution requires profile, target, and plan identity."
+
+constraint settings_resolution_requires_px_safety_decision:
+  scope: settings_resolution
+  phase: execution
+  require: resolution.capability_requirements != "" AND resolution.resolved_settings != ""
+  severity: error
+  message: "Resolved settings must include PX-approved capability safety requirements."
+
+procedure resolve_plan_settings(resolution: SettingsResolution from "settings_resolutions") -> SettingsResolution into "settings_resolutions":
+  given: "Resolve built-in, general, target, and plan settings after PX policy evaluates capability safety requirements"
+  evaluate_settings_resolution resolution -> $decision
+  return {profile_id: resolution.profile_id, target_id: resolution.target_id, plan_id: resolution.plan_id, built_in_settings: resolution.built_in_settings, general_settings: resolution.general_settings, target_settings: resolution.target_settings, plan_settings: resolution.plan_settings, capability_requirements: resolution.capability_requirements, resolved_settings: $decision.value}
