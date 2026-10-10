@@ -44,7 +44,7 @@ Name:           ${PACKAGE_NAME}
 Version:        ${VERSION}
 Release:        1%{?dist}
 Summary:        Pedantic DSC Toolkit — CLI and PowerShell module for Desired State Configuration
-License:        MIT
+License:        Apache-2.0
 URL:            https://github.com/plures/pedantic
 BuildArch:      ${ARCH}
 
