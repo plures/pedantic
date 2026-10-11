@@ -167,6 +167,13 @@ pub struct OperationStep {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ResolvedSetting {
+    pub value: serde_json::Value,
+    pub source: settings::SettingSource,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OperationPlan {
     pub schema_version: String,
     pub plan_id: String,
@@ -174,7 +181,7 @@ pub struct OperationPlan {
     pub profile_id: String,
     pub target_id: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub resolved_settings: BTreeMap<String, serde_json::Value>,
+    pub resolved_settings: BTreeMap<String, ResolvedSetting>,
     pub steps: Vec<OperationStep>,
 }
 
@@ -1026,9 +1033,31 @@ mod tests {
             fixture_plan.steps[0].secret_references,
             ["secret/db-password"]
         );
-        assert_eq!(fixture_plan.resolved_settings["rebootAllowed"], false);
-        assert_eq!(fixture_plan.resolved_settings["retryLimit"], 3);
+        assert_eq!(fixture_plan.resolved_settings["rebootAllowed"].value, false);
+        assert_eq!(fixture_plan.resolved_settings["retryLimit"].value, 3);
+        assert_eq!(
+            fixture_plan.resolved_settings["rebootAllowed"].source,
+            settings::SettingSource::Target
+        );
+        assert_eq!(
+            fixture_plan.resolved_settings["retryLimit"].source,
+            settings::SettingSource::Plan
+        );
         assert!(schema_accepts(CONTRACT_SCHEMA_SOURCES[0], &serialized));
+
+        for invalid_setting in [
+            serde_json::json!({"value": 3}),
+            serde_json::json!({"source": "plan"}),
+            serde_json::json!({"value": 3, "source": "unknown"}),
+        ] {
+            let mut invalid_plan: Value =
+                serde_json::from_str(&serialized).expect("serialized plan parses");
+            invalid_plan["resolvedSettings"]["retryLimit"] = invalid_setting;
+            let invalid_plan =
+                serde_json::to_string(&invalid_plan).expect("serialize invalid plan");
+            assert!(!schema_accepts(CONTRACT_SCHEMA_SOURCES[0], &invalid_plan));
+            assert!(serde_json::from_str::<OperationPlan>(&invalid_plan).is_err());
+        }
 
         let mut plan_without_settings = fixture_plan;
         plan_without_settings.resolved_settings.clear();

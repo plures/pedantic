@@ -18,14 +18,16 @@ profile, target, agent, and idempotency identities. Authorization contracts
 persist only opaque secret references; diagnostics are bounded and classified
 for redaction before they can become evidence.
 
-Operation plans may include `resolvedSettings`, the immutable result of
-built-in, general, target, and plan settings after PX evaluates capability
-safety requirements.
+Operation plans may include `resolvedSettings`, whose entries pair each
+immutable setting value with its source (built-in, general, target, or plan)
+after PX evaluates capability safety requirements.
 
 This is an optional additive v1 field: existing plans without it remain valid.
 Consumers validating with the previous closed v1 schema reject populated
 `resolvedSettings`, so providers must only emit it after those consumers update
-to the current schema. The compatibility decision is recorded in
+to the current schema. Each setting's value and source are represented
+atomically, preventing unattached or missing provenance. The compatibility
+decision is recorded in
 [ADR 0007](../../docs/adr/0007-operation-plan-resolved-settings.md).
 
 Contract changes require an ADR, compatibility classification, schema tests,
