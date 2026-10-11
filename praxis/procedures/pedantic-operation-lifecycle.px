@@ -32,7 +32,7 @@ constraint operation_requires_causal_links:
 constraint terminal_operation_outcomes_are_immutable:
   scope: operation_lifecycle
   phase: execution
-  require: (operation.state != "Succeeded" AND operation.state != "Partial" AND operation.state != "VerificationFailed" AND operation.state != "Failed" AND operation.state != "Cancelled") OR operation.state == operation.resulting_state
+  require: (operation.state != "Succeeded" AND operation.state != "Partial" AND operation.state != "VerificationFailed" AND operation.state != "Failed" AND operation.state != "Cancelled" AND operation.state != "TerminatedWithCleanupRequired") OR operation.state == operation.resulting_state
   severity: error
   message: "A terminal operation outcome cannot be changed by a later event."
 

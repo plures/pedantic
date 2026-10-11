@@ -5,6 +5,7 @@
 pub mod hyperv_transfer_plan;
 pub mod settings;
 pub mod transfer_batch;
+pub mod durable_coordinator;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -400,6 +401,7 @@ pub enum OperationState {
     VerificationFailed,
     Failed,
     Cancelled,
+    TerminatedWithCleanupRequired,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -840,7 +842,10 @@ fn finding(event: &TransferEvent, code: &str, detail: &str) -> ReconciliationFin
 fn is_terminal(state: &OperationState) -> bool {
     matches!(
         state,
-        OperationState::Succeeded | OperationState::Failed | OperationState::Cancelled
+        OperationState::Succeeded
+            | OperationState::Failed
+            | OperationState::Cancelled
+            | OperationState::TerminatedWithCleanupRequired
     )
 }
 impl OperationProjection {
