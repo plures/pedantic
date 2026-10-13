@@ -91,32 +91,35 @@ pub struct DurableCoordinator {
     pub authority: PlanAuthority,
     pub highest_fencing_tokens: BTreeMap<String, u64>,
     pub children: BTreeMap<String, ChildEffect>,
+    approval_required: bool,
+    pending_approval: Option<PendingApproval>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingApproval {
+    lease: EffectLease,
+    approved: bool,
 }
 
 impl DurableCoordinator {
-    pub fn new(authority: PlanAuthority) -> Self {
+    pub fn new(authority: PlanAuthority, approval_required: bool) -> Self {
         Self {
             state: CoordinatorState::Active,
             authority,
             highest_fencing_tokens: BTreeMap::new(),
             children: BTreeMap::new(),
+            approval_required,
+            pending_approval: None,
         }
     }
 
-    pub fn offer(
-        &mut self,
-        lease: EffectLease,
-        now: u64,
-        requires_approval: bool,
-    ) -> Result<(), CoordinatorError> {
+    pub fn offer(&mut self, lease: EffectLease, now: u64) -> Result<(), CoordinatorError> {
         self.validate_authority(&lease, now)?;
-        match (&self.state, requires_approval) {
-            (CoordinatorState::Active, false) => {}
-            (CoordinatorState::Active, true) | (CoordinatorState::AwaitingApproval, _) => {
-                self.state = CoordinatorState::AwaitingApproval;
-                return Err(CoordinatorError::ApprovalRequired);
-            }
-            _ => return Err(CoordinatorError::NotActive),
+        if self.state != CoordinatorState::Active
+            && self.state != CoordinatorState::AwaitingApproval
+        {
+            return Err(CoordinatorError::NotActive);
         }
         let highest = self
             .highest_fencing_tokens
@@ -125,6 +128,33 @@ impl DurableCoordinator {
             .unwrap_or_default();
         if lease.fencing_token <= highest || lease.expires_at <= now {
             return Err(CoordinatorError::LeaseInactive);
+        }
+        if self.approval_required {
+            match self.pending_approval.as_ref() {
+                Some(pending) if pending.lease != lease => {
+                    return Err(CoordinatorError::ApprovalRequired);
+                }
+                Some(pending) if pending.approved => {
+                    self.pending_approval = None;
+                }
+                Some(_) => {
+                    self.state = CoordinatorState::AwaitingApproval;
+                    return Err(CoordinatorError::ApprovalRequired);
+                }
+                None => {
+                    self.pending_approval = Some(PendingApproval {
+                        lease: lease.clone(),
+                        approved: false,
+                    });
+                    self.state = CoordinatorState::AwaitingApproval;
+                    return Err(CoordinatorError::ApprovalRequired);
+                }
+            }
+        } else if self.state != CoordinatorState::Active {
+            return Err(CoordinatorError::NotActive);
+        }
+        if self.state == CoordinatorState::AwaitingApproval {
+            return Err(CoordinatorError::ApprovalRequired);
         }
         self.highest_fencing_tokens
             .insert(lease.step_id.clone(), lease.fencing_token);
@@ -140,7 +170,10 @@ impl DurableCoordinator {
     }
 
     pub fn approve(&mut self) {
-        if self.state == CoordinatorState::AwaitingApproval {
+        if self.state == CoordinatorState::AwaitingApproval
+            && let Some(pending) = self.pending_approval.as_mut()
+        {
+            pending.approved = true;
             self.state = CoordinatorState::Active;
         }
     }
@@ -250,22 +283,43 @@ mod tests {
 
     #[test]
     fn stale_lease_cannot_execute_after_a_new_offer() {
-        let mut coordinator = DurableCoordinator::new(authority());
-        coordinator.offer(lease(1), 1, false).unwrap();
-        coordinator.offer(lease(2), 2, false).unwrap();
+        let mut coordinator = DurableCoordinator::new(authority(), false);
+        coordinator.offer(lease(1), 1).unwrap();
+        coordinator.offer(lease(2), 2).unwrap();
 
         assert_eq!(
             coordinator.validate_agent_execution(&lease(1), 3, "resource"),
             Err(CoordinatorError::LeaseInactive)
         );
-        assert!(coordinator
-            .validate_agent_execution(&lease(2), 3, "resource")
-            .is_ok());
+        assert!(
+            coordinator
+                .validate_agent_execution(&lease(2), 3, "resource")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn approval_is_bound_to_the_persisted_lease() {
+        let mut coordinator = DurableCoordinator::new(authority(), true);
+        let approved_lease = lease(1);
+        assert_eq!(
+            coordinator.offer(approved_lease.clone(), 1),
+            Err(CoordinatorError::ApprovalRequired)
+        );
+        coordinator.approve();
+
+        let mut recovered: DurableCoordinator =
+            serde_json::from_slice(&serde_json::to_vec(&coordinator).unwrap()).unwrap();
+        assert_eq!(
+            recovered.offer(lease(2), 2),
+            Err(CoordinatorError::ApprovalRequired)
+        );
+        assert!(recovered.offer(approved_lease, 2).is_ok());
     }
 
     #[test]
     fn cleanup_required_is_not_a_success_state() {
-        let mut coordinator = DurableCoordinator::new(authority());
+        let mut coordinator = DurableCoordinator::new(authority(), false);
         coordinator.require_cleanup();
 
         assert_eq!(
@@ -285,7 +339,7 @@ mod tests {
 
     #[test]
     fn independent_complete_cleanup_terminates_coordinator() {
-        let mut coordinator = DurableCoordinator::new(authority());
+        let mut coordinator = DurableCoordinator::new(authority(), false);
         coordinator.require_cleanup();
         coordinator
             .verify_cleanup(&CleanupVerification {
