@@ -210,7 +210,7 @@ Legend: [ ] pending, [~] in progress, [x] done
 
 **Last Updated:** January 15, 2026  
 **Status Summary:** Phase 1-2 foundations (parsers) complete. LSP integration is critical path.  
-**See:** [ROADMAP-ANALYSIS.md](ROADMAP-ANALYSIS.md) for detailed status assessment.
+**See:** [ROADMAP-ANALYSIS.md](../../ROADMAP-ANALYSIS.md) for detailed status assessment.
 
 ### Foundation & Scaffolding (~95% Complete)
 * [x] Rebrand to StateSmith (PowerShell core)
@@ -316,7 +316,7 @@ This roadmap supersedes prior “clean stable release” module-centric plan. Hi
 ---
 ## 15. Status Update (January 2026)
 
-**Current Implementation Status:** ~15-20% complete toward 1.0. See [ROADMAP-ANALYSIS.md](ROADMAP-ANALYSIS.md) for comprehensive assessment.
+**Current Implementation Status:** ~15-20% complete toward 1.0. See [ROADMAP-ANALYSIS.md](../../ROADMAP-ANALYSIS.md) for comprehensive assessment.
 
 ### What's Working
 - ✅ PowerShell module (mature, production-ready)
