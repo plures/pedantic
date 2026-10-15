@@ -582,6 +582,7 @@ pub fn recover(journal: &Journal) -> Vec<RecoveryOutcome> {
                 | "operation.verification_failed"
                 | "operation.failed"
                 | "operation.cancelled"
+                | "operation.terminated_with_cleanup_required"
         ) || matches!(
             &record.event.resulting_state,
             OperationState::Succeeded
@@ -589,6 +590,7 @@ pub fn recover(journal: &Journal) -> Vec<RecoveryOutcome> {
                 | OperationState::VerificationFailed
                 | OperationState::Failed
                 | OperationState::Cancelled
+                | OperationState::TerminatedWithCleanupRequired
         ) {
             active.retain(|(operation_id, _, _), _| operation_id != &record.event.operation_id);
             continue;
@@ -1251,6 +1253,7 @@ mod tests {
             "step.verification_failed",
             "operation.partial",
             "operation.verification_failed",
+            "operation.terminated_with_cleanup_required",
         ] {
             let directory = tempdir().unwrap();
             let mut journal = Journal::open(directory.path().join("journal")).unwrap();
@@ -1262,6 +1265,9 @@ mod tests {
                 .unwrap();
             let resulting_state = match event_type {
                 "operation.partial" => OperationState::Partial,
+                "operation.terminated_with_cleanup_required" => {
+                    OperationState::TerminatedWithCleanupRequired
+                }
                 _ => OperationState::VerificationFailed,
             };
             let mut terminal = event("terminal", event_type, resulting_state);
