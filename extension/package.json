@@ -148,11 +148,14 @@
     "typescript": "6.0.3"
   },
   "dependencies": {
-    "chevrotain": "13.2.0",
+    "chevrotain": "10.5.0",
     "echarts": "^6.1.0",
     "vscode-languageclient": "^10.1.2",
     "vscode-languageserver": "^10.1.2",
     "vscode-languageserver-textdocument": "^1.0.14",
     "yaml": "^2.9.1"
+  },
+  "overrides": {
+    "lodash": "4.18.1"
   }
 }
