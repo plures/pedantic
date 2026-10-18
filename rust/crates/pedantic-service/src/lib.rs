@@ -3,7 +3,8 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use jsonschema::{Draft, JSONSchema};
 use pedantic_agent::{AgentEnrollment, AgentObservationBatch};
 use pedantic_executor::dsc::{
-    DscCommand, DscError, DscInput, DscRunOptions, DscTestResult, parse_test_results, run_dsc,
+    DscCommand, DscError, DscInput, DscOutput, DscRunOptions, DscTestResult, parse_test_results,
+    run_dsc,
 };
 use pedantic_executor::inventory::{HostRecord, parse_hosts};
 use pedantic_operation::{
@@ -42,6 +43,7 @@ use windows_sys::Win32::{
 };
 
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+pub mod native_v2;
 pub const MAX_EVIDENCE_RESULTS: usize = 100;
 const SERVICE_ACTOR: &str = "pedantic-service";
 const MAX_REMEDIATION_OBSERVATION_AGE: Duration = Duration::from_secs(5 * 60);
@@ -361,6 +363,7 @@ pub struct ServiceFoundation {
     profile_id: String,
     timeline: ChronosTimeline,
     _store: Arc<CrdtStore>,
+    storage: Arc<dyn StorageEngine>,
     revision_lock: tokio::sync::Mutex<()>,
     transfer_registry: tokio::sync::Mutex<FederatedTransferRegistry>,
     authorization_signing_key: SigningKey,
@@ -388,8 +391,8 @@ impl ServiceFoundation {
         let storage = Arc::new(SledStorage::open(store_path).map_err(|error| {
             ServiceErrorKind::Foundation(format!("Unable to open profile PluresDB store: {error}"))
         })?);
-        let store =
-            Arc::new(CrdtStore::default().with_persistence(storage as Arc<dyn StorageEngine>));
+        let storage: Arc<dyn StorageEngine> = storage;
+        let store = Arc::new(CrdtStore::default().with_persistence(Arc::clone(&storage)));
         let timeline = ChronosTimeline::new(Arc::clone(&store));
         let transfer_registry = match store.get(format!("pedantic:transfer-registry:{profile_id}"))
         {
@@ -412,6 +415,7 @@ impl ServiceFoundation {
             profile_id: profile_id.clone(),
             timeline,
             _store: store,
+            storage,
             revision_lock: tokio::sync::Mutex::new(()),
             transfer_registry: tokio::sync::Mutex::new(transfer_registry),
             authorization_signing_key,
@@ -1379,6 +1383,11 @@ impl ServiceFoundation {
         request: RemediationApprovalRequest,
     ) -> Result<RemediationApproval, ServiceErrorKind> {
         let _revision_guard = self.revision_lock.lock().await;
+        if self.v2_operation_exists(&request.request_id).await? {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "This operation is owned by v2; no implicit v1 conversion is allowed.".into(),
+            ));
+        }
         let approval = self
             ._store
             .get(self.remediation_approval_key(&request.approval_id))
@@ -1642,10 +1651,43 @@ impl ServiceFoundation {
         &self,
         request: RemediationExecutionRequest,
     ) -> Result<RemediationExecution, ServiceErrorKind> {
+        self.execute_remediation_with(request, None, |document, options| async move {
+            run_dsc(DscCommand::ConfigSet, DscInput::Stdin(document), &options).await
+        })
+        .await
+    }
+
+    async fn execute_remediation_with<F, R>(
+        &self,
+        request: RemediationExecutionRequest,
+        v2_authorization: Option<serde_json::Value>,
+        runner: F,
+    ) -> Result<RemediationExecution, ServiceErrorKind>
+    where
+        F: FnOnce(String, DscRunOptions) -> R,
+        R: Future<Output = Result<DscOutput, DscError>>,
+    {
         let _revision_guard = self.revision_lock.lock().await;
+        if let Some(authorization) = &v2_authorization {
+            self.check_v2_execution(&request, authorization).await?;
+        } else if self
+            ._store
+            .get(self.effect_authorization_key(&request.authorization_id))
+            .is_some_and(|record| {
+                record.data["authorization"]["schemaVersion"]
+                    == pedantic_operation::native_v2::AUTHORIZATION_VERSION
+            })
+        {
+            return Err(ServiceErrorKind::InvalidRequest(
+                "V2 authorization requires explicit v2 execution; no downgrade is allowed.".into(),
+            ));
+        }
         let document_digest = format!("sha256:{:x}", Sha256::digest(request.document.as_bytes()));
         let idempotency_key = self.remediation_execution_idempotency_key(&request.idempotency_key);
         if let Some(existing) = self._store.get(&idempotency_key) {
+            if v2_authorization.is_some() {
+                self.ensure_persisted(&idempotency_key).await?;
+            }
             let recorded_authorization = required_record_string(
                 &existing.data,
                 "authorizationId",
@@ -1691,53 +1733,55 @@ impl ServiceFoundation {
                 "Remediation authorization is not fully recorded.".into(),
             ));
         }
-        let signed_authorization: EffectAuthorization = serde_json::from_value(
-            authorization.data["authorization"].clone(),
-        )
-        .map_err(|error| {
-            ServiceErrorKind::Foundation(format!(
-                "Recorded effect authorization is invalid: {error}"
-            ))
-        })?;
-        let approval = self
-            ._store
-            .get(self.remediation_approval_key(&request.authorization_id))
-            .ok_or_else(|| {
-                ServiceErrorKind::InvalidRequest(
-                    "Remediation authorization is missing its recorded approval.".into(),
-                )
+        if v2_authorization.is_none() {
+            let signed_authorization: EffectAuthorization = serde_json::from_value(
+                authorization.data["authorization"].clone(),
+            )
+            .map_err(|error| {
+                ServiceErrorKind::Foundation(format!(
+                    "Recorded effect authorization is invalid: {error}"
+                ))
             })?;
-        let actor_id = required_record_string(
-            &approval.data,
-            "actorId",
-            "Recorded remediation approval is missing its actor.",
-        )?;
-        if approval.data["approved"].as_bool() != Some(true)
-            || approval.data["decision"].as_str() != Some("accepted")
-            || approval.data["requestId"].as_str()
-                != Some(signed_authorization.operation_id.as_str())
-        {
-            return Err(ServiceErrorKind::InvalidRequest(
-                "Remediation authorization does not match an accepted approval.".into(),
-            ));
+            let approval = self
+                ._store
+                .get(self.remediation_approval_key(&request.authorization_id))
+                .ok_or_else(|| {
+                    ServiceErrorKind::InvalidRequest(
+                        "Remediation authorization is missing its recorded approval.".into(),
+                    )
+                })?;
+            let actor_id = required_record_string(
+                &approval.data,
+                "actorId",
+                "Recorded remediation approval is missing its actor.",
+            )?;
+            if approval.data["approved"].as_bool() != Some(true)
+                || approval.data["decision"].as_str() != Some("accepted")
+                || approval.data["requestId"].as_str()
+                    != Some(signed_authorization.operation_id.as_str())
+            {
+                return Err(ServiceErrorKind::InvalidRequest(
+                    "Remediation authorization does not match an accepted approval.".into(),
+                ));
+            }
+            validate_signed_effect_authorization(
+                &signed_authorization,
+                &self.authorization_signing_key.verifying_key(),
+                &EffectAuthorizationBindings {
+                    profile_id: &self.profile_id,
+                    agent_id: SERVICE_ACTOR,
+                    actor_id: &actor_id,
+                    authorization_id: &request.authorization_id,
+                    request_id: &required_record_string(
+                        &authorization.data,
+                        "requestId",
+                        "Recorded remediation authorization is missing its request.",
+                    )?,
+                    input_digest: &document_digest,
+                    idempotency_key: &request.idempotency_key,
+                },
+            )?;
         }
-        validate_signed_effect_authorization(
-            &signed_authorization,
-            &self.authorization_signing_key.verifying_key(),
-            &EffectAuthorizationBindings {
-                profile_id: &self.profile_id,
-                agent_id: SERVICE_ACTOR,
-                actor_id: &actor_id,
-                authorization_id: &request.authorization_id,
-                request_id: &required_record_string(
-                    &authorization.data,
-                    "requestId",
-                    "Recorded remediation authorization is missing its request.",
-                )?,
-                input_digest: &document_digest,
-                idempotency_key: &request.idempotency_key,
-            },
-        )?;
         let revision_id = required_record_string(
             &authorization.data,
             "revisionId",
@@ -1891,6 +1935,9 @@ impl ServiceFoundation {
                 &document_digest,
                 &request.execution_id,
             )?;
+            if v2_authorization.is_some() {
+                self.ensure_persisted(&idempotency_key).await?;
+            }
             let options = DscRunOptions {
                 timeout: Some(Duration::from_secs(30)),
                 ..Default::default()
@@ -1946,15 +1993,15 @@ impl ServiceFoundation {
                     &document_digest,
                     &execution,
                 )?;
+                if v2_authorization.is_some() {
+                    self.ensure_persisted(&idempotency_key).await?;
+                }
                 return Ok(execution);
             }
-            match run_dsc(
-                DscCommand::ConfigSet,
-                DscInput::Stdin(request.document),
-                &options,
-            )
-            .await
-            {
+            if let Some(authorization) = &v2_authorization {
+                self.check_v2_execution(&request, authorization).await?;
+            }
+            match runner(request.document, options).await {
                 Ok(output) => RemediationExecution {
                     execution_id: request.execution_id,
                     request_id,
@@ -1980,6 +2027,9 @@ impl ServiceFoundation {
             &document_digest,
             &execution,
         )?;
+        if v2_authorization.is_some() {
+            self.ensure_persisted(&idempotency_key).await?;
+        }
         Ok(execution)
     }
 
@@ -3534,9 +3584,9 @@ impl LocalServiceClient {
     }
 }
 
-async fn exchange<T>(
+async fn exchange<T, R: Serialize>(
     connection: T,
-    request: LocalServiceRequest,
+    request: R,
 ) -> Result<LocalServiceResponse, ServiceErrorKind>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -4344,34 +4394,40 @@ async fn serve_connection(
         let line = String::from_utf8_lossy(&frame).trim().to_owned();
         if !line.is_empty() {
             let transfer_foundation = Arc::clone(&foundation);
-            let response = handle_request(
-                &line,
-                profile_id,
-                token,
-                version,
-                foundation.evidence_count(),
-                RequestHandlers {
-                    evidence: || foundation.recent_evidence(),
-                    admission: |request| foundation.admit_configuration(request),
-                    validation: |request| foundation.validate_configuration(request),
-                    inventory: |request| foundation.observe_inventory(request),
-                    compliance: |request| foundation.request_compliance(request),
-                    observation: |request| foundation.observe_compliance(request),
-                    remediation: |request| foundation.request_remediation(request),
-                    approval: |request: RemediationApprovalRequest| async {
-                        if request.authorize {
-                            foundation.authorize_remediation(request).await
-                        } else {
-                            foundation.approve_remediation(request).await
-                        }
+            let response = if serde_json::from_str::<serde_json::Value>(&line)
+                .is_ok_and(|request| request.get("schemaVersion").is_some())
+            {
+                foundation.handle_v2_request(&line, token).await
+            } else {
+                handle_request(
+                    &line,
+                    profile_id,
+                    token,
+                    version,
+                    foundation.evidence_count(),
+                    RequestHandlers {
+                        evidence: || foundation.recent_evidence(),
+                        admission: |request| foundation.admit_configuration(request),
+                        validation: |request| foundation.validate_configuration(request),
+                        inventory: |request| foundation.observe_inventory(request),
+                        compliance: |request| foundation.request_compliance(request),
+                        observation: |request| foundation.observe_compliance(request),
+                        remediation: |request| foundation.request_remediation(request),
+                        approval: |request: RemediationApprovalRequest| async {
+                            if request.authorize {
+                                foundation.authorize_remediation(request).await
+                            } else {
+                                foundation.approve_remediation(request).await
+                            }
+                        },
+                        execution: |request| foundation.execute_remediation(request),
+                        transfer: |method: String, params| async move {
+                            dispatch_transfer_request(&transfer_foundation, &method, params).await
+                        },
                     },
-                    execution: |request| foundation.execute_remediation(request),
-                    transfer: |method: String, params| async move {
-                        dispatch_transfer_request(&transfer_foundation, &method, params).await
-                    },
-                },
-            )
-            .await;
+                )
+                .await
+            };
             let encoded = serde_json::to_vec(&response).map_err(|error| {
                 ServiceErrorKind::InvalidRequest(format!("Response encoding failed: {error}"))
             })?;

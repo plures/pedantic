@@ -1,8 +1,9 @@
 # Native v2 contract foundation
 
 These contracts are explicitly opt-in. Existing v1 schemas, APIs and signing
-payloads are unchanged. No v2 service issuance or execution endpoint is enabled
-by this contract-only foundation.
+payloads are unchanged. The profile service now exposes a bounded v2 integration
+for already-approved local DSC remediation; it is not general-operation or
+ephemeral-agent execution.
 
 - `resolved-plan.schema.json` binds plan ID/revision, operation, profile, target,
   execution mode, resolved values with source revisions, and step identities.
@@ -51,8 +52,28 @@ consumes the full rejection corpus; Node independently checks JCS vectors,
 plan/payload digests and Ed25519 signature/tampering interoperability. This is
 not complete TypeScript/CLI/MCP/PX client conformance.
 
-Service-owned issuance/persistence, PX decisions, capability descriptor/mode
-admission, actual provider enforcement and client adoption remain dependent
-work. Passing these tests does not authorize effects or establish service,
-reboot, cleanup or full product QA acceptance. See
-[ADR 0009](../../docs/adr/0009-opt-in-native-v2-contracts.md).
+`local-service-request.schema.json` adds an explicit
+`schemaVersion: "pedantic.local-service-request.v2"` envelope on the existing
+authenticated profile pipe:
+
+| Method | Parameters |
+| --- | --- |
+| `effect.authorize` | `approvalId` |
+| `effect.verify` | `authorizationId`, signed `authorization`, `inputDigest`, `idempotencyKey` |
+| `effect.revoke` | `authorizationId` (current authority only) |
+| `remediation.execute` | `executionId`, `authorizationId`, `idempotencyKey`, `document`, signed `authorization` |
+
+The service constructs the plan from recorded approval/revision facts and owns
+the key, clock, executor, permissions, coordinator and lease. A new approval for
+the same operation advances the fence. Old grants, changed source revisions and
+expired/revoked authorities are rejected. An authorization ID replay never
+renews its lifetime. Revocation cancels the operation; start a fresh remediation
+request after reconciliation. V1 and v2 cannot take over each other's operation.
+
+The Rust service client exposes `call_v2(id, Command)`; the existing CLI/MCP and
+TypeScript adapters have not adopted these methods. General capability
+descriptors/mode admission, recursive settings and ephemeral-agent execution
+remain dependent work. Tests do not authorize real effects or establish reboot,
+cleanup or full product QA acceptance. See
+[ADR 0009](../../docs/adr/0009-opt-in-native-v2-contracts.md) and
+[ADR 0010](../../docs/adr/0010-v2-profile-remediation-authority.md).
