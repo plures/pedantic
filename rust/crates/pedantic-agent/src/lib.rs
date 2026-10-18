@@ -7,6 +7,7 @@ use pedantic_capability::{
     CapabilityActivity, CapabilityError, CapabilityRegistry, Reconciliation,
 };
 use pedantic_operation::{
+    boot_identity::{BootIdentity, BootIdentityError},
     EffectAuthorization, OperationEvent, OperationState, RedactionClass, RetryClass,
     TransferLaunchCheckpoint,
 };
@@ -40,6 +41,8 @@ pub enum AgentError {
     DuplicateEvent(String),
     #[error("a reboot was requested but the boot identity did not change")]
     UnchangedBootIdentity,
+    #[error(transparent)]
+    BootIdentity(#[from] BootIdentityError),
     #[error("agent enrollment is invalid: {0}")]
     Enrollment(&'static str),
     #[error("staged artifact digest does not match its immutable reference")]
@@ -535,15 +538,23 @@ pub fn recover_transfer(
             let Some(launch) = start.transfer_launch.as_ref() else {
                 return RecoveryOutcome::NeedsReview { event_id };
             };
+            let (Ok(launch_boot), Ok(current_boot)) = (
+                launch.boot_identity.parse::<BootIdentity>(),
+                context.boot_identity.parse::<BootIdentity>(),
+            ) else {
+                return RecoveryOutcome::NeedsReview { event_id };
+            };
             let is_matching_launch = launch.operation_id == context.operation_id
                 && launch.plan_id == context.plan_id
                 && launch.plan_digest == context.plan_digest
-                && (launch.boot_identity == context.boot_identity
+                && (launch_boot == current_boot
                     || journal.records().iter().any(|record| {
                         record.event.operation_id == launch.operation_id
                             && record.event.plan_id == launch.plan_id
                             && record.event.event_type == "step.reboot_observed"
-                            && record.boot_identity.as_deref() == Some(context.boot_identity)
+                            && record.boot_identity.as_deref().is_some_and(|identity| {
+                                matches!(identity.parse::<BootIdentity>(), Ok(boot) if boot == current_boot)
+                            })
                     }));
             let safely_resumable = is_matching_launch
                 && (!requires_observation
@@ -621,6 +632,9 @@ pub fn recover(journal: &Journal) -> Vec<RecoveryOutcome> {
         .map(|record| {
             if record.event.resulting_state == OperationState::NeedsReview
                 || record.retry_class != Some(RetryClass::Safe)
+                || record.transfer_launch.as_ref().is_some_and(|launch| {
+                    launch.boot_identity.parse::<BootIdentity>().is_err()
+                })
             {
                 RecoveryOutcome::NeedsReview {
                     event_id: record.event.event_id.clone(),
@@ -700,6 +714,7 @@ impl LocalAgent {
         launch
             .validate()
             .map_err(|_| AgentError::TransferLaunchBinding)?;
+        launch.boot_identity.parse::<BootIdentity>()?;
         if launch.operation_id != authorization.operation_id
             || launch.plan_id != started.plan_id
             || launch.target_id != self.target_id
@@ -821,7 +836,9 @@ impl LocalAgent {
         current_boot_identity: &str,
         event: OperationEvent,
     ) -> Result<(), AgentError> {
-        if prior_boot_identity == current_boot_identity {
+        let prior = prior_boot_identity.parse::<BootIdentity>()?;
+        let current = current_boot_identity.parse::<BootIdentity>()?;
+        if prior == current {
             return Err(AgentError::UnchangedBootIdentity);
         }
         let mut record = JournalRecord::new(event, RedactionClass::MetadataOnly);
@@ -857,6 +874,7 @@ mod tests {
     struct TestCapability {
         manifest: CapabilityManifest,
         calls: std::sync::atomic::AtomicUsize,
+        reconciliations: std::sync::atomic::AtomicUsize,
     }
 
     impl Capability for TestCapability {
@@ -893,6 +911,17 @@ mod tests {
         ) -> Result<serde_json::Value, CapabilityError> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(json!({"safe": true}))
+        }
+
+        fn reconcile_unchecked(
+            &self,
+            _input: &serde_json::Value,
+        ) -> Result<Reconciliation, CapabilityError> {
+            self.reconciliations
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(CapabilityError::Execution(
+                "test capability does not support state reconciliation".into(),
+            ))
         }
 
         fn execute_unchecked_with_activity(
@@ -991,7 +1020,7 @@ mod tests {
             source_id: "artifact".into(),
             target_id: authorization.target_id.clone(),
             preflight_evidence: vec!["readiness".into()],
-            boot_identity: "boot-1".into(),
+            boot_identity: "windows-boot-sequence-v1:1".into(),
             idempotency_key: authorization.idempotency_key.clone(),
         }
     }
@@ -1018,6 +1047,7 @@ mod tests {
                 output_schema: None,
             },
             calls: std::sync::atomic::AtomicUsize::new(0),
+            reconciliations: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -1105,6 +1135,52 @@ mod tests {
             Err(AgentError::Authorization(AuthorizationError::Expired))
         ));
         assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn transfer_rejects_untrusted_boot_identity_before_effects() {
+        let signing_key = SigningKey::from_bytes(&[12; 32]);
+        let mut verifier = Ed25519AuthorizationVerifier::default();
+        verifier.insert("issuer".into(), signing_key.verifying_key());
+        let directory = tempdir().unwrap();
+        let adapter = capability();
+        let mut agent = LocalAgent::new(
+            AgentIdentity {
+                agent_id: "agent".into(),
+                key_id: "local".into(),
+                private_key: "opaque".into(),
+            },
+            "target".into(),
+            Journal::open(directory.path().join("journal")).unwrap(),
+            registry(adapter.clone()),
+            Arc::new(verifier),
+        );
+        let authorization = authorization(&signing_key, RetryClass::Safe);
+        for boot in [
+            "12345",
+            "windows-boot-sequence-v1:01",
+            "windows-boot-sequence-v2:1",
+        ] {
+            let mut launch = transfer_launch(&authorization);
+            launch.boot_identity = boot.into();
+            assert!(matches!(
+                agent.execute_transfer(
+                    launch,
+                    &authorization,
+                    &json!({}),
+                    2,
+                    event("start", "step.started", OperationState::Running),
+                    event("done", "step.completed", OperationState::Running),
+                ),
+                Err(AgentError::BootIdentity(_))
+            ));
+            assert!(agent.journal.records().is_empty());
+        }
+        assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            adapter.reconciliations.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
     }
 
     #[test]
@@ -1382,6 +1458,67 @@ mod tests {
     }
 
     #[test]
+    fn legacy_checkpoint_recovery_requires_review_without_reconciliation_or_rewrite() {
+        for retry in [RetryClass::Safe, RetryClass::SafeAfterObservation] {
+            for (prior, current) in [
+                ("123", "123"),
+                ("123", "windows-boot-sequence-v1:1"),
+                ("windows-boot-sequence-v1:1", "123"),
+                ("windows-boot-sequence-v1:1", "windows-boot-sequence-v1:01"),
+                ("windows-boot-sequence-v2:1", "windows-boot-sequence-v2:1"),
+            ] {
+                let directory = tempdir().unwrap();
+                let path = directory.path().join("journal");
+                let signing_key = SigningKey::from_bytes(&[11; 32]);
+                let authorization = authorization(&signing_key, retry.clone());
+                let mut launch = transfer_launch(&authorization);
+                launch.boot_identity = prior.into();
+                let mut started = JournalRecord::new(
+                    event("start", "step.started", OperationState::Running),
+                    RedactionClass::MetadataOnly,
+                );
+                started.authorization_digest = Some(authorization.digest());
+                started.retry_class = Some(retry.clone());
+                started.transfer_launch = Some(launch);
+                let mut journal = Journal::open(&path).unwrap();
+                journal.append(started).unwrap();
+                let mut reboot = JournalRecord::new(
+                    event("reboot", "step.reboot_observed", OperationState::Running),
+                    RedactionClass::MetadataOnly,
+                );
+                reboot.boot_identity = Some(current.into());
+                journal.append(reboot).unwrap();
+                drop(journal);
+                let before = std::fs::read(&path).unwrap();
+                let journal = Journal::open(&path).unwrap();
+                let context = TransferRecoveryContext {
+                    operation_id: "operation",
+                    plan_id: "plan",
+                    plan_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    boot_identity: current,
+                };
+                let expected = vec![RecoveryOutcome::NeedsReview {
+                    event_id: "start".into(),
+                }];
+                if prior.parse::<BootIdentity>().is_err() {
+                    assert_eq!(recover(&journal), expected);
+                }
+                let adapter = capability();
+                assert_eq!(
+                    recover_transfer(&journal, &context, &registry(adapter.clone()), &json!({})),
+                    expected
+                );
+                assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+                assert_eq!(
+                    adapter.reconciliations.load(std::sync::atomic::Ordering::SeqCst),
+                    0
+                );
+                assert_eq!(std::fs::read(&path).unwrap(), before);
+            }
+        }
+    }
+
+    #[test]
     fn transfer_recovery_requires_matching_plan_and_observed_reboot() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("journal");
@@ -1403,7 +1540,7 @@ mod tests {
             operation_id: "operation",
             plan_id: "plan",
             plan_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            boot_identity: "boot-1",
+            boot_identity: "windows-boot-sequence-v1:1",
         };
         let registry = CapabilityRegistry::default();
         let input = json!({});
@@ -1417,10 +1554,10 @@ mod tests {
             event("reboot", "step.reboot_observed", OperationState::Running),
             RedactionClass::MetadataOnly,
         );
-        reboot.boot_identity = Some("boot-2".into());
+        reboot.boot_identity = Some("windows-boot-sequence-v1:2".into());
         journal.append(reboot).unwrap();
         let rebooted_context = TransferRecoveryContext {
-            boot_identity: "boot-2",
+            boot_identity: "windows-boot-sequence-v1:2",
             ..context
         };
         assert_eq!(
@@ -1466,7 +1603,7 @@ mod tests {
             operation_id: "operation",
             plan_id: "plan",
             plan_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            boot_identity: "boot-1",
+            boot_identity: "windows-boot-sequence-v1:1",
         };
 
         assert_eq!(
@@ -1515,6 +1652,42 @@ mod tests {
     }
 
     #[test]
+    fn reboot_rejects_legacy_or_malformed_identities_without_journaling() {
+        let directory = tempdir().unwrap();
+        let mut agent = LocalAgent::new(
+            AgentIdentity {
+                agent_id: "agent".into(),
+                key_id: "local".into(),
+                private_key: "opaque".into(),
+            },
+            "target".into(),
+            Journal::open(directory.path().join("journal")).unwrap(),
+            CapabilityRegistry::default(),
+            Arc::new(Ed25519AuthorizationVerifier::default()),
+        );
+        for (prior, current) in [
+            ("123", "123"),
+            ("123", "124"),
+            ("123", "windows-boot-sequence-v1:1"),
+            ("windows-boot-sequence-v1:1", "124"),
+            ("", "windows-boot-sequence-v1:1"),
+            ("windows-boot-sequence-v1:01", "windows-boot-sequence-v1:2"),
+            ("windows-boot-sequence-v2:1", "windows-boot-sequence-v2:2"),
+        ] {
+            assert!(matches!(
+                agent
+                    .reboot_observed(
+                        prior,
+                        current,
+                        event("boot", "step.reboot_observed", OperationState::Running),
+                    ),
+                Err(AgentError::BootIdentity(_))
+            ));
+            assert!(agent.journal.records().is_empty());
+        }
+    }
+
+    #[test]
     fn reboot_requires_a_new_boot_identity() {
         let directory = tempdir().unwrap();
         let mut agent = LocalAgent::new(
@@ -1530,8 +1703,8 @@ mod tests {
         );
         assert!(matches!(
             agent.reboot_observed(
-                "boot-1",
-                "boot-1",
+                "windows-boot-sequence-v1:1",
+                "windows-boot-sequence-v1:1",
                 event(
                     "boot",
                     "step.reboot_observed",
@@ -1542,8 +1715,8 @@ mod tests {
         ));
         agent
             .reboot_observed(
-                "boot-1",
-                "boot-2",
+                "windows-boot-sequence-v1:1",
+                "windows-boot-sequence-v1:2",
                 event("boot", "step.reboot_observed", OperationState::Running),
             )
             .unwrap();

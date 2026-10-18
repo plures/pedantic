@@ -153,6 +153,43 @@ ownership, failure injections and cleanup receipts. No DSC execution, host
 modification, reboot, cloud provisioning or tenant attachment is authorized by
 this source-control change.
 
+## Decision: stable boot identity and legacy checkpoint rejection
+
+For the bounded #246 repair, the Windows adapter must return the OS loader's
+boot sequence, not elapsed uptime or an estimated boot timestamp. Microsoft
+documents `KUSER_SHARED_DATA.BootId` as the sequence incremented for each boot
+attempt. Read only that field and the Windows version from the current process's
+shared-data mapping, using SDK layouts and a checked `ReadProcessMemory` call.
+Initially support x86-64 Windows 10 and later; other platforms, unavailable data,
+short reads and unsupported versions must return explicit errors without a
+fallback identity. No privileged driver, shell command or host modification is
+needed.
+
+Use the canonical opaque value `windows-boot-sequence-v1:<unsigned decimal u32>`.
+This is a target-local sequence, not a globally unique identifier, authorization,
+or protection against machine cloning, snapshots, counter reset or wraparound.
+It cannot independently prove that an intended reboot command ran.
+
+The user approved refusing legacy uptime checkpoints rather than automatically
+converting their evidence. Keep existing v1 string fields and historical journal
+records readable; do not rewrite schemas or old records. At execution and
+recovery boundaries, however, reject legacy, malformed or unknown identity
+schemes. New transfer dispatch and reboot observation return explicit errors;
+transfer recovery yields `NeedsReview`, without provider reconciliation or
+journal mutation. Even equal legacy values are insufficient. Only two valid
+identities in the same supported scheme may be compared to record a reboot.
+Changing the adapter or identity format is never evidence of a reboot.
+
+Share parsing and formatting in the existing operation-contract crate, and use
+it in both adapter and agent. Test unchanged/changed sequences, invalid and
+legacy values, and journal non-mutation on rejection. Read-only Windows tests
+must cover stable repeated reads and separate processes. These tests do not
+qualify real restart, sleep/hibernate, fast-startup, rollback or service-backed
+continuation; those remain part of the separately approved target acceptance
+gate. No reboot is authorized by this repair.
+
+Reference: [Microsoft KUSER_SHARED_DATA documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-kuser_shared_data).
+
 ## Parity, cutover and rollback
 
 Characterize existing behavior using permitted inputs before replacement.
