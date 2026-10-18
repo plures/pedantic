@@ -5,6 +5,7 @@
 
 .DESCRIPTION
     This script runs the same checks that will run in CI/CD:
+    - Source provenance hold and Git archive exclusions
     - PSScriptAnalyzer
     - Pester tests
     - Module manifest validation
@@ -47,6 +48,14 @@ Set-Location $repoRoot
 
 # Track overall status
 $allPassed = $true
+
+Write-Host "Checking source provenance..." -ForegroundColor Yellow
+& node ./scripts/check-source-provenance.mjs
+if ($LASTEXITCODE -ne 0) { throw 'Source provenance check failed.' }
+if (-not $SkipTests) {
+    & node --test ./tests/source-provenance.test.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Source provenance regression tests failed.' }
+}
 
 # PSScriptAnalyzer
 if (-not $SkipLinter) {
