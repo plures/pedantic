@@ -1034,6 +1034,46 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_registration_cannot_replace_the_authorized_dispatch_target() {
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let mut verifier = Ed25519AuthorizationVerifier::default();
+        verifier.insert("issuer".into(), signing_key.verifying_key());
+        let accepted = capability();
+        let rejected = capability();
+        let mut providers = registry(accepted.clone());
+        assert!(matches!(
+            providers.register(rejected.clone()),
+            Err(CapabilityError::Duplicate(_))
+        ));
+        let directory = tempdir().unwrap();
+        let mut agent = LocalAgent::new(
+            AgentIdentity {
+                agent_id: "agent".into(),
+                key_id: "local".into(),
+                private_key: "opaque".into(),
+            },
+            "target".into(),
+            Journal::open(directory.path().join("journal")).unwrap(),
+            providers,
+            Arc::new(verifier),
+        );
+
+        let output = agent
+            .execute(
+                &authorization(&signing_key, RetryClass::Safe),
+                &json!({}),
+                2,
+                event("start", "step.started", OperationState::Running),
+                event("done", "step.completed", OperationState::Succeeded),
+            )
+            .unwrap();
+
+        assert_eq!(output, json!({"safe": true}));
+        assert_eq!(accepted.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(rejected.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
     fn rejects_unbound_or_expired_authorization_before_effect() {
         let signing_key = SigningKey::from_bytes(&[7; 32]);
         let mut verifier = Ed25519AuthorizationVerifier::default();
