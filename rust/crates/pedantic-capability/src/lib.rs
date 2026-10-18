@@ -5,7 +5,7 @@ use jsonschema::{Draft, JSONSchema};
 use pedantic_operation::{CapabilityManifest, CapabilityReadiness};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map::Entry};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -104,10 +104,13 @@ impl CapabilityRegistry {
             capability.manifest().capability,
             capability.manifest().version
         );
-        if self.capabilities.insert(name.clone(), capability).is_some() {
-            return Err(CapabilityError::Duplicate(name));
+        match self.capabilities.entry(name) {
+            Entry::Occupied(entry) => Err(CapabilityError::Duplicate(entry.key().clone())),
+            Entry::Vacant(entry) => {
+                entry.insert(capability);
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     pub fn resolve(&self, name: &str) -> Result<Arc<dyn Capability>, CapabilityError> {
@@ -457,6 +460,86 @@ mod tests {
         assert!(matches!(
             validate_manifest(&manifest),
             Err(CapabilityError::InvalidManifest(_))
+        ));
+    }
+
+    #[test]
+    fn duplicate_registration_preserves_the_accepted_provider() {
+        let accepted: Arc<dyn Capability> =
+            Arc::new(DscCapability::new(manifest(), Process, DscAction::Test));
+        let name = format!(
+            "{}/{}",
+            accepted.manifest().capability,
+            accepted.manifest().version
+        );
+        let mut registry = CapabilityRegistry::default();
+        registry.register(Arc::clone(&accepted)).unwrap();
+        let mut replacement = manifest();
+        replacement.risk_class = pedantic_operation::RiskClass::Dangerous;
+
+        let result = registry.register(Arc::new(DscCapability::new(
+            replacement,
+            Process,
+            DscAction::Test,
+        )));
+
+        assert!(matches!(result, Err(CapabilityError::Duplicate(key)) if key == name));
+        assert!(Arc::ptr_eq(&registry.resolve(&name).unwrap(), &accepted));
+        assert_eq!(registry.readiness("target", "agent", 1).len(), 1);
+    }
+
+    #[test]
+    fn invalid_registration_preserves_existing_entries() {
+        let accepted: Arc<dyn Capability> =
+            Arc::new(DscCapability::new(manifest(), Process, DscAction::Test));
+        let name = format!(
+            "{}/{}",
+            accepted.manifest().capability,
+            accepted.manifest().version
+        );
+        let mut registry = CapabilityRegistry::default();
+        registry.register(Arc::clone(&accepted)).unwrap();
+        let mut invalid = manifest();
+        invalid.capability = "invalid.capability".into();
+        invalid.input_schema = Some(json!({"type": "not-a-json-schema-type"}));
+
+        assert!(matches!(
+            registry.register(Arc::new(DscCapability::new(
+                invalid,
+                Process,
+                DscAction::Test,
+            ))),
+            Err(CapabilityError::InvalidManifest(_))
+        ));
+        assert!(Arc::ptr_eq(&registry.resolve(&name).unwrap(), &accepted));
+        assert!(matches!(
+            registry.resolve("invalid.capability/v1"),
+            Err(CapabilityError::Missing(_))
+        ));
+        assert_eq!(registry.readiness("target", "agent", 1).len(), 1);
+    }
+
+    #[test]
+    fn different_provider_versions_remain_independently_registered() {
+        let first: Arc<dyn Capability> =
+            Arc::new(DscCapability::new(manifest(), Process, DscAction::Test));
+        let first_name = format!("{}/v1", first.manifest().capability);
+        let mut next_manifest = manifest();
+        next_manifest.version = "v2".into();
+        let second: Arc<dyn Capability> =
+            Arc::new(DscCapability::new(next_manifest, Process, DscAction::Test));
+        let second_name = format!("{}/v2", second.manifest().capability);
+        let mut registry = CapabilityRegistry::default();
+
+        registry.register(Arc::clone(&first)).unwrap();
+        registry.register(Arc::clone(&second)).unwrap();
+
+        assert!(Arc::ptr_eq(&registry.resolve(&first_name).unwrap(), &first));
+        assert!(Arc::ptr_eq(&registry.resolve(&second_name).unwrap(), &second));
+        assert_eq!(registry.readiness("target", "agent", 1).len(), 2);
+        assert!(matches!(
+            registry.resolve(&format!("{}/v3", first.manifest().capability)),
+            Err(CapabilityError::Missing(_))
         ));
     }
 

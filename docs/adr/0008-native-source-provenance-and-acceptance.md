@@ -69,6 +69,43 @@ artifact, runtime, provider, or license acceptance is inferred from this gate.
 
 ## Native contracts and ownership
 
+### Foundation acceptance reconciliation
+
+The following source inspection is bound to
+`00d28ce3ed5df50d34a58b5da48b451e7146be85` and the acceptance criteria of
+[#240](https://github.com/plures/pedantic/issues/240) through
+[#249](https://github.com/plures/pedantic/issues/249). None of these issues is
+accepted or closed by this inspection. Existing component tests are not evidence
+of the complete service-backed exit gate.
+
+| Issue | Existing source | Unmet or unverified acceptance |
+| --- | --- | --- |
+| #240 | [Operation models](../../rust/crates/pedantic-operation/src/lib.rs) and [v1 schemas/fixtures](../../contracts/v1/README.md) distinguish plans, authorizations, effects and projections. | Shared Rust/PX/TypeScript/CLI/MCP fixture conformance and complete identity relationships remain unqualified. The generic authorization has an input digest, while resolved-plan binding is represented separately by the transfer checkpoint. |
+| #241 | [Settings resolver](../../rust/crates/pedantic-operation/src/settings.rs) applies ordered, flat key replacement and records four source categories. | Recursive merge, declared list strategies, target-rule conflicts, reset/inherit semantics, source revisions, and canonical cross-client digest evidence are not supplied by this helper. |
+| #242 | [Lifecycle](../../praxis/procedures/pedantic-operation-lifecycle.px) and [plan admission](../../praxis/procedures/pedantic-plan-admission.px) declare PX constraints; the service evaluates configuration/remediation policy. | General native lifecycle integration and complete recovery/cleanup policy coverage are not established by those declarations. |
+| #243 | [Profile service](../../rust/crates/pedantic-service/src/lib.rs) owns persistent state and Chronos evidence, including agent synchronization, remediation claims and a transfer registry. | These domain-specific paths do not establish durable persistence/restart of the general coordinator or complete cross-client operation projections. |
+| #244 | [Durable coordinator](../../rust/crates/pedantic-operation/src/durable_coordinator.rs) has lease/approval/cleanup helpers and serialization tests. | No production use of `DurableCoordinator` was found in the inspected Rust workspace. Service restart, scheduling, lost acknowledgements and full failure-injection acceptance remain open. |
+| #245 | [Agent](../../rust/crates/pedantic-agent/src/lib.rs) validates signed grants, target bindings and observation sequences. | The complete operation-owned artifact/cleanup manifest, shared prerequisite handling and independent removal verification are not demonstrated. |
+| #246 | The agent library journals progress and has recovery tests. | Real agent-binary/service disconnection and reboot acceptance are absent. [Windows boot identity](../../rust/crates/pedantic-windows-agent/src/lib.rs) currently returns changing uptime, not a stable boot identifier; this is a separate unresolved prerequisite. |
+| #247 | The coordinator models cleanup verification; the Windows adapter currently exposes a boot fact. | No native install/rollback/service-registration/agentless-removal implementation was found in the inspected Rust workspace. Helper cleanup booleans do not verify target residue. |
+| #248 | [Capability registry and SDK](../../rust/crates/pedantic-capability/src/lib.rs) validate schemas; the [agent](../../rust/crates/pedantic-agent/src/lib.rs) validates grants before dispatching resolved providers. | Duplicate registration at the inspected baseline replaces the accepted provider before reporting rejection. Service registration, execution-mode/platform/lifecycle declarations and descriptor parity remain separate open requirements. |
+| #249 | CLI and MCP use the authenticated profile-service client for existing methods; the extension reports unavailable inventory truthfully. | One general operation list/get/watch projection and normalized cross-surface fixture comparison are not established. |
+
+### Decision: rejected registration preserves the accepted provider
+
+Registration is a structural SDK operation, not a new PX lifecycle decision.
+Validate the candidate manifest first. A duplicate capability/version key must
+return the existing `Duplicate` error without replacing the accepted provider
+or adding readiness entries. Invalid candidates must also leave the registry
+unchanged; different versions remain separately registerable.
+
+Verify both registry identity preservation and downstream `LocalAgent`
+dispatch with the existing signed-grant and temporary-journal fixtures. This
+repairs a component-level prerequisite of #248 without changing wire contracts,
+adding a service registration API, performing target effects, or claiming
+native acceptance. The boot-identity defect and the other gaps above remain
+open and must not be hidden by this repair.
+
 Use the existing `pedantic.*.v1` contract naming and explicit schema versions.
 New security contracts belong to the existing #261 / #262-#268 program, not a
 second epic. Domain-specific catalogs are opaque versioned content inputs, not
