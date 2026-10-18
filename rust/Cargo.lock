@@ -2216,6 +2216,7 @@ dependencies = [
 name = "pedantic-windows-agent"
 version = "0.11.0"
 dependencies = [
+ "pedantic-operation",
  "thiserror 2.0.18",
  "windows-sys 0.61.2",
 ]

@@ -30,6 +30,17 @@ atomically, preventing unattached or missing provenance. The compatibility
 decision is recorded in
 [ADR 0007](../../docs/adr/0007-operation-plan-resolved-settings.md).
 
+Boot identity fields remain strings in v1 so historical checkpoints and journals
+stay readable. Native execution/recovery now recognizes the canonical
+`windows-boot-sequence-v1:<unsigned decimal u32>` scheme. This is a target-local
+Windows boot sequence, not a globally unique identity or proof of authorization.
+Legacy uptime values, unknown schemes and noncanonical values require explicit
+reconciliation; they must not be converted or compared as evidence of a reboot.
+Transfer execution and reboot observation reject them, while recovery returns
+`NeedsReview` without rewriting historical evidence. A valid schema alone is not
+permission to resume. The compatibility decision and platform/acceptance limits
+are recorded in [ADR 0008](../../docs/adr/0008-native-source-provenance-and-acceptance.md).
+
 Contract changes require an ADR, compatibility classification, schema tests,
 and a pre-release client conformance run. The fixtures in `fixtures/` are
 validated by `pedantic-service` tests against the same schemas and live service
