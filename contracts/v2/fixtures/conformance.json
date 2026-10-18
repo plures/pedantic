@@ -1,0 +1,336 @@
+{
+  "fixtureOnly": true,
+  "description": "Synthetic contract vectors only. Keys and signatures are not service identities or effect approval.",
+  "keyId": "synthetic-v2-key",
+  "publicKey": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+  "plan": {
+    "schemaVersion": "pedantic.resolved-plan.v2",
+    "planId": "plan-1",
+    "planRevision": 1,
+    "operationId": "operation-1",
+    "profileId": "profile-1",
+    "targetId": "target-1",
+    "executionMode": "ephemeral-agent",
+    "resolvedSettings": {
+      "limit": {
+        "value": 3,
+        "source": "target",
+        "sourceRevision": "target-settings-1"
+      },
+      "enabled": {
+        "value": true,
+        "source": "builtIn",
+        "sourceRevision": "builtin-settings-1"
+      }
+    },
+    "steps": [
+      {
+        "stepId": "prepare",
+        "stage": "preparation",
+        "capability": "fixture.prepare/v1",
+        "dependsOn": [],
+        "retryClass": "safe",
+        "inputDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "secretReferences": []
+      },
+      {
+        "stepId": "apply",
+        "stage": "execution",
+        "capability": "fixture.apply/v1",
+        "dependsOn": [
+          "prepare"
+        ],
+        "retryClass": "safe-after-observation",
+        "inputDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "secretReferences": [
+          "secret/example-reference"
+        ]
+      }
+    ]
+  },
+  "authorization": {
+    "schemaVersion": "pedantic.effect-authorization.v2",
+    "grant": {
+      "authorizationId": "authorization-1",
+      "issuerId": "service-1",
+      "actorId": "actor-1",
+      "planId": "plan-1",
+      "planRevision": 1,
+      "planDigest": "sha256:c8fb5d338da257ad113c54830f705d06028f482e7dcdc83265d2cd8a06def52b",
+      "operationId": "operation-1",
+      "profileId": "profile-1",
+      "targetId": "target-1",
+      "stepId": "apply",
+      "attemptId": "attempt-1",
+      "capability": "fixture.apply/v1",
+      "inputDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "execution": {
+        "mode": "ephemeral-agent",
+        "agentId": "agent-1",
+        "agentInstanceId": "instance-1",
+        "leaseId": "lease-1"
+      },
+      "idempotencyKey": "effect-1",
+      "fencingToken": 7,
+      "issuedAt": 10,
+      "expiresAt": 20,
+      "retryClass": "safe-after-observation",
+      "riskClass": "high",
+      "rebootPermitted": false
+    },
+    "signature": {
+      "algorithm": "Ed25519",
+      "keyId": "synthetic-v2-key",
+      "payloadDigest": "sha256:64c6b063b20030cda3245d0f73b536dfc5c05b2291d6539e70d8bd8dbf1db1a3",
+      "value": "yCrq33jMTeWOlbHZVJ-OwJMS89wjGSwkZia8-p2kOaAm0U2_ipQYCJAF7T70Zh2-s_sedZUful0FdhepsSgVCw"
+    }
+  },
+  "context": {
+    "authorizationId": "authorization-1",
+    "issuerId": "service-1",
+    "actorId": "actor-1",
+    "operationId": "operation-1",
+    "profileId": "profile-1",
+    "targetId": "target-1",
+    "stepId": "apply",
+    "attemptId": "attempt-1",
+    "inputDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "idempotencyKey": "effect-1",
+    "execution": {
+      "mode": "ephemeral-agent",
+      "agentId": "agent-1",
+      "agentInstanceId": "instance-1",
+      "leaseId": "lease-1"
+    },
+    "fencingToken": 7,
+    "riskClass": "high",
+    "requiresReboot": false,
+    "now": 15,
+    "revoked": false
+  },
+  "negativeCases": [
+    {
+      "name": "v1-plan-not-upgraded",
+      "input": "plan",
+      "path": "/schemaVersion",
+      "value": "pedantic.operation-plan.v1",
+      "expectedCode": "unsupported_version"
+    },
+    {
+      "name": "unknown-plan-field",
+      "input": "plan",
+      "path": "/unexpected",
+      "value": true,
+      "expectedCode": "invalid_contract"
+    },
+    {
+      "name": "unknown-nested-step-field",
+      "input": "plan",
+      "path": "/steps/0/unexpected",
+      "value": true,
+      "expectedCode": "invalid_contract"
+    },
+    {
+      "name": "changed-resolved-value",
+      "input": "plan",
+      "path": "/resolvedSettings/limit/value",
+      "value": 4,
+      "expectedCode": "plan_binding"
+    },
+    {
+      "name": "changed-plan-revision",
+      "input": "plan",
+      "path": "/planRevision",
+      "value": 2,
+      "expectedCode": "plan_binding"
+    },
+    {
+      "name": "unsafe-integer",
+      "input": "plan",
+      "path": "/resolvedSettings/limit/value",
+      "value": 9007199254740992,
+      "expectedCode": "unsupported_number"
+    },
+    {
+      "name": "missing-dependency",
+      "input": "plan",
+      "path": "/steps/1/dependsOn",
+      "value": [
+        "missing"
+      ],
+      "expectedCode": "invalid_plan"
+    },
+    {
+      "name": "duplicate-dependency",
+      "input": "plan",
+      "path": "/steps/1/dependsOn",
+      "value": [
+        "prepare",
+        "prepare"
+      ],
+      "expectedCode": "invalid_contract"
+    },
+    {
+      "name": "v1-grant-not-upgraded",
+      "input": "authorization",
+      "path": "/schemaVersion",
+      "value": "pedantic.effect-authorization.v1",
+      "expectedCode": "unsupported_version"
+    },
+    {
+      "name": "unknown-grant-field",
+      "input": "authorization",
+      "path": "/grant/unexpected",
+      "value": true,
+      "expectedCode": "invalid_contract"
+    },
+    {
+      "name": "wrong-plan-digest",
+      "input": "authorization",
+      "path": "/grant/planDigest",
+      "value": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "expectedCode": "plan_binding",
+      "resign": true
+    },
+    {
+      "name": "wrong-provider-version",
+      "input": "authorization",
+      "path": "/grant/capability",
+      "value": "fixture.apply/v2",
+      "expectedCode": "plan_binding",
+      "resign": true
+    },
+    {
+      "name": "wrong-input-digest",
+      "input": "authorization",
+      "path": "/grant/inputDigest",
+      "value": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "expectedCode": "plan_binding",
+      "resign": true
+    },
+    {
+      "name": "tampered-permission",
+      "input": "authorization",
+      "path": "/grant/rebootPermitted",
+      "value": true,
+      "expectedCode": "invalid_signature",
+      "checkSignature": true
+    },
+    {
+      "name": "wrong-key-id",
+      "input": "authorization",
+      "path": "/signature/keyId",
+      "value": "untrusted-key",
+      "expectedCode": "invalid_signature"
+    },
+    {
+      "name": "wrong-payload-digest",
+      "input": "authorization",
+      "path": "/signature/payloadDigest",
+      "value": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "expectedCode": "invalid_signature"
+    },
+    {
+      "name": "other-target",
+      "input": "context",
+      "path": "/targetId",
+      "value": "target-2",
+      "expectedCode": "effect_binding"
+    },
+    {
+      "name": "other-actor",
+      "input": "context",
+      "path": "/actorId",
+      "value": "actor-2",
+      "expectedCode": "effect_binding"
+    },
+    {
+      "name": "other-attempt",
+      "input": "context",
+      "path": "/attemptId",
+      "value": "attempt-2",
+      "expectedCode": "effect_binding"
+    },
+    {
+      "name": "other-agent-instance",
+      "input": "context",
+      "path": "/execution/agentInstanceId",
+      "value": "instance-2",
+      "expectedCode": "effect_binding"
+    },
+    {
+      "name": "other-lease",
+      "input": "context",
+      "path": "/execution/leaseId",
+      "value": "lease-2",
+      "expectedCode": "effect_binding"
+    },
+    {
+      "name": "stale-fencing-token",
+      "input": "context",
+      "path": "/fencingToken",
+      "value": 8,
+      "expectedCode": "effect_binding"
+    },
+    {
+      "name": "wrong-idempotency-key",
+      "input": "context",
+      "path": "/idempotencyKey",
+      "value": "effect-2",
+      "expectedCode": "effect_binding"
+    },
+    {
+      "name": "reboot-not-granted",
+      "input": "context",
+      "path": "/requiresReboot",
+      "value": true,
+      "expectedCode": "effect_binding"
+    },
+    {
+      "name": "expired",
+      "input": "context",
+      "path": "/now",
+      "value": 20,
+      "expectedCode": "inactive"
+    },
+    {
+      "name": "not-yet-valid",
+      "input": "context",
+      "path": "/now",
+      "value": 9,
+      "expectedCode": "inactive"
+    },
+    {
+      "name": "revoked",
+      "input": "context",
+      "path": "/revoked",
+      "value": true,
+      "expectedCode": "inactive"
+    }
+  ],
+  "canonicalVectors": [
+    {
+      "name": "property-and-unicode-order",
+      "value": {
+        "": 1,
+        "😀": 2,
+        "a": {
+          "z": 3,
+          "b": 4
+        }
+      },
+      "canonical": "{\"a\":{\"b\":4,\"z\":3},\"😀\":2,\"\":1}"
+    },
+    {
+      "name": "number-normalization",
+      "value": [
+        1,
+        0,
+        0.000001,
+        1e-7,
+        9007199254740991
+      ],
+      "canonical": "[1,0,0.000001,1e-7,9007199254740991]"
+    }
+  ]
+}
