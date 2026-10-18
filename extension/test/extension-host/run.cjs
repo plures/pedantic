@@ -1,9 +1,8 @@
-const { execFileSync } = require('node:child_process');
 const { existsSync } = require('node:fs');
-const { mkdtemp, rm } = require('node:fs/promises');
+const { copyFile, mkdtemp, rm } = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { downloadAndUnzipVSCode, runTests } = require('@vscode/test-electron');
+const { downloadAndUnzipVSCode, runTests, runVSCodeCommand } = require('@vscode/test-electron');
 
 async function main() {
   const vsixPath = path.resolve(process.argv[2] || 'pedantic-dsc.vsix');
@@ -14,25 +13,30 @@ async function main() {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'pedantic-vsix-smoke-'));
   const userDataDirectory = path.join(tempDirectory, 'user-data');
   const extensionsDirectory = path.join(tempDirectory, 'extensions');
+  let testError;
 
   try {
     const vscodeExecutablePath = await downloadAndUnzipVSCode({
       version: '1.90.0',
       cachePath: tempDirectory,
     });
-    execFileSync(
-      vscodeExecutablePath,
+    await copyFile(vsixPath, path.join(tempDirectory, 'candidate.vsix'));
+    await runVSCodeCommand(
       [
         '--install-extension',
-        vsixPath,
+        'candidate.vsix',
         '--force',
         '--no-sandbox',
         '--user-data-dir',
-        userDataDirectory,
+        'user-data',
         '--extensions-dir',
-        extensionsDirectory,
+        'extensions',
       ],
-      { stdio: 'inherit' },
+      {
+        version: '1.90.0',
+        cachePath: tempDirectory,
+        spawn: { cwd: tempDirectory, stdio: 'inherit', timeout: 60000 },
+      },
     );
 
     await runTests({
@@ -48,8 +52,18 @@ async function main() {
         '--no-sandbox',
       ],
     });
+  } catch (error) {
+    testError = error;
+    throw error;
   } finally {
-    await rm(tempDirectory, { recursive: true, force: true });
+    try {
+      await rm(tempDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch (cleanupError) {
+      if (testError !== undefined) {
+        throw new AggregateError([testError, cleanupError], 'VSIX smoke test and cleanup both failed');
+      }
+      throw cleanupError;
+    }
   }
 }
 
