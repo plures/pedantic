@@ -3,6 +3,7 @@
 //! inputs from PX rather than reimplemented here.
 
 pub mod boot_identity;
+pub mod native_v2;
 pub mod hyperv_transfer_plan;
 pub mod settings;
 pub mod transfer_batch;
