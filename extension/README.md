@@ -157,6 +157,13 @@ The language client is pinned to `9.0.1`, which supports this host baseline.
 The 10.x client requires VS Code 1.91 or later and fails during startup on 1.90.
 Its minor/major upgrades are also held for a coordinated compatibility decision.
 
+Resolve dependency updates against `https://registry.npmjs.org`, passing
+`--registry=https://registry.npmjs.org` to npm when the machine uses a different
+default. Commit only credential-free public npm tarball URLs in the lockfile;
+machine-specific feed URLs can prevent Dependabot from maintaining the package.
+The package-source regression test enforces this boundary during `npm test`
+and packaging.
+
 ### Running Tests
 
 ```bash
