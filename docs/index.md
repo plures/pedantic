@@ -35,4 +35,5 @@ a running authenticated service, a fresh accepted observation, explicit
 approval, and a plan-bound authorization. Remote remediation and bootstrap
 paths are not documented as supported operations.
 
-For release history, consult the [changelog](../CHANGELOG.md).
+For release history, consult the
+[changelog](https://github.com/plures/pedantic/blob/main/CHANGELOG.md).

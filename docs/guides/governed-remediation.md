@@ -38,7 +38,9 @@ pedantic service remediation-execute `
 ```
 
 The service binds the authorization to the accepted request and document
-identity. The agent validates it before calling a bounded DSC capability.
+identity, then calls the bounded DSC capability on the service host. This
+Windows-local CLI path does not use `pedantic-agent` or its durable journal.
+Agent journaling applies to the separate durable agent execution path.
 Repeated idempotency keys return the recorded result instead of executing the
 effect again.
 

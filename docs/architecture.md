@@ -4,20 +4,7 @@ Pedantic separates declarative configuration work from the authority to cause
 host effects. PX procedures and constraints are the authority for domain
 decisions; adapters validate and execute only already-authorized work.
 
-```mermaid
-flowchart LR
-  Author[DSC v3 document] --> CLI[Offline CLI]
-  CLI --> Core[pedantic-core]
-  Core --> Reports[Plan / JUnit / SARIF]
-  Client[CLI, MCP, extension, PowerShell] --> Service[pedantic-service]
-  Service --> PX[PX procedures and constraints]
-  Service --> Store[Profile-local PluresDB]
-  Service --> Evidence[Redacted Chronos evidence]
-  PX --> Operation[pedantic-operation]
-  Operation --> Agent[pedantic-agent]
-  Agent --> Capability[pedantic-capability]
-  Capability --> Providers[pedantic-provider-pack]
-```
+![Pedantic architecture: offline parsing and reporting, service-owned policy and storage, and durable agent capability execution.](assets/pedantic-architecture.svg)
 
 ## Boundaries
 

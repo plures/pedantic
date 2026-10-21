@@ -1,4 +1,6 @@
 $schema: "https://aka.ms/dsc/schemas/v3/config/document.json"
+name: simple-install
+version: 1.0.0
 metadata:
   name: "Generated from Simple DSL: simple-install.yaml"
 resources:

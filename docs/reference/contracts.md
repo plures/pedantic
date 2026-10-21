@@ -1,7 +1,7 @@
 # Contracts and authority
 
 Pedantic keeps versioned machine-readable contracts in
-[`contracts/v1`](../../contracts/v1). They define the data exchanged across
+[`contracts/v1`](https://github.com/plures/pedantic/tree/main/contracts/v1). They define the data exchanged across
 the native boundaries, including operation plans, capability manifests,
 authorizations, agent records, and service requests.
 
@@ -13,7 +13,7 @@ authorizations, agent records, and service requests.
 - Agents validate grants and record observations; they do not determine policy.
 - Capability adapters validate declared JSON input and output schemas.
 
-PX procedures in [`praxis/procedures`](../../praxis/procedures) are the source
+PX procedures in [`praxis/procedures`](https://github.com/plures/pedantic/tree/main/praxis/procedures) are the source
 of truth for accepted domain transitions and constraints. Rust modules implement
 and project those decisions; neither a client nor a provider adapter can
 override them.

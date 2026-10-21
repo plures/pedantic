@@ -4,7 +4,7 @@
 
 - Rust toolchain compatible with the workspace edition (2024).
 - A DSC v3 YAML configuration, such as
-  [`examples/simple-install.dsc.yaml`](../examples/simple-install.dsc.yaml).
+  [`simple-install.dsc.yaml`](https://github.com/plures/pedantic/blob/main/examples/simple-install.dsc.yaml).
 
 The offline workflow does not need a running service, a local token, or DSC
 installed on the host.

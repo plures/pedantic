@@ -13,8 +13,10 @@ selected.
    observation.
 4. An authorized actor records an explicit approval.
 5. The service issues a narrow, plan-bound effect authorization.
-6. The agent validates the authorization again, executes a typed capability,
-   and records redacted observations.
+6. For durable agent execution, the agent validates the authorization again,
+   executes a typed capability, and records redacted observations. The separate
+   Windows-local CLI remediation path executes through the profile service on
+   the service host.
 
 Reusing an idempotency key returns the recorded outcome rather than initiating
 the effect twice. An adapter cannot replace the authorized document, target, or
@@ -25,7 +27,8 @@ operation with caller-provided alternatives.
 The model makes offline planning useful without treating it as permission to
 modify a host. It also makes durable evidence and safe recovery first-class:
 policy belongs to PX and the service, while local adapters remain small,
-testable effect boundaries.
+testable effect boundaries. Agent journaling applies to the durable agent path,
+not to service-local CLI remediation.
 
 See [Governed remediation](../guides/governed-remediation.md) for the supported
 CLI sequence.
