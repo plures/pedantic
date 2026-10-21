@@ -32,7 +32,7 @@ pedantic service effect-authorize `
 
 pedantic service remediation-execute `
   --execution-id execution-1 `
-  --authorization-id authorization-1 `
+  --authorization-id approval-1 `
   --idempotency-key change-123 `
   --file .\configuration.dsc.yaml
 ```
