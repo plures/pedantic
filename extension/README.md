@@ -145,6 +145,25 @@ The extension supports VS Code 1.90 and later and is type-checked against the
 matching 1.90 VS Code API declarations. Building and packaging require Node.js
 20.19.0 or later.
 
+Keep `@types/vscode` on the 1.90 API line (currently pinned to `1.90.0`);
+upgrading the declarations alone does not upgrade the supported extension host.
+Dependabot may propose patch updates,
+but minor and major API updates require a coordinated compatibility decision
+covering `engines.vscode`, the declarations, and the extension-host smoke test.
+The existing `vsce` package validation and isolated VS Code 1.90 smoke test
+remain required; do not raise the minimum host version just to bypass packaging.
+
+The language client is pinned to `9.0.1`, which supports this host baseline.
+The 10.x client requires VS Code 1.91 or later and fails during startup on 1.90.
+Its minor/major upgrades are also held for a coordinated compatibility decision.
+
+Resolve dependency updates against `https://registry.npmjs.org`, passing
+`--registry=https://registry.npmjs.org` to npm when the machine uses a different
+default. Commit only credential-free public npm tarball URLs in the lockfile;
+machine-specific feed URLs can prevent Dependabot from maintaining the package.
+The package-source regression test enforces this boundary during `npm test`
+and packaging.
+
 ### Running Tests
 
 ```bash
@@ -168,6 +187,11 @@ npm run package
 This runs linting and unit tests, bundles the extension host (leaving the
 `vscode` API external), and writes `pedantic-dsc.vsix`. To inspect the package
 file list without creating the VSIX, run `npx --no-install vsce ls`.
+
+Run `npm run test:vsix -- pedantic-dsc.vsix` to install the package using VS
+Code's CLI and test it in a disposable VS Code 1.90 profile. Installation is
+bounded to 60 seconds; neither the machine installation nor the user's normal
+extension/profile directories are used.
 
 ### Debugging
 

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "7a201be513530a05a2204c76b3cbbcd1b54cb526",
+  "lastLegacySourceChange": "6995f18a94256450d5b7af866590cd6395411a3a",
+  "heldRoot": "DTMS Primitives Source",
+  "disposition": "hold",
+  "reuseApproved": false,
+  "licenseCompatibility": "unverified",
+  "decision": "docs/adr/0008-native-source-provenance-and-acceptance.md",
+  "files": [
+    {
+      "path": "DTMS Primitives Source/DTMS.Transfer/DTMS.Transfer.Tests.ps1",
+      "gitBlob": "22c5ab8a115ee5a8416305642c59bb5cfd28334e"
+    },
+    {
+      "path": "DTMS Primitives Source/DTMS.Transfer/DTMS.Transfer.psm1",
+      "gitBlob": "9052872ca71a18ca60a73fe0d7ca9407f2f10a71"
+    },
+    {
+      "path": "DTMS Primitives Source/DTMS.VMHelper/DTMS.VMHelper.psm1",
+      "gitBlob": "045c4ceba115ffd5a0fa15eee35ccfe84fa38c7b"
+    }
+  ]
+}

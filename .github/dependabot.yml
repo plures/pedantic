@@ -36,6 +36,16 @@ updates:
       prefix: "deps(npm)"
       include: "scope"
     versioning-strategy: increase
+    # API minor/major changes must move with the supported VS Code baseline.
+    ignore:
+      - dependency-name: "@types/vscode"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
+      - dependency-name: "vscode-languageclient"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
     # Batch updates into two PRs (dev vs production) instead of one-per-dependency.
     # This is the chronos model; it collapses the ~12-PR/week noise into 1-2 PRs
     # that the dependabot-auto-merge workflow can auto-merge when green.

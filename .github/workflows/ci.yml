@@ -12,6 +12,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Verify source provenance hold and archive exclusions
+        shell: pwsh
+        run: |
+          node ./scripts/check-source-provenance.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Source provenance check failed.' }
+          node --test ./tests/source-provenance.test.mjs ./tests/native-v2-conformance.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Source provenance regression tests failed.' }
+
       - name: Initialize ADP Submodule (if configured)
         shell: pwsh
         continue-on-error: true

@@ -132,13 +132,13 @@
     "package": "npm run lint && npm test && vsce package --out pedantic-dsc.vsix",
     "lint": "eslint src test --max-warnings 0",
     "build": "npm run bundle",
-    "test": "npm run test:build && node --test dist-test/test/bridgeAssets.test.js dist-test/test/pwshBridge.test.js dist-test/test/goldenTests.test.js dist-test/test/inventoryService.test.js dist-test/test/sudoParser.test.js dist-test/test/logic/dsl-logic.test.js dist-test/test/logic/praxis-core.test.js dist-test/test/logic/reactive-state.test.js dist-test/test/webviewProtocol.test.js dist-test/test/clientLifecycle.test.js",
+    "test": "npm run test:build && node --test dist-test/test/bridgeAssets.test.js dist-test/test/pwshBridge.test.js dist-test/test/goldenTests.test.js dist-test/test/inventoryService.test.js dist-test/test/sudoParser.test.js dist-test/test/logic/dsl-logic.test.js dist-test/test/logic/praxis-core.test.js dist-test/test/logic/reactive-state.test.js dist-test/test/webviewProtocol.test.js dist-test/test/clientLifecycle.test.js dist-test/test/packageSources.test.js",
     "test:vsix": "node test/extension-host/run.cjs",
     "test:build": "tsc -p tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "26.6.4",
-    "@types/vscode": "1.140.0",
+    "@types/vscode": "1.90.0",
     "@typescript-eslint/eslint-plugin": "8.71.1",
     "@typescript-eslint/parser": "8.71.1",
     "@vscode/test-electron": "^3.1.0",
@@ -148,11 +148,14 @@
     "typescript": "6.0.3"
   },
   "dependencies": {
-    "chevrotain": "9.1.0",
+    "chevrotain": "10.5.0",
     "echarts": "^6.1.0",
-    "vscode-languageclient": "^10.1.2",
+    "vscode-languageclient": "9.0.1",
     "vscode-languageserver": "^10.1.2",
     "vscode-languageserver-textdocument": "^1.0.14",
     "yaml": "^2.9.1"
+  },
+  "overrides": {
+    "lodash": "4.18.1"
   }
 }

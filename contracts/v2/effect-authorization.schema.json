@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.pedantic.dev/contracts/v2/effect-authorization.schema.json",
+  "title": "Pedantic plan-bound effect authorization v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "grant", "signature"],
+  "properties": {
+    "schemaVersion": { "const": "pedantic.effect-authorization.v2" },
+    "grant": { "$ref": "#/definitions/grant" },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "keyId", "payloadDigest", "value"],
+      "properties": {
+        "algorithm": { "const": "Ed25519" },
+        "keyId": { "$ref": "#/definitions/id" },
+        "payloadDigest": { "$ref": "#/definitions/digest" },
+        "value": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+      }
+    }
+  },
+  "definitions": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "counter": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "time": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "execution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "executorId"],
+          "properties": {
+            "mode": { "const": "agentless" },
+            "executorId": { "$ref": "#/definitions/id" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "agentId", "agentInstanceId", "leaseId"],
+          "properties": {
+            "mode": { "const": "ephemeral-agent" },
+            "agentId": { "$ref": "#/definitions/id" },
+            "agentInstanceId": { "$ref": "#/definitions/id" },
+            "leaseId": { "$ref": "#/definitions/id" }
+          }
+        }
+      ]
+    },
+    "grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorizationId", "issuerId", "actorId", "planId", "planRevision", "planDigest", "operationId", "profileId", "targetId", "stepId", "attemptId", "capability", "inputDigest", "execution", "idempotencyKey", "fencingToken", "issuedAt", "expiresAt", "retryClass", "riskClass", "rebootPermitted"],
+      "properties": {
+        "authorizationId": { "$ref": "#/definitions/id" },
+        "issuerId": { "$ref": "#/definitions/id" },
+        "actorId": { "$ref": "#/definitions/id" },
+        "planId": { "$ref": "#/definitions/id" },
+        "planRevision": { "$ref": "#/definitions/counter" },
+        "planDigest": { "$ref": "#/definitions/digest" },
+        "operationId": { "$ref": "#/definitions/id" },
+        "profileId": { "$ref": "#/definitions/id" },
+        "targetId": { "$ref": "#/definitions/id" },
+        "stepId": { "$ref": "#/definitions/id" },
+        "attemptId": { "$ref": "#/definitions/id" },
+        "capability": { "type": "string", "pattern": "^[a-z][a-z0-9.-]*/v[1-9][0-9]*$" },
+        "inputDigest": { "$ref": "#/definitions/digest" },
+        "execution": { "$ref": "#/definitions/execution" },
+        "idempotencyKey": { "$ref": "#/definitions/id" },
+        "fencingToken": { "$ref": "#/definitions/counter" },
+        "issuedAt": { "$ref": "#/definitions/time" },
+        "expiresAt": { "$ref": "#/definitions/counter" },
+        "retryClass": { "enum": ["never", "safe", "safe-after-observation", "requires-fresh-authorization", "requires-operator-review", "compensate-then-retry"] },
+        "riskClass": { "enum": ["low", "moderate", "high", "dangerous"] },
+        "rebootPermitted": { "type": "boolean" }
+      }
+    }
+  }
+}

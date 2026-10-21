@@ -4,6 +4,24 @@ This directory contains helper scripts for local development and CI/CD workflow 
 
 ## Available Scripts
 
+### check-source-provenance.mjs
+
+Checks the conservative source hold defined in
+[ADR 0008](../docs/adr/0008-native-source-provenance-and-acceptance.md).
+It rejects held-path inventory or object changes, missing Git archive exclusions,
+and literal held-directory references in runtime source. It reports structured
+errors with a nonzero exit code, not license clearance or runtime acceptance.
+
+```powershell
+node ./scripts/check-source-provenance.mjs
+node --test ./tests/source-provenance.test.mjs
+```
+
+Requires Node.js, Git and `tar` (for archive regression tests). No package install
+is needed. The tests use independently authored fixtures, never the held source
+as an implementation example. Existing clones/history are not erased by archive
+exclusion, and custom packagers still require explicit safe input lists.
+
 ### Test-Workflows.ps1
 
 Validates GitHub Actions workflow files locally before pushing.
@@ -56,11 +74,13 @@ Runs the same checks that will run in CI/CD on your local machine.
 ```
 
 **What it checks:**
+- Source provenance hold (always), with archive regression tests unless `-SkipTests`
 - ✅ PSScriptAnalyzer (code quality and style)
 - ✅ Pester tests (functionality)
 - ✅ Module manifest validation
 
 **Requirements:**
+- Node.js, Git and `tar`
 - PowerShell 7.2+
 - Pester 5.x (auto-installed if missing)
 - PSScriptAnalyzer (auto-installed if missing)

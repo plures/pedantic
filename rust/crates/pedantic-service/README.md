@@ -51,6 +51,31 @@ profile store or invoke DSC. Operational CLI commands remain explicitly
 offline compatibility behavior until their service-backed capability has
 equivalent task-level evidence.
 
+## Opt-in v2 remediation
+
+The existing authenticated pipe accepts the explicit v2 request envelope
+documented in [the v2 contracts](../../../contracts/v2/README.md). Issuance uses
+an already-recorded approval and derives the immutable plan and execution
+context from profile-owned records. It does not accept a caller-selected plan,
+key, actor, executor, lease, fence, risk permission or clock.
+
+The service persists the existing `DurableCoordinator` and current lease in the
+same profile store. Superseded, expired, cancelled, revoked, changed-source and
+tampered grants fail before DSC dispatch. Both issuance and execution evaluate
+PX constraints. Execution uses the same bounded DSC adapter, current observation
+checks and durable idempotency claim as v1; an interrupted claim requires
+reconciliation rather than retrying an uncertain effect.
+
+V2 checks the storage backend before trusting a cached write. This matters
+because the pinned PluresDB `put` API logs persistence failures without returning
+them, and a cache `get` can write a computed quality score. Unconfirmed state or
+incomplete Chronos evidence causes an explicit error, never a usable grant.
+
+`LocalServiceClient::call_v2` is a typed transport adapter. It owns no policy or
+store. Tests exercise a real Windows profile pipe for issuance, and inject the
+DSC runner for execution tests; they do not run target effects. CLI/MCP/TypeScript
+adoption, general-operation scheduling and ephemeral agents remain follow-up.
+
 ## Run
 
 ```powershell

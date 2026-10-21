@@ -1,0 +1,14 @@
+# The first v2 runtime is the existing approved, local DSC remediation path.
+constraint v2_remediation_is_bounded:
+  scope: native_v2_remediation
+  phase: execution
+  require: plan.profile_id == profile.profile_id AND plan.target_id == profile.profile_id AND plan.mode == "agentless" AND effect.executor_id == "pedantic-service" AND effect.capability == "dsc.config.apply/v1" AND effect.risk_class == "high" AND effect.reboot_permitted == false AND effect.retry_class == "requires-fresh-authorization"
+  severity: error
+  message: "V2 remediation is restricted to the approved local agentless DSC capability."
+
+constraint v2_remediation_authority_is_current:
+  scope: native_v2_remediation
+  phase: execution
+  require: authority.state == "active" AND authority.authorization_id == effect.authorization_id AND authority.fencing_token == effect.fencing_token AND authority.expires_at > clock.now AND effect.expires_at > clock.now AND authority.revoked_at == 0
+  severity: error
+  message: "V2 remediation requires the current active, unrevoked and unexpired service-owned lease."

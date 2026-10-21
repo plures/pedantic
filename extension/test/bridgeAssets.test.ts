@@ -9,7 +9,7 @@ import { invokeInTrustedWorkspace } from '../src/bridge/trust';
 
 describe('PowerShell bridge assets', () => {
   it('resolves the bridge from the extension directory', () => {
-    const extensionRoot = path.join(path.sep, 'installed', 'pedantic');
+    const extensionRoot = path.resolve(path.sep, 'installed', 'pedantic');
     const bridgePath = resolveBridgeAsset({
       extensionUri: { fsPath: extensionRoot },
       asAbsolutePath: relativePath => path.join(extensionRoot, relativePath)
