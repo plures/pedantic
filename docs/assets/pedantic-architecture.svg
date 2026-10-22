@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 430" role="img" aria-labelledby="title description">
+  <title id="title">Pedantic architecture</title>
+  <desc id="description">Offline document parsing and reports are separate from service-owned policy, storage, and evidence. Durable authorized effects flow through the agent and capability provider packs.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#52606d"/>
+    </marker>
+    <style>
+      text { font-family: sans-serif; fill: #172b4d; }
+      .node { fill: #f4f7fa; stroke: #52606d; stroke-width: 2; rx: 8; }
+      .edge { fill: none; stroke: #52606d; stroke-width: 2; marker-end: url(#arrow); }
+      .label { font-size: 16px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
+      .group { font-size: 14px; font-weight: 700; fill: #52606d; }
+    </style>
+  </defs>
+  <text class="group" x="28" y="28">OFFLINE AUTHORING</text>
+  <text class="group" x="510" y="28">GOVERNED OPERATIONS</text>
+  <rect class="node" x="28" y="54" width="160" height="58"/>
+  <text class="label" x="108" y="83">DSC v3 document</text>
+  <rect class="node" x="252" y="54" width="150" height="58"/>
+  <text class="label" x="327" y="83">Offline CLI</text>
+  <rect class="node" x="252" y="162" width="150" height="58"/>
+  <text class="label" x="327" y="191">pedantic-core</text>
+  <rect class="node" x="252" y="270" width="150" height="58"/>
+  <text class="label" x="327" y="299">Plan / reports</text>
+  <path class="edge" d="M188 83 H244"/>
+  <path class="edge" d="M327 112 V154"/>
+  <path class="edge" d="M327 220 V262"/>
+  <rect class="node" x="510" y="54" width="190" height="58"/>
+  <text class="label" x="605" y="83">Client surfaces</text>
+  <rect class="node" x="510" y="162" width="190" height="58"/>
+  <text class="label" x="605" y="191">pedantic-service</text>
+  <rect class="node" x="510" y="270" width="190" height="58"/>
+  <text class="label" x="605" y="299">PX procedures</text>
+  <path class="edge" d="M605 112 V154"/>
+  <path class="edge" d="M605 220 V262"/>
+  <rect class="node" x="766" y="162" width="166" height="58"/>
+  <text class="label" x="849" y="191">PluresDB + evidence</text>
+  <path class="edge" d="M700 191 H758"/>
+  <rect class="node" x="510" y="354" width="190" height="58"/>
+  <text class="label" x="605" y="383">pedantic-operation</text>
+  <rect class="node" x="766" y="354" width="166" height="58"/>
+  <text class="label" x="849" y="383">Agent → capabilities</text>
+  <path class="edge" d="M605 328 V346"/>
+  <path class="edge" d="M700 383 H758"/>
+</svg>

@@ -105,7 +105,7 @@ versioned configuration, drift, proposal, decision, and evidence graph, and
 submits typed service requests. Canvas layout and annotations may remain
 RuneBook-owned presentation state, but Pedantic remains the sole owner of PX
 decisions, profile-scoped PluresDB state, Chronos evidence, and DSC effects.
-See [ADR 0006](adr/0006-runebook-is-a-pedantic-projection-client.md).
+See [ADR 0006](../adr/0006-runebook-is-a-pedantic-projection-client.md).
 
 ### Pares Radix plugin
 

@@ -1,0 +1,25 @@
+site_name: Pedantic
+site_description: Local-first, PX-governed DSC v3 operations
+repo_url: https://github.com/plures/pedantic
+repo_name: plures/pedantic
+docs_dir: docs
+theme:
+  name: readthedocs
+nav:
+  - Overview: index.md
+  - Getting started: getting-started.md
+  - Architecture: architecture.md
+  - Concepts:
+      - Governed operations: concepts/governed-operations.md
+      - Local-first service: concepts/local-service.md
+  - Guides:
+      - Validate and plan: guides/validation-and-planning.md
+      - Governed remediation: guides/governed-remediation.md
+      - Transfer operations: guides/transfer-operations.md
+  - Reference:
+      - Core modules: reference/core-modules.md
+      - CLI: reference/cli.md
+      - Contracts: reference/contracts.md
+  - Examples: examples.md
+  - Decisions: adr/0001-pedantic-service-store-ownership.md
+  - Legacy documentation: legacy/index.md
