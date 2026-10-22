@@ -18,6 +18,16 @@ profile, target, agent, and idempotency identities. Authorization contracts
 persist only opaque secret references; diagnostics are bounded and classified
 for redaction before they can become evidence.
 
+`native-operation.schema.json` is the v1 native lifecycle contract set. It
+separates operation intent, target facts, PX decision evidence, accepted
+approvals, effect requests and observations, and evidence references. Resolved
+plans carry immutable digests; every effect request carries that digest, its
+accepted authorization, child-effect, step, attempt, target, plan-revision,
+and execution identity. The execution identity is either agentless or an
+ephemeral agent instance with a lease, so both modes use one lifecycle model.
+Unknown schema versions and incompatible identity bindings must be rejected;
+additive fields require a new compatible contract version and fixtures.
+
 Operation plans may include `resolvedSettings`, whose entries pair each
 immutable setting value with its source (built-in, general, target, or plan)
 after PX evaluates capability safety requirements.

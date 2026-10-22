@@ -1565,6 +1565,48 @@ mod tests {
     }
 
     #[test]
+    fn native_operation_contract_rejects_incompatible_versions_and_identity_mismatches() {
+        let schema = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/native-operation.schema.json"
+        ));
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/fixtures/native-operation.valid.json"
+        ));
+        let value: Value = serde_json::from_str(fixture).expect("native fixture parses");
+        let compiled = compiled_schema(schema);
+        assert!(
+            compiled.is_valid(&value),
+            "{:?}",
+            compiled.validate(&value).unwrap_err().collect::<Vec<_>>()
+        );
+
+        let mut incompatible = value.clone();
+        incompatible["schemaVersion"] = "pedantic.native-operation.v2".into();
+        assert!(!compiled_schema(schema).is_valid(&incompatible));
+
+        let has_valid_identities = |document: &Value| {
+            let operation = &document["operation"];
+            let resolved = &document["resolvedPlan"];
+            let effect = &document["effectRequests"][0];
+            let approval = &document["approvals"][0];
+            resolved["operationId"] == operation["operationId"]
+                && resolved["targetId"] == operation["targetId"]
+                && effect["operationId"] == operation["operationId"]
+                && effect["planDigest"] == resolved["planDigest"]
+                && approval["authorizationId"] == effect["authorizationId"]
+                && approval["planDigest"] == effect["planDigest"]
+                && approval["accepted"] == true
+        };
+        assert!(has_valid_identities(&value));
+        let mut malformed = value.clone();
+        malformed["effectRequests"][0]["planDigest"] =
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into();
+        assert!(!has_valid_identities(&malformed));
+    }
+
+    #[test]
     fn security_contracts_reject_free_form_diagnostics_and_incomplete_signatures() {
         for (index, fixture_source) in [
             (
