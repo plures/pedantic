@@ -4,6 +4,7 @@
 
 pub mod boot_identity;
 pub mod native_v2;
+pub mod native_operation;
 pub mod hyperv_transfer_plan;
 pub mod settings;
 pub mod transfer_batch;
@@ -1581,29 +1582,11 @@ mod tests {
             "{:?}",
             compiled.validate(&value).unwrap_err().collect::<Vec<_>>()
         );
+        native_operation::validate_native_operation(&value).expect("native fixture identities");
 
         let mut incompatible = value.clone();
         incompatible["schemaVersion"] = "pedantic.native-operation.v2".into();
         assert!(!compiled_schema(schema).is_valid(&incompatible));
-
-        let has_valid_identities = |document: &Value| {
-            let operation = &document["operation"];
-            let resolved = &document["resolvedPlan"];
-            let effect = &document["effectRequests"][0];
-            let approval = &document["approvals"][0];
-            resolved["operationId"] == operation["operationId"]
-                && resolved["targetId"] == operation["targetId"]
-                && effect["operationId"] == operation["operationId"]
-                && effect["planDigest"] == resolved["planDigest"]
-                && approval["authorizationId"] == effect["authorizationId"]
-                && approval["planDigest"] == effect["planDigest"]
-                && approval["accepted"] == true
-        };
-        assert!(has_valid_identities(&value));
-        let mut malformed = value.clone();
-        malformed["effectRequests"][0]["planDigest"] =
-            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into();
-        assert!(!has_valid_identities(&malformed));
     }
 
     #[test]
