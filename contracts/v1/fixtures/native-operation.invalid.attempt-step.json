@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "pedantic.native-operation.v1",
+  "operation": {"operationId":"op-1","targetId":"target-1","correlationId":"corr-1","intentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "target":{"targetId":"target-1","kind":"host"},
+  "facts":[{"factId":"fact-1","targetId":"target-1","observedAt":1,"valueDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","evidenceReferenceId":"evidence-fact"}],
+  "capabilityDescriptors":[{"capabilityId":"cap-1","capability":"dsc.apply/v1","version":"v1","effectKinds":["apply"]}],
+  "providerDescriptors":[{"providerId":"provider-1","capabilityId":"cap-1","version":"v1"}],
+  "sparsePlan":{"operationId":"op-1","planId":"sparse-1","planRevision":1,"targetId":"target-1","correlationId":"corr-1","intentDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "resolvedPlan":{"operationId":"op-1","planId":"plan-1","planRevision":1,"targetId":"target-1","correlationId":"corr-1","sparsePlanId":"sparse-1","planDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","decisionEvidenceReferenceIds":["evidence-decision"]},
+  "steps":[{"operationId":"op-1","planId":"plan-1","planRevision":1,"targetId":"target-1","correlationId":"corr-1","stepId":"step-1","capabilityId":"cap-1","inputDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],
+  "attempts":[{"operationId":"op-1","planId":"plan-1","planRevision":1,"targetId":"target-1","correlationId":"corr-1","attemptId":"attempt-1","stepId":"step-other"}],
+  "effectRequests":[{"operationId":"op-1","planId":"plan-1","planRevision":1,"targetId":"target-1","correlationId":"corr-1","childEffectId":"effect-1","authorizationId":"auth-1","stepId":"step-1","attemptId":"attempt-1","planDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","execution":{"mode":"ephemeral-agent","agentInstanceId":"agent-1","leaseId":"lease-1"}}],
+  "effectObservations":[{"operationId":"op-1","planId":"plan-1","planRevision":1,"targetId":"target-1","correlationId":"corr-1","childEffectId":"effect-1","attemptId":"attempt-1","status":"completed","evidenceReferenceId":"evidence-1"}],
+  "approvals":[{"operationId":"op-1","planId":"plan-1","planRevision":1,"targetId":"target-1","correlationId":"corr-1","approvalId":"approval-1","authorizationId":"auth-1","planDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","accepted":true}],
+  "suspensions":[],"agentDeployments":[{"agentInstanceId":"agent-1","targetId":"target-1","deploymentId":"deploy-1"}],"agentLeases":[{"leaseId":"lease-1","agentInstanceId":"agent-1","operationId":"op-1","expiresAt":2}],
+  "cleanupManifest":{"cleanupId":"cleanup-1","operationId":"op-1","planDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","evidenceReferenceIds":["evidence-cleanup"]},
+  "evidenceReferences":[{"evidenceReferenceId":"evidence-fact","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","kind":"fact"},{"evidenceReferenceId":"evidence-decision","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","kind":"decision"},{"evidenceReferenceId":"evidence-1","digest":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","kind":"effect"},{"evidenceReferenceId":"evidence-cleanup","digest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","kind":"cleanup"}]
+}
