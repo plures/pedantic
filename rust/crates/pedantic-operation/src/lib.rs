@@ -4,6 +4,7 @@
 
 pub mod boot_identity;
 pub mod native_v2;
+pub mod native_operation;
 pub mod hyperv_transfer_plan;
 pub mod settings;
 pub mod transfer_batch;
@@ -1562,6 +1563,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn native_operation_contract_rejects_incompatible_versions_and_identity_mismatches() {
+        let schema = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/native-operation.schema.json"
+        ));
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/v1/fixtures/native-operation.valid.json"
+        ));
+        let value: Value = serde_json::from_str(fixture).expect("native fixture parses");
+        let compiled = compiled_schema(schema);
+        assert!(
+            compiled.is_valid(&value),
+            "{:?}",
+            compiled.validate(&value).unwrap_err().collect::<Vec<_>>()
+        );
+        native_operation::validate_native_operation(&value).expect("native fixture identities");
+
+        let mut incompatible = value.clone();
+        incompatible["schemaVersion"] = "pedantic.native-operation.v2".into();
+        assert!(!compiled_schema(schema).is_valid(&incompatible));
     }
 
     #[test]
