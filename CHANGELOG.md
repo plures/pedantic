@@ -1,3 +1,9 @@
+## [0.12.0] — 2026-10-10
+
+- feat(operation): resolve layered plan settings (#250) (ce76dad)
+- chore: plans kickoff (6995f18)
+- chore: plans kickoff (8a115c9)
+
 ## [0.11.0] — 2026-10-09
 
 - feat(hyperv): add verified resource transfer adapter (#229) (c86697b)
